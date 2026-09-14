@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>マッチング管理画面</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+  <header class="bg-slate-900 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow">
+    <h1 class="font-bold text-base">🤝 軽車両ドライバー × 店舗 マッチング</h1>
+    <span class="text-[11px] text-slate-400">Ver1(試作)</span>
+  </header>
+
+  <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-10">
+    <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📋 マッチング結果</button>
+    <button id="btn-nav-storemaster" onclick="switchTab('storemaster')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏪 店舗マスタ</button>
+    <button id="btn-nav-store" onclick="switchTab('store')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏬 店舗依頼</button>
+    <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
+    <button id="btn-nav-availability" onclick="switchTab('availability')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🗓️ 希望シフト</button>
+    <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗の相性</button>
+    <button id="btn-nav-history" onclick="switchTab('history')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📜 派遣履歴</button>
+  </nav>
+
+  <main class="p-4 max-w-6xl mx-auto space-y-4">
+
+    <!-- マッチング結果タブ -->
+    <div id="tab-matches" class="space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 class="font-bold text-slate-800">自動マッチング</h2>
+          <p class="text-xs text-slate-500">店舗依頼とドライバーの希望シフトから、自動で候補を作成します(自宅からの距離が30kmを超える場合は⚠️で警告表示します)</p>
+        </div>
+        <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
+      </div>
+      <div id="matches-list" class="space-y-2"></div>
+    </div>
+
+    <!-- 店舗マスタタブ -->
+    <div id="tab-storemaster" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">🏪 店舗を登録</h2>
+        <p class="text-[11px] text-slate-400">※ 店舗依頼を登録すると、店舗名から自動でここに名寄せ登録されます。相性(好き/NG)や派遣履歴はこの店舗マスタ単位で管理します。</p>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
+          <p class="text-[10px] text-slate-400">列名の例: 店舗名・店番・エリア・住所・店長・SV・備考。同名の店舗が既にある場合は上書き更新します</p>
+          <div class="flex gap-2 items-center">
+            <input id="sm-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importStoreMaster()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="sm-import-result" class="text-xs"></div>
+        </div>
+
+        <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <input id="sm-name" placeholder="店舗名 *" class="p-2 border rounded text-sm">
+          <input id="sm-code" placeholder="店番" class="p-2 border rounded text-sm">
+          <input id="sm-area" placeholder="エリア" class="p-2 border rounded text-sm">
+          <input id="sm-address" placeholder="住所(距離計算用)" class="p-2 border rounded text-sm md:col-span-2">
+          <input id="sm-manager" placeholder="店長" class="p-2 border rounded text-sm">
+          <input id="sm-sv" placeholder="SV" class="p-2 border rounded text-sm">
+          <input id="sm-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-2">
+        </div>
+        <div class="flex gap-2">
+          <button id="sm-submit-btn" onclick="saveStoreMaster()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+          <button id="sm-cancel-btn" onclick="cancelStoreMasterEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+        </div>
+      </div>
+
+      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
+        <label class="text-xs font-bold text-slate-600">並び替え:</label>
+        <select id="sm-sort" onchange="renderStoreMasterList()" class="p-1.5 border rounded text-xs">
+          <option value="name">店舗名順</option>
+          <option value="area">エリア順</option>
+        </select>
+        <input id="sm-search" oninput="renderStoreMasterList()" placeholder="🔍 店舗名・エリア・住所・店長・SVで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
+        <button onclick="exportStoreMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
+      </div>
+
+      <div id="sm-bulk-bar" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 flex-wrap">
+        <span id="sm-bulk-count" class="text-xs font-bold text-amber-800"></span>
+        <select id="sm-bulk-field" class="p-1.5 border rounded text-xs">
+          <option value="area">エリア</option>
+          <option value="manager_name">店長</option>
+          <option value="sv_name">SV</option>
+          <option value="notes">備考</option>
+        </select>
+        <span class="text-xs text-amber-800">を</span>
+        <input id="sm-bulk-value" placeholder="設定する値" class="p-1.5 border rounded text-xs flex-1 min-w-[140px]">
+        <span class="text-xs text-amber-800">に一括設定</span>
+        <button onclick="applyBulkEdit()" class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">適用する</button>
+        <button onclick="clearStoreSelection()" class="text-xs text-amber-800 px-2 py-1">選択解除</button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+              <th class="p-2.5"><input type="checkbox" id="sm-select-all" onchange="toggleSelectAllStores(this.checked)"></th>
+              <th class="p-2.5">店番</th>
+              <th class="p-2.5">店舗名</th>
+              <th class="p-2.5">エリア</th>
+              <th class="p-2.5">住所</th>
+              <th class="p-2.5">店長</th>
+              <th class="p-2.5">SV</th>
+              <th class="p-2.5">備考</th>
+              <th class="p-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="storemaster-list"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 店舗依頼タブ -->
+    <div id="tab-store" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">🏬 店舗依頼を登録</h2>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
+          <p class="text-[10px] text-slate-400">列名の例: 店舗名・エリア・住所・依頼日・開始時刻・終了時刻・必要人数・要望(実際のファイル形式が分かれば調整します)</p>
+          <div class="flex gap-2 items-center">
+            <input id="sr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importStoreRequests()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="sr-import-result" class="text-xs"></div>
+        </div>
+
+        <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <input id="sr-store-name" placeholder="店舗名 *" class="p-2 border rounded text-sm">
+          <input id="sr-area" placeholder="エリア" class="p-2 border rounded text-sm">
+          <input id="sr-address" placeholder="住所(距離計算用)" class="p-2 border rounded text-sm md:col-span-2">
+          <input id="sr-date" type="date" class="p-2 border rounded text-sm">
+          <input id="sr-time-start" type="time" class="p-2 border rounded text-sm">
+          <input id="sr-time-end" type="time" class="p-2 border rounded text-sm">
+          <input id="sr-count" type="number" min="1" value="1" placeholder="必要人数" class="p-2 border rounded text-sm">
+          <input id="sr-requests" placeholder="要望(自由記述)" class="p-2 border rounded text-sm md:col-span-3">
+        </div>
+        <button onclick="saveStoreRequest()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+      </div>
+      <div id="store-list" class="space-y-2"></div>
+    </div>
+
+    <!-- ドライバーマスタタブ -->
+    <div id="tab-driver" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">🚚 ドライバーを登録</h2>
+        <p class="text-[11px] text-slate-400">※ 自宅住所を登録すると、マッチング時に依頼店舗までの距離を自動で計算します(国土地理院の住所検索を使用)。</p>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
+          <p class="text-[10px] text-slate-400">列名の例: 社員コード・氏名・会社名・お住まい住所・初回委託日・ステータス・メールアドレス・保険加入状況・電話番号・車両種別・備考。社員コード(無ければ氏名)が一致する場合は上書き更新します</p>
+          <div class="flex gap-2 items-center">
+            <input id="dr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importDriverMaster()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="dr-import-result" class="text-xs"></div>
+        </div>
+
+        <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <input id="dr-name" placeholder="氏名 *" class="p-2 border rounded text-sm">
+          <input id="dr-code" placeholder="社員コード" class="p-2 border rounded text-sm">
+          <input id="dr-company" placeholder="会社名(法人契約の場合)" class="p-2 border rounded text-sm">
+          <input id="dr-phone" placeholder="電話番号" class="p-2 border rounded text-sm">
+          <input id="dr-vehicle" placeholder="車両種別(例: 軽バン)" class="p-2 border rounded text-sm">
+          <input id="dr-home-address" placeholder="自宅住所 *" class="p-2 border rounded text-sm md:col-span-2">
+          <input id="dr-first-contract" type="date" title="初回委託日" class="p-2 border rounded text-sm">
+          <select id="dr-status" class="p-2 border rounded text-sm">
+            <option value="">ステータス(未設定)</option>
+            <option value="稼働中">稼働中</option>
+            <option value="休止">休止</option>
+            <option value="契約終了">契約終了</option>
+          </select>
+          <input id="dr-email" placeholder="メールアドレス" class="p-2 border rounded text-sm">
+          <input id="dr-insurance" placeholder="保険加入状況(例: 貨物保険加入済み)" class="p-2 border rounded text-sm md:col-span-2">
+          <input id="dr-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
+        </div>
+        <div class="flex gap-2">
+          <button id="dr-submit-btn" onclick="saveDriver()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+          <button id="dr-cancel-btn" onclick="cancelDriverEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+        </div>
+      </div>
+
+      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
+        <label class="text-xs font-bold text-slate-600">並び替え:</label>
+        <select id="dr-sort" onchange="renderDriverList()" class="p-1.5 border rounded text-xs">
+          <option value="name">氏名順</option>
+          <option value="driver_code">社員コード順</option>
+          <option value="status">ステータス順</option>
+        </select>
+        <input id="dr-search" oninput="renderDriverList()" placeholder="🔍 氏名・社員コード・会社名・住所・電話・メールで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
+        <button onclick="exportDriverMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
+      </div>
+
+      <div id="dr-bulk-bar" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 flex-wrap">
+        <span id="dr-bulk-count" class="text-xs font-bold text-amber-800"></span>
+        <select id="dr-bulk-field" class="p-1.5 border rounded text-xs">
+          <option value="status">ステータス</option>
+          <option value="vehicle_type">車両種別</option>
+          <option value="company_name">会社名</option>
+          <option value="insurance_info">保険加入状況</option>
+        </select>
+        <span class="text-xs text-amber-800">を</span>
+        <input id="dr-bulk-value" placeholder="設定する値" class="p-1.5 border rounded text-xs flex-1 min-w-[140px]">
+        <span class="text-xs text-amber-800">に一括設定</span>
+        <button onclick="applyDriverBulkEdit()" class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">適用する</button>
+        <button onclick="clearDriverSelection()" class="text-xs text-amber-800 px-2 py-1">選択解除</button>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+              <th class="p-2.5"><input type="checkbox" id="dr-select-all" onchange="toggleSelectAllDrivers(this.checked)"></th>
+              <th class="p-2.5">社員コード</th>
+              <th class="p-2.5">氏名</th>
+              <th class="p-2.5">会社名</th>
+              <th class="p-2.5">電話番号</th>
+              <th class="p-2.5">車両種別</th>
+              <th class="p-2.5">自宅住所</th>
+              <th class="p-2.5">初回委託日</th>
+              <th class="p-2.5">ステータス</th>
+              <th class="p-2.5">メール</th>
+              <th class="p-2.5">保険加入状況</th>
+              <th class="p-2.5">備考</th>
+              <th class="p-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="driver-list"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 希望シフトタブ -->
+    <div id="tab-availability" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">🗓️ ドライバーの希望シフトを登録</h2>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 楽シフ等のエクスポート(Excel/CSV)から一括取込み</p>
+          <p class="text-[10px] text-slate-400">列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望(実際のファイル形式が分かれば調整します)</p>
+          <p class="text-[10px] text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
+          <div class="flex gap-2 items-center">
+            <input id="av-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importAvailability()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="av-import-result" class="text-xs"></div>
+        </div>
+
+        <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <select id="av-driver" class="p-2 border rounded text-sm md:col-span-2"></select>
+          <input id="av-date" type="date" class="p-2 border rounded text-sm">
+          <input id="av-area" placeholder="希望エリア" class="p-2 border rounded text-sm">
+          <input id="av-store" placeholder="希望店舗(任意)" class="p-2 border rounded text-sm">
+          <input id="av-time-start" type="time" class="p-2 border rounded text-sm">
+          <input id="av-time-end" type="time" class="p-2 border rounded text-sm">
+          <input id="av-requests" placeholder="要望(自由記述)" class="p-2 border rounded text-sm md:col-span-4">
+        </div>
+        <button onclick="saveAvailability()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+      </div>
+      <div id="availability-list" class="space-y-2"></div>
+    </div>
+
+    <!-- 店舗の相性タブ -->
+    <div id="tab-preferences" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">👍🚫 ドライバーごとの店舗との相性</h2>
+        <p class="text-[11px] text-slate-400">「NG」に設定した店舗は自動マッチングの候補から除外されます。「好き」は優先度が上がります。</p>
+        <select id="pref-driver" onchange="loadPreferences()" class="p-2 border rounded text-sm w-full md:w-64"></select>
+      </div>
+      <div id="preferences-list" class="space-y-2"></div>
+    </div>
+
+    <!-- 派遣履歴タブ -->
+    <div id="tab-history" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 class="font-bold text-slate-800">📜 派遣履歴を登録</h2>
+        <p class="text-[11px] text-slate-400">マッチング結果タブで「完了にする」を押すと自動でここに記録されます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。</p>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 過去実績をExcel/CSVから一括取込み</p>
+          <p class="text-[10px] text-slate-400">列名の例: ドライバー名・店舗名・実施日・備考(実際のファイル形式が分かれば調整します)</p>
+          <p class="text-[10px] text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
+          <div class="flex gap-2 items-center">
+            <input id="hist-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importHistory()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="hist-import-result" class="text-xs"></div>
+        </div>
+
+        <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <select id="hist-driver" class="p-2 border rounded text-sm md:col-span-2"></select>
+          <input id="hist-store" placeholder="店舗名 *" class="p-2 border rounded text-sm">
+          <input id="hist-date" type="date" class="p-2 border rounded text-sm">
+          <input id="hist-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
+        </div>
+        <button onclick="saveHistory()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+      </div>
+      <div id="history-list" class="space-y-2"></div>
+    </div>
+
+  </main>
+
+  <script>
+    let driversCache = [];
+
+    function switchTab(tab) {
+      ['matches', 'storemaster', 'store', 'driver', 'availability', 'preferences', 'history'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
+        document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
+      });
+      if (tab === 'matches') loadMatches();
+      if (tab === 'storemaster') loadStoreMaster();
+      if (tab === 'store') loadStoreRequests();
+      if (tab === 'driver') loadDrivers();
+      if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
+      if (tab === 'preferences') loadDriversForPreferenceSelect();
+      if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
+    }
+
+    // ===== ドライバーマスタ =====
+    let editingDriverId = null;
+    let selectedDriverIds = new Set();
+
+    async function loadDrivers() {
+      const res = await fetch('/api/drivers');
+      const data = await res.json();
+      driversCache = data.drivers || [];
+      renderDriverList();
+    }
+
+    function getVisibleDrivers() {
+      const sortBy = document.getElementById('dr-sort').value;
+      const keyword = document.getElementById('dr-search').value.trim().toLowerCase();
+
+      let rows = driversCache;
+      if (keyword) {
+        rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.notes]
+          .some(v => (v || '').toLowerCase().includes(keyword)));
+      }
+      return [...rows].sort((a, b) => {
+        if (sortBy === 'driver_code') return (a.driver_code || '').localeCompare(b.driver_code || '', 'ja') || a.name.localeCompare(b.name, 'ja');
+        if (sortBy === 'status') return (a.status || '').localeCompare(b.status || '', 'ja') || a.name.localeCompare(b.name, 'ja');
+        return a.name.localeCompare(b.name, 'ja');
+      });
+    }
+
+    function renderDriverList() {
+      const tbody = document.getElementById('driver-list');
+      const keyword = document.getElementById('dr-search').value.trim();
+      const rows = getVisibleDrivers();
+      const statusBadge = s => s ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${s === '稼働中' ? 'bg-emerald-100 text-emerald-700' : s === '休止' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}">${esc(s)}</span>` : '-';
+
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="13" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+      } else {
+        tbody.innerHTML = rows.map(d => `
+          <tr class="border-b border-slate-100 last:border-0 align-top">
+            <td class="p-2.5"><input type="checkbox" ${selectedDriverIds.has(d.id) ? 'checked' : ''} onchange="toggleDriverSelect(${d.id}, this.checked)"></td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.driver_code || '-')}</td>
+            <td class="p-2.5 font-bold">${esc(d.name)}</td>
+            <td class="p-2.5">${esc(d.company_name || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.phone || '-')}</td>
+            <td class="p-2.5">${esc(d.vehicle_type || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.home_address || '住所未登録')} ${d.home_lat == null && d.home_address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.first_contract_date || '-')}</td>
+            <td class="p-2.5">${statusBadge(d.status)}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.notes || '-')}</td>
+            <td class="p-2.5 whitespace-nowrap">
+              <button onclick="editDriver(${d.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+              <button onclick="deleteDriver(${d.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      document.getElementById('dr-select-all').checked = rows.length > 0 && rows.every(d => selectedDriverIds.has(d.id));
+      updateDriverBulkBar();
+    }
+
+    function toggleDriverSelect(id, checked) {
+      if (checked) selectedDriverIds.add(id); else selectedDriverIds.delete(id);
+      updateDriverBulkBar();
+      document.getElementById('dr-select-all').checked = getVisibleDrivers().every(d => selectedDriverIds.has(d.id));
+    }
+
+    function toggleSelectAllDrivers(checked) {
+      getVisibleDrivers().forEach(d => { if (checked) selectedDriverIds.add(d.id); else selectedDriverIds.delete(d.id); });
+      renderDriverList();
+    }
+
+    function clearDriverSelection() {
+      selectedDriverIds.clear();
+      renderDriverList();
+    }
+
+    function updateDriverBulkBar() {
+      const bar = document.getElementById('dr-bulk-bar');
+      const count = selectedDriverIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      document.getElementById('dr-bulk-count').textContent = `${count}件選択中`;
+    }
+
+    async function applyDriverBulkEdit() {
+      const field = document.getElementById('dr-bulk-field').value;
+      const value = document.getElementById('dr-bulk-value').value.trim();
+      const fieldLabel = document.getElementById('dr-bulk-field').selectedOptions[0].textContent;
+      if (selectedDriverIds.size === 0) return;
+      if (!confirm(`選択した${selectedDriverIds.size}件の「${fieldLabel}」を「${value}」に一括で設定します。よろしいですか？`)) return;
+
+      let okCount = 0;
+      for (const id of selectedDriverIds) {
+        const d = driversCache.find(x => x.id === id);
+        if (!d) continue;
+        const payload = {
+          id: d.id, name: d.name, driver_code: d.driver_code || '', company_name: d.company_name || '',
+          phone: d.phone || '', vehicle_type: d.vehicle_type || '', home_address: d.home_address || '',
+          first_contract_date: d.first_contract_date || '', status: d.status || '', email: d.email || '',
+          insurance_info: d.insurance_info || '', notes: d.notes || ''
+        };
+        payload[field] = value;
+        const res = await fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (data.success) okCount++;
+      }
+      alert(`${okCount}/${selectedDriverIds.size}件を更新しました`);
+      clearDriverSelection();
+      loadDrivers();
+    }
+
+    function exportDriverMaster() {
+      const rows = getVisibleDrivers();
+      if (rows.length === 0) { alert('書き出すドライバーがいません'); return; }
+      const csvEscape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const header = ['社員コード', '氏名', '会社名', 'お住まい住所', '初回委託日', 'ステータス', 'メールアドレス', '保険加入状況', '電話番号', '車両種別', '備考'];
+      const lines = [header.map(csvEscape).join(',')];
+      for (const d of rows) {
+        lines.push([d.driver_code, d.name, d.company_name, d.home_address, d.first_contract_date, d.status, d.email, d.insurance_info, d.phone, d.vehicle_type, d.notes].map(csvEscape).join(','));
+      }
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ドライバーマスタ_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function editDriver(id) {
+      const d = driversCache.find(x => x.id === id);
+      if (!d) return;
+      editingDriverId = id;
+      document.getElementById('dr-name').value = d.name || '';
+      document.getElementById('dr-code').value = d.driver_code || '';
+      document.getElementById('dr-company').value = d.company_name || '';
+      document.getElementById('dr-phone').value = d.phone || '';
+      document.getElementById('dr-vehicle').value = d.vehicle_type || '';
+      document.getElementById('dr-home-address').value = d.home_address || '';
+      document.getElementById('dr-first-contract').value = d.first_contract_date || '';
+      document.getElementById('dr-status').value = d.status || '';
+      document.getElementById('dr-email').value = d.email || '';
+      document.getElementById('dr-insurance').value = d.insurance_info || '';
+      document.getElementById('dr-notes').value = d.notes || '';
+      document.getElementById('dr-submit-btn').textContent = '更新する';
+      document.getElementById('dr-cancel-btn').classList.remove('hidden');
+      document.getElementById('dr-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function cancelDriverEdit() {
+      editingDriverId = null;
+      ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('dr-submit-btn').textContent = '＋ 登録する';
+      document.getElementById('dr-cancel-btn').classList.add('hidden');
+    }
+
+    async function saveDriver() {
+      const name = document.getElementById('dr-name').value.trim();
+      if (!name) { alert('氏名を入力してください'); return; }
+      const payload = {
+        name,
+        driver_code: document.getElementById('dr-code').value.trim(),
+        company_name: document.getElementById('dr-company').value.trim(),
+        phone: document.getElementById('dr-phone').value.trim(),
+        vehicle_type: document.getElementById('dr-vehicle').value.trim(),
+        home_address: document.getElementById('dr-home-address').value.trim(),
+        first_contract_date: document.getElementById('dr-first-contract').value,
+        status: document.getElementById('dr-status').value,
+        email: document.getElementById('dr-email').value.trim(),
+        insurance_info: document.getElementById('dr-insurance').value.trim(),
+        notes: document.getElementById('dr-notes').value.trim()
+      };
+      if (editingDriverId) payload.id = editingDriverId;
+      const res = await fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
+      cancelDriverEdit();
+      loadDrivers();
+    }
+
+    async function deleteDriver(id) {
+      if (!confirm('このドライバーを削除しますか？(希望シフトも削除されます)')) return;
+      if (editingDriverId === id) cancelDriverEdit();
+      await fetch(`/api/drivers/${id}`, { method: 'DELETE' });
+      loadDrivers();
+    }
+
+    async function importDriverMaster() {
+      const fileInput = document.getElementById('dr-import-file');
+      const resultEl = document.getElementById('dr-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/drivers/import', { method: 'POST', body: form });
+      const data = await res.json();
+      renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadDrivers();
+    }
+
+    async function loadDriversForSelect() {
+      if (driversCache.length === 0) {
+        const res = await fetch('/api/drivers');
+        const data = await res.json();
+        driversCache = data.drivers || [];
+      }
+      document.getElementById('av-driver').innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
+        driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    }
+
+    // ===== 店舗マスタ =====
+    let storeMasterCache = [];
+    let editingStoreId = null;
+
+    async function loadStoreMaster() {
+      const res = await fetch('/api/stores');
+      const data = await res.json();
+      storeMasterCache = data.stores || [];
+      renderStoreMasterList();
+    }
+
+    let selectedStoreIds = new Set();
+
+    // 現在の検索/並び替え条件を反映した表示対象一覧を返す(表示・全選択・CSV書き出しで共通利用)
+    function getVisibleStores() {
+      const sortBy = document.getElementById('sm-sort').value;
+      const keyword = document.getElementById('sm-search').value.trim().toLowerCase();
+
+      let rows = storeMasterCache;
+      if (keyword) {
+        rows = rows.filter(s => [s.name, s.store_code, s.area, s.address, s.manager_name, s.sv_name, s.notes]
+          .some(v => (v || '').toLowerCase().includes(keyword)));
+      }
+      return [...rows].sort((a, b) => {
+        if (sortBy === 'area') return (a.area || '').localeCompare(b.area || '', 'ja') || a.name.localeCompare(b.name, 'ja');
+        return a.name.localeCompare(b.name, 'ja');
+      });
+    }
+
+    function renderStoreMasterList() {
+      const tbody = document.getElementById('storemaster-list');
+      const keyword = document.getElementById('sm-search').value.trim();
+      const rows = getVisibleStores();
+
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する店舗が見つかりません' : 'まだ登録されていません(店舗依頼を登録すると自動でも追加されます)'}</td></tr>`;
+      } else {
+        tbody.innerHTML = rows.map(s => `
+          <tr class="border-b border-slate-100 last:border-0 align-top">
+            <td class="p-2.5"><input type="checkbox" ${selectedStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleStoreSelect(${s.id}, this.checked)"></td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(s.store_code || '-')}</td>
+            <td class="p-2.5 font-bold">${esc(s.name)}</td>
+            <td class="p-2.5">${esc(s.area || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</td>
+            <td class="p-2.5">${esc(s.manager_name || '-')}</td>
+            <td class="p-2.5">${esc(s.sv_name || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(s.notes || '-')}</td>
+            <td class="p-2.5 whitespace-nowrap">
+              <button onclick="editStoreMaster(${s.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+              <button onclick="deleteStoreMaster(${s.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      document.getElementById('sm-select-all').checked = rows.length > 0 && rows.every(s => selectedStoreIds.has(s.id));
+      updateBulkBar();
+    }
+
+    function toggleStoreSelect(id, checked) {
+      if (checked) selectedStoreIds.add(id); else selectedStoreIds.delete(id);
+      updateBulkBar();
+      document.getElementById('sm-select-all').checked = getVisibleStores().every(s => selectedStoreIds.has(s.id));
+    }
+
+    function toggleSelectAllStores(checked) {
+      getVisibleStores().forEach(s => { if (checked) selectedStoreIds.add(s.id); else selectedStoreIds.delete(s.id); });
+      renderStoreMasterList();
+    }
+
+    function clearStoreSelection() {
+      selectedStoreIds.clear();
+      renderStoreMasterList();
+    }
+
+    function updateBulkBar() {
+      const bar = document.getElementById('sm-bulk-bar');
+      const count = selectedStoreIds.size;
+      bar.classList.toggle('hidden', count === 0);
+      document.getElementById('sm-bulk-count').textContent = `${count}件選択中`;
+    }
+
+    async function applyBulkEdit() {
+      const field = document.getElementById('sm-bulk-field').value;
+      const value = document.getElementById('sm-bulk-value').value.trim();
+      const fieldLabel = document.getElementById('sm-bulk-field').selectedOptions[0].textContent;
+      if (selectedStoreIds.size === 0) return;
+      if (!confirm(`選択した${selectedStoreIds.size}件の「${fieldLabel}」を「${value}」に一括で設定します。よろしいですか？`)) return;
+
+      let okCount = 0;
+      for (const id of selectedStoreIds) {
+        const s = storeMasterCache.find(x => x.id === id);
+        if (!s) continue;
+        const payload = {
+          id: s.id, name: s.name, area: s.area || '', address: s.address || '',
+          manager_name: s.manager_name || '', sv_name: s.sv_name || '', store_code: s.store_code || '', notes: s.notes || ''
+        };
+        payload[field] = value;
+        const res = await fetch('/api/stores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (data.success) okCount++;
+      }
+      alert(`${okCount}/${selectedStoreIds.size}件を更新しました`);
+      clearStoreSelection();
+      loadStoreMaster();
+    }
+
+    function exportStoreMaster() {
+      const rows = getVisibleStores();
+      if (rows.length === 0) { alert('書き出す店舗がありません'); return; }
+      const csvEscape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const header = ['店舗名', '店番', 'エリア', '住所', '店長', 'SV', '備考'];
+      const lines = [header.map(csvEscape).join(',')];
+      for (const s of rows) {
+        lines.push([s.name, s.store_code, s.area, s.address, s.manager_name, s.sv_name, s.notes].map(csvEscape).join(','));
+      }
+      // 先頭にBOMを付けてExcelで開いたときに文字化けしないようにする
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `店舗マスタ_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function editStoreMaster(id) {
+      const s = storeMasterCache.find(x => x.id === id);
+      if (!s) return;
+      editingStoreId = id;
+      document.getElementById('sm-name').value = s.name || '';
+      document.getElementById('sm-code').value = s.store_code || '';
+      document.getElementById('sm-area').value = s.area || '';
+      document.getElementById('sm-address').value = s.address || '';
+      document.getElementById('sm-manager').value = s.manager_name || '';
+      document.getElementById('sm-sv').value = s.sv_name || '';
+      document.getElementById('sm-notes').value = s.notes || '';
+      document.getElementById('sm-submit-btn').textContent = '更新する';
+      document.getElementById('sm-cancel-btn').classList.remove('hidden');
+      document.getElementById('sm-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function cancelStoreMasterEdit() {
+      editingStoreId = null;
+      ['sm-name', 'sm-code', 'sm-area', 'sm-address', 'sm-manager', 'sm-sv', 'sm-notes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('sm-submit-btn').textContent = '＋ 登録する';
+      document.getElementById('sm-cancel-btn').classList.add('hidden');
+    }
+
+    async function saveStoreMaster() {
+      const name = document.getElementById('sm-name').value.trim();
+      if (!name) { alert('店舗名を入力してください'); return; }
+      const payload = {
+        name,
+        store_code: document.getElementById('sm-code').value.trim(),
+        area: document.getElementById('sm-area').value.trim(),
+        address: document.getElementById('sm-address').value.trim(),
+        manager_name: document.getElementById('sm-manager').value.trim(),
+        sv_name: document.getElementById('sm-sv').value.trim(),
+        notes: document.getElementById('sm-notes').value.trim()
+      };
+      if (editingStoreId) payload.id = editingStoreId;
+      const res = await fetch('/api/stores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
+      cancelStoreMasterEdit();
+      loadStoreMaster();
+    }
+
+    async function deleteStoreMaster(id) {
+      if (!confirm('この店舗を削除しますか？(相性設定も削除されます)')) return;
+      if (editingStoreId === id) cancelStoreMasterEdit();
+      await fetch(`/api/stores/${id}`, { method: 'DELETE' });
+      loadStoreMaster();
+    }
+
+    async function importStoreMaster() {
+      const fileInput = document.getElementById('sm-import-file');
+      const resultEl = document.getElementById('sm-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/stores/import', { method: 'POST', body: form });
+      const data = await res.json();
+      renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadStoreMaster();
+    }
+
+    // ===== 店舗依頼 =====
+    async function loadStoreRequests() {
+      const res = await fetch('/api/store-requests');
+      const data = await res.json();
+      const list = document.getElementById('store-list');
+      const rows = data.requests || [];
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
+      list.innerHTML = rows.map(s => `
+        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <p class="font-bold text-sm">${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span></p>
+            <p class="text-xs text-slate-500">📅 ${esc(s.request_date)} ${esc(s.time_start || '')}〜${esc(s.time_end || '')} ／ 必要人数: ${s.required_count}名</p>
+            <p class="text-[11px] text-slate-400">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</p>
+            ${s.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(s.requests)}</p>` : ''}
+          </div>
+          <button onclick="deleteStoreRequest(${s.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+        </div>
+      `).join('');
+    }
+
+    async function saveStoreRequest() {
+      const store_name = document.getElementById('sr-store-name').value.trim();
+      const request_date = document.getElementById('sr-date').value;
+      if (!store_name || !request_date) { alert('店舗名と依頼日は必須です'); return; }
+      const payload = {
+        store_name,
+        area: document.getElementById('sr-area').value.trim(),
+        address: document.getElementById('sr-address').value.trim(),
+        request_date,
+        time_start: document.getElementById('sr-time-start').value,
+        time_end: document.getElementById('sr-time-end').value,
+        required_count: parseInt(document.getElementById('sr-count').value, 10) || 1,
+        requests: document.getElementById('sr-requests').value.trim()
+      };
+      const res = await fetch('/api/store-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
+      ['sr-store-name', 'sr-area', 'sr-address', 'sr-time-start', 'sr-time-end', 'sr-requests'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('sr-count').value = 1;
+      loadStoreRequests();
+    }
+
+    async function deleteStoreRequest(id) {
+      if (!confirm('この店舗依頼を削除しますか？')) return;
+      await fetch(`/api/store-requests/${id}`, { method: 'DELETE' });
+      loadStoreRequests();
+    }
+
+    async function importStoreRequests() {
+      const fileInput = document.getElementById('sr-import-file');
+      const resultEl = document.getElementById('sr-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/store-requests/import', { method: 'POST', body: form });
+      const data = await res.json();
+      renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadStoreRequests();
+    }
+
+    function renderImportResult(el, data) {
+      if (!data.success) { el.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`; return; }
+      let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}/${data.total}件を取り込みました</span>`;
+      if (data.errors && data.errors.length > 0) {
+        html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 読み取れなかった行(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    // ===== 希望シフト =====
+    async function loadAvailability() {
+      const res = await fetch('/api/driver-availability');
+      const data = await res.json();
+      const list = document.getElementById('availability-list');
+      const rows = data.availability || [];
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
+      list.innerHTML = rows.map(a => `
+        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <p class="font-bold text-sm">${esc(a.driver_name)} <span class="text-xs text-slate-400 font-normal">${esc(a.desired_area || '')} ${esc(a.desired_store || '')}</span></p>
+            <p class="text-xs text-slate-500">📅 ${esc(a.desired_date)} ${esc(a.time_start || '')}〜${esc(a.time_end || '')}</p>
+            ${a.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(a.requests)}</p>` : ''}
+          </div>
+          <button onclick="deleteAvailability(${a.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+        </div>
+      `).join('');
+    }
+
+    async function saveAvailability() {
+      const driver_id = document.getElementById('av-driver').value;
+      const desired_date = document.getElementById('av-date').value;
+      if (!driver_id || !desired_date) { alert('ドライバーと希望日は必須です'); return; }
+      const payload = {
+        driver_id: parseInt(driver_id, 10),
+        desired_date,
+        desired_area: document.getElementById('av-area').value.trim(),
+        desired_store: document.getElementById('av-store').value.trim(),
+        time_start: document.getElementById('av-time-start').value,
+        time_end: document.getElementById('av-time-end').value,
+        requests: document.getElementById('av-requests').value.trim()
+      };
+      const res = await fetch('/api/driver-availability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
+      ['av-area', 'av-store', 'av-time-start', 'av-time-end', 'av-requests'].forEach(id => document.getElementById(id).value = '');
+      loadAvailability();
+    }
+
+    async function deleteAvailability(id) {
+      await fetch(`/api/driver-availability/${id}`, { method: 'DELETE' });
+      loadAvailability();
+    }
+
+    async function importAvailability() {
+      const fileInput = document.getElementById('av-import-file');
+      const resultEl = document.getElementById('av-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/driver-availability/import', { method: 'POST', body: form });
+      const data = await res.json();
+      renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadAvailability();
+    }
+
+    // ===== 店舗の相性 =====
+    async function loadDriversForPreferenceSelect() {
+      if (driversCache.length === 0) {
+        const res = await fetch('/api/drivers');
+        const data = await res.json();
+        driversCache = data.drivers || [];
+      }
+      const sel = document.getElementById('pref-driver');
+      const keepValue = sel.value;
+      sel.innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
+        driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+      if (keepValue) { sel.value = keepValue; loadPreferences(); }
+    }
+
+    async function loadPreferences() {
+      const driverId = document.getElementById('pref-driver').value;
+      const list = document.getElementById('preferences-list');
+      if (!driverId) { list.innerHTML = ''; return; }
+      const res = await fetch(`/api/drivers/${driverId}/preferences`);
+      const data = await res.json();
+      const rows = data.preferences || [];
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">店舗マスタに店舗が登録されていません</p>'; return; }
+      list.innerHTML = rows.map(p => `
+        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <p class="font-bold text-sm">${esc(p.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(p.area || '')}</span></p>
+          </div>
+          <div class="flex gap-1.5">
+            <button onclick="setPreference(${driverId}, ${p.store_id}, 'good')" class="text-xs px-2.5 py-1 rounded font-bold border ${p.preference === 'good' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">👍 好き</button>
+            <button onclick="clearPreference(${p.preference_id})" class="text-xs px-2.5 py-1 rounded font-bold border ${!p.preference ? 'bg-slate-600 text-white border-slate-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">普通</button>
+            <button onclick="setPreference(${driverId}, ${p.store_id}, 'ng')" class="text-xs px-2.5 py-1 rounded font-bold border ${p.preference === 'ng' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">🚫 NG</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function setPreference(driver_id, store_id, preference) {
+      await fetch('/api/driver-store-preferences', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_id, store_id, preference })
+      });
+      loadPreferences();
+    }
+
+    async function clearPreference(preferenceId) {
+      if (!preferenceId) { loadPreferences(); return; } // 元々「普通」の場合は何もしない
+      await fetch(`/api/driver-store-preferences/${preferenceId}`, { method: 'DELETE' });
+      loadPreferences();
+    }
+
+    // ===== 派遣履歴 =====
+    async function loadDriversForHistorySelect() {
+      if (driversCache.length === 0) {
+        const res = await fetch('/api/drivers');
+        const data = await res.json();
+        driversCache = data.drivers || [];
+      }
+      document.getElementById('hist-driver').innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
+        driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    }
+
+    async function loadHistory() {
+      const res = await fetch('/api/dispatch-history');
+      const data = await res.json();
+      const list = document.getElementById('history-list');
+      const rows = data.history || [];
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
+      list.innerHTML = rows.map(h => `
+        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <p class="font-bold text-sm">${esc(h.driver_name)} → 🏬 ${esc(h.store_name || '(店舗不明)')} <span class="text-xs text-slate-400 font-normal">${esc(h.area || '')}</span></p>
+            <p class="text-xs text-slate-500">📅 ${esc(h.work_date)}</p>
+            ${h.notes ? `<p class="text-[11px] text-slate-400">${esc(h.notes)}</p>` : ''}
+          </div>
+          <button onclick="deleteHistory(${h.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+        </div>
+      `).join('');
+    }
+
+    async function saveHistory() {
+      const driver_id = document.getElementById('hist-driver').value;
+      const store_name = document.getElementById('hist-store').value.trim();
+      const work_date = document.getElementById('hist-date').value;
+      if (!driver_id || !store_name || !work_date) { alert('ドライバー・店舗名・実施日は必須です'); return; }
+      const payload = {
+        driver_id: parseInt(driver_id, 10),
+        store_name,
+        work_date,
+        notes: document.getElementById('hist-notes').value.trim()
+      };
+      const res = await fetch('/api/dispatch-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
+      ['hist-store', 'hist-notes'].forEach(id => document.getElementById(id).value = '');
+      loadHistory();
+    }
+
+    async function deleteHistory(id) {
+      await fetch(`/api/dispatch-history/${id}`, { method: 'DELETE' });
+      loadHistory();
+    }
+
+    async function importHistory() {
+      const fileInput = document.getElementById('hist-import-file');
+      const resultEl = document.getElementById('hist-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/dispatch-history/import', { method: 'POST', body: form });
+      const data = await res.json();
+      renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadHistory();
+    }
+
+    // ===== マッチング結果 =====
+    async function runMatching() {
+      const res = await fetch('/api/matches/run', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert('マッチングに失敗しました: ' + (data.message || '')); return; }
+      alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした` : ''}`);
+      loadMatches();
+    }
+
+    const ABSENCE_REASONS = ['体調不良', '車両トラブル', '交通機関の乱れ', '私用', 'その他'];
+    let matchesCache = [];
+    let openAbsenceMatchId = null;   // 欠勤理由の入力パネルを開いているmatch id
+    let openSubstituteMatchId = null; // 代替候補パネルを開いているmatch id
+    const substitutesByMatchId = {}; // match id -> 取得済みの代替候補配列
+
+    async function loadMatches() {
+      const res = await fetch('/api/matches');
+      const data = await res.json();
+      matchesCache = data.matches || [];
+      renderMatchesList();
+    }
+
+    function renderMatchesList() {
+      const list = document.getElementById('matches-list');
+      const rows = matchesCache;
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>'; return; }
+      list.innerHTML = rows.map(m => `
+        <div class="bg-white p-3 rounded-lg border ${m.is_far_warning ? 'border-amber-400' : 'border-slate-200'}">
+          <div class="flex justify-between items-center">
+            <div>
+              <p class="font-bold text-sm">
+                🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
+                ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
+                ${m.preference_flag === 'good' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 好きな店舗</span>' : ''}
+                ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
+              </p>
+              <p class="text-xs text-slate-500">📅 ${esc(m.match_date)} ${esc(m.time_start || '')}〜${esc(m.time_end || '')} ／ 📞 ${esc(m.driver_phone || '-')}</p>
+              <p class="text-[11px] text-slate-400">🏠 ${esc(m.home_address || '-')} → 🏬 ${esc(m.store_address || '-')} ${m.distance_km != null ? `(約${m.distance_km.toFixed(1)}km)` : '(距離不明)'}</p>
+              ${m.status === '欠勤' && m.absence_reason ? `<p class="text-[11px] text-red-600 font-bold">欠勤理由: ${esc(m.absence_reason)}</p>` : ''}
+            </div>
+            <div class="flex gap-1.5">
+              ${m.status === '候補' ? `<button onclick="confirmMatch(${m.id})" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded font-bold">確定</button>` : ''}
+              ${m.status === '確定' ? `<button onclick="completeMatch(${m.id})" class="text-xs bg-slate-700 hover:bg-slate-800 text-white px-2.5 py-1 rounded font-bold">完了にする</button>` : ''}
+              ${(m.status === '候補' || m.status === '確定') ? `<button onclick="toggleAbsenceForm(${m.id})" class="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded font-bold hover:bg-amber-100">⚠️ 欠勤にする</button>` : ''}
+              ${m.status === '欠勤' ? `<button onclick="toggleSubstitutes(${m.id})" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded font-bold">🔁 代替を探す</button>` : ''}
+              <button onclick="deleteMatch(${m.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+            </div>
+          </div>
+          ${openAbsenceMatchId === m.id ? renderAbsenceForm(m.id) : ''}
+          ${openSubstituteMatchId === m.id ? renderSubstitutesPanel(m.id) : ''}
+        </div>
+      `).join('');
+    }
+
+    function renderAbsenceForm(id) {
+      return `
+        <div class="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-2 items-center">
+          <select id="absence-reason-${id}" class="p-1.5 border rounded text-xs">
+            ${ABSENCE_REASONS.map(r => `<option value="${r}">${r}</option>`).join('')}
+          </select>
+          <input id="absence-note-${id}" placeholder="補足(任意)" class="p-1.5 border rounded text-xs flex-1 min-w-[120px]">
+          <button onclick="submitAbsence(${id})" class="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-bold">登録する</button>
+          <button onclick="toggleAbsenceForm(${id})" class="text-xs text-slate-500 px-2 py-1">キャンセル</button>
+        </div>
+      `;
+    }
+
+    function renderSubstitutesPanel(id) {
+      const candidates = substitutesByMatchId[id];
+      if (!candidates) return '<div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-400">候補を読み込み中...</div>';
+      if (candidates.length === 0) return '<div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-400">代替候補が見つかりませんでした</div>';
+      return `
+        <div class="mt-2 pt-2 border-t border-slate-100 space-y-1.5">
+          ${candidates.map(c => `
+            <div class="flex justify-between items-center bg-slate-50 rounded p-2">
+              <p class="text-xs">
+                🚚 <span class="font-bold">${esc(c.name)}</span> ／ 📞 ${esc(c.phone || '-')}
+                ${c.distance != null ? `／ 約${c.distance.toFixed(1)}km` : '／ 距離不明'}
+                ${c.is_far_warning ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700">⚠️遠め</span>' : ''}
+                ${c.preference === 'good' ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐好き</span>' : ''}
+                ${c.experienceCount > 0 ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-blue-100 text-blue-700">🧭経験${c.experienceCount}回</span>` : ''}
+                ${!c.has_availability_today ? '<span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-500">当日希望シフト未提出</span>' : ''}
+              </p>
+              <button onclick="chooseSubstitute(${id}, ${c.driver_id})" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded font-bold whitespace-nowrap">この人に決める</button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function toggleAbsenceForm(id) {
+      openAbsenceMatchId = openAbsenceMatchId === id ? null : id;
+      renderMatchesList();
+    }
+
+    async function submitAbsence(id) {
+      const reasonCategory = document.getElementById(`absence-reason-${id}`).value;
+      const note = document.getElementById(`absence-note-${id}`).value.trim();
+      const reason = note ? `${reasonCategory}(${note})` : reasonCategory;
+      await fetch(`/api/matches/${id}/absence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+      openAbsenceMatchId = null;
+      loadMatches();
+    }
+
+    async function toggleSubstitutes(id) {
+      if (openSubstituteMatchId === id) { openSubstituteMatchId = null; renderMatchesList(); return; }
+      openSubstituteMatchId = id;
+      delete substitutesByMatchId[id];
+      renderMatchesList();
+      const res = await fetch(`/api/matches/${id}/substitutes`);
+      const data = await res.json();
+      substitutesByMatchId[id] = data.candidates || [];
+      renderMatchesList();
+    }
+
+    async function chooseSubstitute(matchId, driverId) {
+      await fetch(`/api/matches/${matchId}/substitute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ driver_id: driverId }) });
+      openSubstituteMatchId = null;
+      loadMatches();
+    }
+
+    async function confirmMatch(id) {
+      await fetch(`/api/matches/${id}/confirm`, { method: 'POST' });
+      loadMatches();
+    }
+
+    async function completeMatch(id) {
+      await fetch(`/api/matches/${id}/complete`, { method: 'POST' });
+      loadMatches();
+    }
+
+    async function deleteMatch(id) {
+      await fetch(`/api/matches/${id}`, { method: 'DELETE' });
+      loadMatches();
+    }
+
+    function esc(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    switchTab('matches');
+  </script>
+</body>
+</html>
