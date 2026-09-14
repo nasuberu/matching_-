@@ -15,7 +15,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 // 自動マッチングのスコアリング重み(調整しやすいようファイル冒頭に定数化しておく)
 const SCORE_WEIGHT_DISTANCE_KM = -1;     // 距離1kmごとの減点
 const SCORE_STRONG_MATCH_BONUS = 50;     // 希望店舗/希望エリアが一致する場合のボーナス
-const SCORE_PREFERENCE_GOOD_BONUS = 30;  // その店舗を「好き」に設定している場合のボーナス
+// 相性はNG(除外)〜1〜2〜3〜4〜5〜OKの7段階。NGを除く各段階に1〜6の重みを割り当て、重み×この値をボーナスにする
+// (1点=6, ... 5点=30, OK=36。数字が大きい/OKほど優先度が上がる)
+const SCORE_PREFERENCE_LEVEL_UNIT = 6;
+const PREFERENCE_LEVEL_WEIGHT = { '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, 'OK': 6 };
 const SCORE_EXPERIENCE_PER_VISIT = 5;    // その店舗での過去派遣1回あたりのボーナス(店舗の勝手を知っている)
 const SCORE_EXPERIENCE_MAX_VISITS = 5;   // 店舗経験ボーナスの上限回数
 const SCORE_AREA_EXPERIENCE_PER_VISIT = 2; // 同エリアでの過去派遣1回あたりのボーナス(配達エリアの知見)
@@ -107,13 +110,14 @@ db.serialize(() => {
     )
   `);
 
-  // ドライバーごとの店舗との相性(好き/NG)。NGはマッチング候補から除外し、好きは優先度を上げる
+  // ドライバーごとの店舗との相性。NG〜1〜2〜3〜4〜5〜OKの7段階の一つの尺度で管理する
+  // (NGは自動マッチングの候補から除外し、数字が大きい/OKほど優先度を上げる。未設定の店舗は「履歴なし」として扱う)
   db.run(`
     CREATE TABLE IF NOT EXISTS driver_store_preferences (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       driver_id INTEGER NOT NULL,
       store_id INTEGER NOT NULL,
-      preference TEXT NOT NULL CHECK (preference IN ('good', 'ng')),
+      preference TEXT NOT NULL CHECK (preference IN ('NG', '1', '2', '3', '4', '5', 'OK')),
       notes TEXT,
       created_at TEXT,
       UNIQUE(driver_id, store_id),
@@ -154,7 +158,47 @@ db.serialize(() => {
   ensureColumn('drivers', 'email', 'TEXT');                // メールアドレス
   ensureColumn('drivers', 'insurance_info', 'TEXT');        // 保険加入状況(貨物保険等のメモ)
   ensureColumn('drivers', 'company_name', 'TEXT');          // 会社名(法人として契約している個人事業主向け。個人の場合は空欄)
+  ensureColumn('drivers', 'fixed_store_id', 'INTEGER REFERENCES stores(id)'); // 固定希望店舗(希望シフトで店舗未入力の日の初期値として使う)
+  migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
 });
+
+// driver_store_preferences の preference が旧スキーマ(good/ng の2択)のままなら、
+// NG〜1〜5〜OKの7段階スケールに移行する(SQLiteはCHECK制約を直接変更できないためテーブルを作り直す)
+function migratePreferenceScale() {
+  db.get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='driver_store_preferences'`, [], (err, row) => {
+    if (err || !row || !row.sql.includes("'good'")) return; // 新スキーマ済み、またはテーブル無し
+    db.serialize(() => {
+      db.run(`ALTER TABLE driver_store_preferences RENAME TO driver_store_preferences_old_migration`);
+      db.run(`
+        CREATE TABLE driver_store_preferences (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          driver_id INTEGER NOT NULL,
+          store_id INTEGER NOT NULL,
+          preference TEXT NOT NULL CHECK (preference IN ('NG', '1', '2', '3', '4', '5', 'OK')),
+          notes TEXT,
+          created_at TEXT,
+          UNIQUE(driver_id, store_id),
+          FOREIGN KEY (driver_id) REFERENCES drivers(id),
+          FOREIGN KEY (store_id) REFERENCES stores(id)
+        )
+      `);
+      db.run(`
+        INSERT INTO driver_store_preferences (id, driver_id, store_id, preference, notes, created_at)
+        SELECT id, driver_id, store_id,
+               CASE preference WHEN 'good' THEN 'OK' WHEN 'ng' THEN 'NG' ELSE preference END,
+               notes, created_at
+        FROM driver_store_preferences_old_migration
+      `);
+      db.run(`DROP TABLE driver_store_preferences_old_migration`);
+      // matches側に残っている旧表記も新表記に合わせておく
+      db.run(`UPDATE matches SET preference_flag = 'OK' WHERE preference_flag = 'good'`);
+      db.run(`UPDATE matches SET preference_flag = 'NG' WHERE preference_flag = 'ng'`, err2 => {
+        if (err2) console.error('相性スケールの移行に失敗しました:', err2);
+        else console.log('相性の評価スケールをNG〜1〜5〜OKの7段階に移行しました');
+      });
+    });
+  });
+}
 
 // 指定したカラムがテーブルに無ければ ALTER TABLE で追加する(何度サーバーを再起動しても安全)
 function ensureColumn(table, column, ddlType) {
@@ -226,7 +270,7 @@ function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, area
   let score = 0;
   score += distance != null ? distance * SCORE_WEIGHT_DISTANCE_KM : -9999; // 距離不明は最低評価にして末尾に回す
   if (isStrongMatch) score += SCORE_STRONG_MATCH_BONUS;
-  if (preference === 'good') score += SCORE_PREFERENCE_GOOD_BONUS;
+  if (preference && PREFERENCE_LEVEL_WEIGHT[preference]) score += PREFERENCE_LEVEL_WEIGHT[preference] * SCORE_PREFERENCE_LEVEL_UNIT;
   score += experienceCount * SCORE_EXPERIENCE_PER_VISIT;
   score += areaExperienceCount * SCORE_AREA_EXPERIENCE_PER_VISIT;
 
@@ -374,6 +418,7 @@ const DRIVER_MASTER_ALIASES = {
   driver_code: ['社員コード', 'ドライバーコード', '社員番号', 'driver_code'],
   name: ['氏名', '名前', 'ドライバー名', 'name'],
   company_name: ['会社名', '法人名', '屋号', 'company_name'],
+  fixed_store_name: ['固定希望店舗', '固定店舗', 'fixed_store_name'],
   phone: ['電話番号', '電話', 'TEL', 'phone'],
   vehicle_type: ['車両種別', '車両', '車種', 'vehicle_type'],
   home_address: ['お住まい住所', '自宅住所', '住所', 'home_address'],
@@ -409,12 +454,17 @@ function normalizeDateStr(v) {
 
 // ===== ドライバーマスタ =====
 app.get('/api/drivers', async (req, res) => {
-  const rows = await dbAll('SELECT * FROM drivers ORDER BY id DESC');
+  const rows = await dbAll(`
+    SELECT d.*, fs.name AS fixed_store_name
+    FROM drivers d
+    LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+    ORDER BY d.id DESC
+  `);
   res.json({ success: true, drivers: rows });
 });
 
 app.post('/api/drivers', async (req, res) => {
-  const { id, name, phone, vehicle_type, home_address, driver_code, company_name, first_contract_date, status, email, insurance_info, notes } = req.body;
+  const { id, name, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes } = req.body;
   if (!name) return res.status(400).json({ success: false, message: '氏名は必須です' });
 
   // 住所が変わった場合のみ再ジオコーディングする(毎回叩くと無駄なため)
@@ -432,14 +482,14 @@ app.post('/api/drivers', async (req, res) => {
   const now = new Date().toISOString();
   if (id) {
     await dbRun(
-      `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
-      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', id]
+      `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
+      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', id]
     );
     return res.json({ success: true, id });
   }
   const result = await dbRun(
-    `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', now]
+    `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', now]
   );
   res.json({ success: true, id: result.lastID });
 });
@@ -472,6 +522,8 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
     const email = pickField(row, DRIVER_MASTER_ALIASES.email);
     const insurance_info = pickField(row, DRIVER_MASTER_ALIASES.insurance_info);
     const notes = pickField(row, DRIVER_MASTER_ALIASES.notes);
+    const fixed_store_name = pickField(row, DRIVER_MASTER_ALIASES.fixed_store_name);
+    const fixed_store_id = fixed_store_name ? await resolveStoreId({ store_name: fixed_store_name }) : null;
 
     let lat = null, lng = null;
     if (home_address) {
@@ -486,13 +538,13 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
 
     if (existing) {
       await dbRun(
-        `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
-        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, first_contract_date, status, email, insurance_info, notes, existing.id]
+        `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
+        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, existing.id]
       );
     } else {
       await dbRun(
-        `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, first_contract_date, status, email, insurance_info, notes, now]
+        `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, now]
       );
     }
     imported++;
@@ -559,18 +611,28 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
     const driver_id = driverByName.get(driverName);
     if (!driver_id) { errors.push(`${i + 2}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
 
-    await dbRun(
-      `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        driver_id, desired_date,
-        pickField(row, AVAILABILITY_ALIASES.desired_area),
-        pickField(row, AVAILABILITY_ALIASES.desired_store),
-        pickField(row, AVAILABILITY_ALIASES.time_start),
-        pickField(row, AVAILABILITY_ALIASES.time_end),
-        pickField(row, AVAILABILITY_ALIASES.requests),
-        now
-      ]
+    const desired_area = pickField(row, AVAILABILITY_ALIASES.desired_area);
+    const desired_store = pickField(row, AVAILABILITY_ALIASES.desired_store);
+    const time_start = pickField(row, AVAILABILITY_ALIASES.time_start);
+    const time_end = pickField(row, AVAILABILITY_ALIASES.time_end);
+    const requests = pickField(row, AVAILABILITY_ALIASES.requests);
+
+    // 同じドライバー×同じ希望日の行が既にあれば上書き更新する(同じファイルの再取込みで重複登録されないように)
+    const existing = await dbGet(
+      'SELECT id FROM driver_availability WHERE driver_id = ? AND desired_date = ?',
+      [driver_id, desired_date]
     );
+    if (existing) {
+      await dbRun(
+        `UPDATE driver_availability SET desired_area=?, desired_store=?, time_start=?, time_end=?, requests=? WHERE id=?`,
+        [desired_area, desired_store, time_start, time_end, requests, existing.id]
+      );
+    } else {
+      await dbRun(
+        `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, now]
+      );
+    }
     imported++;
   }
 
@@ -647,21 +709,28 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
       if (geo) { lat = geo.lat; lng = geo.lng; }
     }
     const store_id = await resolveStoreId({ store_name, area, address, lat, lng });
+    const time_start = pickField(row, STORE_ALIASES.time_start);
+    const time_end = pickField(row, STORE_ALIASES.time_end);
+    const required_count = parseInt(pickField(row, STORE_ALIASES.required_count), 10) || 1;
+    const requests = pickField(row, STORE_ALIASES.requests);
 
-    await dbRun(
-      `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        store_name,
-        area,
-        address, lat, lng, request_date,
-        pickField(row, STORE_ALIASES.time_start),
-        pickField(row, STORE_ALIASES.time_end),
-        parseInt(pickField(row, STORE_ALIASES.required_count), 10) || 1,
-        pickField(row, STORE_ALIASES.requests),
-        now,
-        store_id
-      ]
+    // 同じ店舗×同じ依頼日×同じ開始時刻の行が既にあれば上書き更新する(同じファイルの再取込みで重複登録されないように。
+    // 1日に時間帯違いで複数依頼が来る店舗もあるため、開始時刻もキーに含めて別依頼として区別する)
+    const existing = await dbGet(
+      'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ?',
+      [store_id, request_date, time_start || '']
     );
+    if (existing) {
+      await dbRun(
+        `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=? WHERE id=?`,
+        [store_name, area, address, lat, lng, time_end, required_count, requests, existing.id]
+      );
+    } else {
+      await dbRun(
+        `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, now, store_id]
+      );
+    }
     imported++;
   }
 
@@ -775,8 +844,8 @@ app.get('/api/drivers/:id/preferences', async (req, res) => {
 // 相性の登録・更新(driver_id+store_idの組でupsert)
 app.post('/api/driver-store-preferences', async (req, res) => {
   const { driver_id, store_id, preference, notes } = req.body;
-  if (!driver_id || !store_id || !['good', 'ng'].includes(preference)) {
-    return res.status(400).json({ success: false, message: 'driver_id, store_id, preference(good/ng) は必須です' });
+  if (!driver_id || !store_id || !['NG', '1', '2', '3', '4', '5', 'OK'].includes(preference)) {
+    return res.status(400).json({ success: false, message: 'driver_id, store_id, preference(NG/1/2/3/4/5/OK) は必須です' });
   }
   const now = new Date().toISOString();
   const existing = await dbGet('SELECT id FROM driver_store_preferences WHERE driver_id = ? AND store_id = ?', [driver_id, store_id]);
@@ -889,10 +958,14 @@ app.post('/api/matches/run', async (req, res) => {
   await dbRun('DELETE FROM matches'); // 一旦候補を作り直す(確定済みの運用に育ったら「候補のみ削除」に変更する想定)
 
   const storeRequests = await dbAll('SELECT * FROM store_requests ORDER BY request_date ASC');
-  const availability = await dbAll(`
-    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng
-    FROM driver_availability a JOIN drivers d ON d.id = a.driver_id
+  const availabilityRows = await dbAll(`
+    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, fs.name AS fixed_store_name
+    FROM driver_availability a
+    JOIN drivers d ON d.id = a.driver_id
+    LEFT JOIN stores fs ON fs.id = d.fixed_store_id
   `);
+  // 希望シフトで店舗が未入力の場合は、ドライバーマスタの「固定希望店舗」を初期値として使う
+  const availability = availabilityRows.map(a => ({ ...a, desired_store: a.desired_store || a.fixed_store_name || '' }));
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
 
   const now = new Date().toISOString();
@@ -908,7 +981,7 @@ app.post('/api/matches/run', async (req, res) => {
     const candidates = availability.filter(a =>
       a.desired_date === store.request_date &&
       !assignedToday.has(a.driver_id) &&
-      preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'ng'
+      preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
     );
 
     const scored = candidates
@@ -985,7 +1058,11 @@ app.get('/api/matches/:id/substitutes', async (req, res) => {
   const excluded = new Set(busyRows.map(r => r.driver_id));
   excluded.add(match.driver_id);
 
-  const drivers = await dbAll('SELECT id, name, phone, home_lat, home_lng FROM drivers');
+  const drivers = await dbAll(`
+    SELECT d.id, d.name, d.phone, d.home_lat, d.home_lng, fs.name AS fixed_store_name
+    FROM drivers d
+    LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+  `);
   const availabilityToday = await dbAll(
     'SELECT driver_id, desired_store, desired_area FROM driver_availability WHERE desired_date = ?',
     [match.match_date]
@@ -995,12 +1072,14 @@ app.get('/api/matches/:id/substitutes', async (req, res) => {
 
   const candidates = drivers
     .filter(d => !excluded.has(d.id))
-    .filter(d => preferenceByDriverStore.get(`${d.id}:${match.store_id}`) !== 'ng')
+    .filter(d => preferenceByDriverStore.get(`${d.id}:${match.store_id}`) !== 'NG')
     .map(d => {
       const av = availabilityByDriver.get(d.id);
+      // 希望シフトで店舗未入力(または当日の希望シフトが無い)場合は、固定希望店舗を初期値として使う
       const candidateLike = {
         driver_id: d.id, home_lat: d.home_lat, home_lng: d.home_lng,
-        desired_store: av ? av.desired_store : null, desired_area: av ? av.desired_area : null
+        desired_store: (av && av.desired_store) || d.fixed_store_name || null,
+        desired_area: av ? av.desired_area : null
       };
       const scored = scoreCandidate(candidateLike, match, preferenceByDriverStore, storeVisitCount, areaVisitCount);
       return {
@@ -1027,7 +1106,11 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   `, [req.params.id]);
   if (!match) return res.status(404).json({ success: false, message: 'マッチングが見つかりません' });
 
-  const driver = await dbGet('SELECT id, home_lat, home_lng FROM drivers WHERE id = ?', [driver_id]);
+  const driver = await dbGet(`
+    SELECT d.id, d.home_lat, d.home_lng, fs.name AS fixed_store_name
+    FROM drivers d LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+    WHERE d.id = ?
+  `, [driver_id]);
   if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
 
   const av = await dbGet(
@@ -1037,7 +1120,8 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
   const candidateLike = {
     driver_id: driver.id, home_lat: driver.home_lat, home_lng: driver.home_lng,
-    desired_store: av ? av.desired_store : null, desired_area: av ? av.desired_area : null
+    desired_store: (av && av.desired_store) || driver.fixed_store_name || null,
+    desired_area: av ? av.desired_area : null
   };
   const scored = scoreCandidate(candidateLike, match, preferenceByDriverStore, storeVisitCount, areaVisitCount);
   const isFar = scored.distance != null && scored.distance > DIST_WARNING_KM;

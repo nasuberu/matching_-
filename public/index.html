@@ -15,12 +15,13 @@
 
   <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-10">
     <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📋 マッチング結果</button>
-    <button id="btn-nav-storemaster" onclick="switchTab('storemaster')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏪 店舗マスタ</button>
     <button id="btn-nav-store" onclick="switchTab('store')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏬 店舗依頼</button>
-    <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
     <button id="btn-nav-availability" onclick="switchTab('availability')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🗓️ 希望シフト</button>
-    <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗の相性</button>
+    <button id="btn-nav-storemaster" onclick="switchTab('storemaster')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏪 店舗マスタ</button>
+    <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
+    <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗相性マスタ</button>
     <button id="btn-nav-history" onclick="switchTab('history')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📜 派遣履歴</button>
+    <button id="btn-nav-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📊 ダッシュボード</button>
   </nav>
 
   <main class="p-4 max-w-6xl mx-auto space-y-4">
@@ -41,7 +42,7 @@
     <div id="tab-storemaster" class="hidden space-y-4">
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
         <h2 class="font-bold text-slate-800">🏪 店舗を登録</h2>
-        <p class="text-[11px] text-slate-400">※ 店舗依頼を登録すると、店舗名から自動でここに名寄せ登録されます。相性(好き/NG)や派遣履歴はこの店舗マスタ単位で管理します。</p>
+        <p class="text-[11px] text-slate-400">※ 店舗依頼を登録すると、店舗名から自動でここに名寄せ登録されます。相性(NG〜1〜5〜OK)や派遣履歴はこの店舗マスタ単位で管理します。</p>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
@@ -122,6 +123,7 @@
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
           <p class="text-[10px] text-slate-400">列名の例: 店舗名・エリア・住所・依頼日・開始時刻・終了時刻・必要人数・要望(実際のファイル形式が分かれば調整します)</p>
+          <p class="text-[10px] text-slate-400">※ 同じ店舗・同じ依頼日・同じ開始時刻の行は上書き更新されます(1日に時間帯違いで複数依頼がある場合は別依頼として扱われます)</p>
           <div class="flex gap-2 items-center">
             <input id="sr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <button onclick="importStoreRequests()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
@@ -153,7 +155,7 @@
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
-          <p class="text-[10px] text-slate-400">列名の例: 社員コード・氏名・会社名・お住まい住所・初回委託日・ステータス・メールアドレス・保険加入状況・電話番号・車両種別・備考。社員コード(無ければ氏名)が一致する場合は上書き更新します</p>
+          <p class="text-[10px] text-slate-400">列名の例: 社員コード・氏名・会社名・お住まい住所・初回委託日・ステータス・メールアドレス・固定希望店舗・保険加入状況・電話番号・車両種別・備考。社員コード(無ければ氏名)が一致する場合は上書き更新します</p>
           <div class="flex gap-2 items-center">
             <input id="dr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <button onclick="importDriverMaster()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
@@ -177,6 +179,9 @@
             <option value="契約終了">契約終了</option>
           </select>
           <input id="dr-email" placeholder="メールアドレス" class="p-2 border rounded text-sm">
+          <select id="dr-fixed-store" class="p-2 border rounded text-sm">
+            <option value="">固定希望店舗(なし)</option>
+          </select>
           <input id="dr-insurance" placeholder="保険加入状況(例: 貨物保険加入済み)" class="p-2 border rounded text-sm md:col-span-2">
           <input id="dr-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
         </div>
@@ -226,6 +231,7 @@
               <th class="p-2.5">初回委託日</th>
               <th class="p-2.5">ステータス</th>
               <th class="p-2.5">メール</th>
+              <th class="p-2.5">固定希望店舗</th>
               <th class="p-2.5">保険加入状況</th>
               <th class="p-2.5">備考</th>
               <th class="p-2.5"></th>
@@ -244,6 +250,7 @@
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 楽シフ等のエクスポート(Excel/CSV)から一括取込み</p>
           <p class="text-[10px] text-slate-400">列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望(実際のファイル形式が分かれば調整します)</p>
+          <p class="text-[10px] text-slate-400">※ 同じドライバー・同じ希望日の行は上書き更新されます</p>
           <p class="text-[10px] text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
           <div class="flex gap-2 items-center">
             <input id="av-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
@@ -271,7 +278,7 @@
     <div id="tab-preferences" class="hidden space-y-4">
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
         <h2 class="font-bold text-slate-800">👍🚫 ドライバーごとの店舗との相性</h2>
-        <p class="text-[11px] text-slate-400">「NG」に設定した店舗は自動マッチングの候補から除外されます。「好き」は優先度が上がります。</p>
+        <p class="text-[11px] text-slate-400">NG〜1〜2〜3〜4〜5〜OKの7段階で相性を設定できます。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。未評価の店舗は「履歴なし」と表示されます。</p>
         <select id="pref-driver" onchange="loadPreferences()" class="p-2 border rounded text-sm w-full md:w-64"></select>
       </div>
       <div id="preferences-list" class="space-y-2"></div>
@@ -306,23 +313,71 @@
       <div id="history-list" class="space-y-2"></div>
     </div>
 
+    <!-- ダッシュボードタブ -->
+    <div id="tab-dashboard" class="hidden space-y-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <p class="text-xs text-slate-500">店舗依頼件数</p>
+          <p id="dash-stat-requests" class="text-2xl font-bold text-slate-800">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <p class="text-xs text-slate-500">希望シフト件数</p>
+          <p id="dash-stat-availability" class="text-2xl font-bold text-slate-800">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <p class="text-xs text-slate-500">マッチング件数(候補+確定+完了+欠勤)</p>
+          <p id="dash-stat-matches" class="text-2xl font-bold text-slate-800">0</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
+          <p class="text-xs text-slate-500">候補が見つからない店舗依頼</p>
+          <p id="dash-stat-unmatched" class="text-2xl font-bold text-amber-600">0</p>
+        </div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <h2 class="font-bold text-slate-800 mb-3">🏬 店舗別 依頼件数ランキング</h2>
+        <div id="dash-store-ranking" class="space-y-1.5"></div>
+      </div>
+
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
+        <div class="flex gap-1.5">
+          <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
+          <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
+        </div>
+        <div class="flex gap-1.5 items-center flex-wrap">
+          <select id="dash-export-store-select" class="p-1.5 border rounded text-xs"></select>
+          <button onclick="exportDashboardForStore()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">この店舗を書き出す</button>
+          <select id="dash-export-driver-select" class="p-1.5 border rounded text-xs"></select>
+          <button onclick="exportDashboardForDriver()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">このドライバーを書き出す</button>
+          <button onclick="exportDashboardAll()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded font-bold whitespace-nowrap">📤 全体を一括書き出す</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="text-sm border-collapse">
+          <thead><tr id="dash-grid-header"></tr></thead>
+          <tbody id="dash-grid-body"></tbody>
+        </table>
+      </div>
+    </div>
+
   </main>
 
   <script>
     let driversCache = [];
 
     function switchTab(tab) {
-      ['matches', 'storemaster', 'store', 'driver', 'availability', 'preferences', 'history'].forEach(t => {
+      ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
       if (tab === 'matches') loadMatches();
-      if (tab === 'storemaster') loadStoreMaster();
       if (tab === 'store') loadStoreRequests();
-      if (tab === 'driver') loadDrivers();
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
+      if (tab === 'storemaster') loadStoreMaster();
+      if (tab === 'driver') loadDrivers();
       if (tab === 'preferences') loadDriversForPreferenceSelect();
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
+      if (tab === 'dashboard') loadDashboard();
     }
 
     // ===== ドライバーマスタ =====
@@ -330,9 +385,15 @@
     let selectedDriverIds = new Set();
 
     async function loadDrivers() {
-      const res = await fetch('/api/drivers');
-      const data = await res.json();
-      driversCache = data.drivers || [];
+      const [driversRes, storesRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores')]);
+      const driversData = await driversRes.json();
+      const storesData = await storesRes.json();
+      driversCache = driversData.drivers || [];
+      const fixedStoreSelect = document.getElementById('dr-fixed-store');
+      const keepValue = fixedStoreSelect.value;
+      fixedStoreSelect.innerHTML = '<option value="">固定希望店舗(なし)</option>' +
+        (storesData.stores || []).map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
+      fixedStoreSelect.value = keepValue;
       renderDriverList();
     }
 
@@ -342,7 +403,7 @@
 
       let rows = driversCache;
       if (keyword) {
-        rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.notes]
+        rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.fixed_store_name, d.notes]
           .some(v => (v || '').toLowerCase().includes(keyword)));
       }
       return [...rows].sort((a, b) => {
@@ -359,7 +420,7 @@
       const statusBadge = s => s ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${s === '稼働中' ? 'bg-emerald-100 text-emerald-700' : s === '休止' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}">${esc(s)}</span>` : '-';
 
       if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="13" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
       } else {
         tbody.innerHTML = rows.map(d => `
           <tr class="border-b border-slate-100 last:border-0 align-top">
@@ -373,6 +434,7 @@
             <td class="p-2.5 text-xs text-slate-500">${esc(d.first_contract_date || '-')}</td>
             <td class="p-2.5">${statusBadge(d.status)}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.fixed_store_name || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.notes || '-')}</td>
             <td class="p-2.5 whitespace-nowrap">
@@ -425,7 +487,7 @@
           id: d.id, name: d.name, driver_code: d.driver_code || '', company_name: d.company_name || '',
           phone: d.phone || '', vehicle_type: d.vehicle_type || '', home_address: d.home_address || '',
           first_contract_date: d.first_contract_date || '', status: d.status || '', email: d.email || '',
-          insurance_info: d.insurance_info || '', notes: d.notes || ''
+          fixed_store_id: d.fixed_store_id || null, insurance_info: d.insurance_info || '', notes: d.notes || ''
         };
         payload[field] = value;
         const res = await fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -441,10 +503,10 @@
       const rows = getVisibleDrivers();
       if (rows.length === 0) { alert('書き出すドライバーがいません'); return; }
       const csvEscape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-      const header = ['社員コード', '氏名', '会社名', 'お住まい住所', '初回委託日', 'ステータス', 'メールアドレス', '保険加入状況', '電話番号', '車両種別', '備考'];
+      const header = ['社員コード', '氏名', '会社名', 'お住まい住所', '初回委託日', 'ステータス', 'メールアドレス', '固定希望店舗', '保険加入状況', '電話番号', '車両種別', '備考'];
       const lines = [header.map(csvEscape).join(',')];
       for (const d of rows) {
-        lines.push([d.driver_code, d.name, d.company_name, d.home_address, d.first_contract_date, d.status, d.email, d.insurance_info, d.phone, d.vehicle_type, d.notes].map(csvEscape).join(','));
+        lines.push([d.driver_code, d.name, d.company_name, d.home_address, d.first_contract_date, d.status, d.email, d.fixed_store_name, d.insurance_info, d.phone, d.vehicle_type, d.notes].map(csvEscape).join(','));
       }
       const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -470,6 +532,7 @@
       document.getElementById('dr-first-contract').value = d.first_contract_date || '';
       document.getElementById('dr-status').value = d.status || '';
       document.getElementById('dr-email').value = d.email || '';
+      document.getElementById('dr-fixed-store').value = d.fixed_store_id || '';
       document.getElementById('dr-insurance').value = d.insurance_info || '';
       document.getElementById('dr-notes').value = d.notes || '';
       document.getElementById('dr-submit-btn').textContent = '更新する';
@@ -479,7 +542,7 @@
 
     function cancelDriverEdit() {
       editingDriverId = null;
-      ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
+      ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
       document.getElementById('dr-submit-btn').textContent = '＋ 登録する';
       document.getElementById('dr-cancel-btn').classList.add('hidden');
     }
@@ -497,6 +560,7 @@
         first_contract_date: document.getElementById('dr-first-contract').value,
         status: document.getElementById('dr-status').value,
         email: document.getElementById('dr-email').value.trim(),
+        fixed_store_id: document.getElementById('dr-fixed-store').value ? parseInt(document.getElementById('dr-fixed-store').value, 10) : null,
         insurance_info: document.getElementById('dr-insurance').value.trim(),
         notes: document.getElementById('dr-notes').value.trim()
       };
@@ -882,30 +946,32 @@
       const data = await res.json();
       const rows = data.preferences || [];
       if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">店舗マスタに店舗が登録されていません</p>'; return; }
+      const PREF_LEVELS = ['NG', '1', '2', '3', '4', '5', 'OK'];
+      const prefBadgeClass = v => v === 'NG' ? 'border-red-400 text-red-600' : v === 'OK' ? 'border-emerald-400 text-emerald-600' : v ? 'border-blue-400 text-blue-600' : 'border-slate-200 text-slate-400';
       list.innerHTML = rows.map(p => `
         <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
           <div>
             <p class="font-bold text-sm">${esc(p.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(p.area || '')}</span></p>
           </div>
-          <div class="flex gap-1.5">
-            <button onclick="setPreference(${driverId}, ${p.store_id}, 'good')" class="text-xs px-2.5 py-1 rounded font-bold border ${p.preference === 'good' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">👍 好き</button>
-            <button onclick="clearPreference(${p.preference_id})" class="text-xs px-2.5 py-1 rounded font-bold border ${!p.preference ? 'bg-slate-600 text-white border-slate-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">普通</button>
-            <button onclick="setPreference(${driverId}, ${p.store_id}, 'ng')" class="text-xs px-2.5 py-1 rounded font-bold border ${p.preference === 'ng' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}">🚫 NG</button>
-          </div>
+          <select onchange="setOrClearPreference(${driverId}, ${p.store_id}, ${p.preference_id || 'null'}, this.value)" class="text-xs font-bold px-2 py-1.5 rounded border ${prefBadgeClass(p.preference)}">
+            <option value="" ${!p.preference ? 'selected' : ''}>履歴なし</option>
+            ${PREF_LEVELS.map(v => `<option value="${v}" ${p.preference === v ? 'selected' : ''}>${v}</option>`).join('')}
+          </select>
         </div>
       `).join('');
     }
 
-    async function setPreference(driver_id, store_id, preference) {
+    async function setOrClearPreference(driver_id, store_id, preferenceId, value) {
+      if (!value) { await clearPreference(preferenceId); return; }
       await fetch('/api/driver-store-preferences', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driver_id, store_id, preference })
+        body: JSON.stringify({ driver_id, store_id, preference: value })
       });
       loadPreferences();
     }
 
     async function clearPreference(preferenceId) {
-      if (!preferenceId) { loadPreferences(); return; } // 元々「普通」の場合は何もしない
+      if (!preferenceId) { loadPreferences(); return; } // 元々「履歴なし」の場合は何もしない
       await fetch(`/api/driver-store-preferences/${preferenceId}`, { method: 'DELETE' });
       loadPreferences();
     }
@@ -1010,7 +1076,7 @@
                 🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
                 <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
                 ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
-                ${m.preference_flag === 'good' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 好きな店舗</span>' : ''}
+                ${m.preference_flag ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 相性${esc(m.preference_flag)}</span>` : ''}
                 ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
               </p>
               <p class="text-xs text-slate-500">📅 ${esc(m.match_date)} ${esc(m.time_start || '')}〜${esc(m.time_end || '')} ／ 📞 ${esc(m.driver_phone || '-')}</p>
@@ -1056,7 +1122,7 @@
                 🚚 <span class="font-bold">${esc(c.name)}</span> ／ 📞 ${esc(c.phone || '-')}
                 ${c.distance != null ? `／ 約${c.distance.toFixed(1)}km` : '／ 距離不明'}
                 ${c.is_far_warning ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700">⚠️遠め</span>' : ''}
-                ${c.preference === 'good' ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐好き</span>' : ''}
+                ${c.preference ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐相性${esc(c.preference)}</span>` : ''}
                 ${c.experienceCount > 0 ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-blue-100 text-blue-700">🧭経験${c.experienceCount}回</span>` : ''}
                 ${!c.has_availability_today ? '<span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-500">当日希望シフト未提出</span>' : ''}
               </p>
@@ -1115,6 +1181,144 @@
 
     function esc(str) {
       return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ===== ダッシュボード =====
+    let dashboardMatchesCache = [];
+    let dashboardStoreRequestsCache = [];
+    let dashboardAvailabilityCache = [];
+    let dashboardView = 'store';
+
+    async function loadDashboard() {
+      const [matchesRes, requestsRes, availRes] = await Promise.all([
+        fetch('/api/matches'), fetch('/api/store-requests'), fetch('/api/driver-availability')
+      ]);
+      dashboardMatchesCache = (await matchesRes.json()).matches || [];
+      dashboardStoreRequestsCache = (await requestsRes.json()).requests || [];
+      dashboardAvailabilityCache = (await availRes.json()).availability || [];
+      renderDashboardStats();
+      renderDashboardStoreRanking();
+      populateDashboardExportSelects();
+      switchDashboardView(dashboardView);
+    }
+
+    function renderDashboardStats() {
+      document.getElementById('dash-stat-requests').textContent = dashboardStoreRequestsCache.length;
+      document.getElementById('dash-stat-availability').textContent = dashboardAvailabilityCache.length;
+      document.getElementById('dash-stat-matches').textContent = dashboardMatchesCache.length;
+      const matchedRequestIds = new Set(dashboardMatchesCache.map(m => m.store_request_id));
+      const unmatched = dashboardStoreRequestsCache.filter(r => !matchedRequestIds.has(r.id)).length;
+      document.getElementById('dash-stat-unmatched').textContent = unmatched;
+    }
+
+    function renderDashboardStoreRanking() {
+      const counts = {};
+      for (const r of dashboardStoreRequestsCache) counts[r.store_name] = (counts[r.store_name] || 0) + 1;
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const el = document.getElementById('dash-store-ranking');
+      if (sorted.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm p-2">まだ店舗依頼がありません</p>'; return; }
+      const max = sorted[0][1];
+      el.innerHTML = sorted.slice(0, 15).map(([name, count]) => `
+        <div class="flex items-center gap-2">
+          <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
+          <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+            <div class="bg-blue-500 h-4" style="width:${Math.round(count / max * 100)}%"></div>
+          </div>
+          <span class="text-xs font-bold w-8 text-right shrink-0">${count}件</span>
+        </div>
+      `).join('');
+    }
+
+    function switchDashboardView(view) {
+      dashboardView = view;
+      document.getElementById('dash-view-store-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'store' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('dash-view-driver-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      renderDashboardGrid();
+    }
+
+    function dashboardStatusColor(status) {
+      return status === '欠勤' ? 'bg-red-100 text-red-700' : status === '完了' ? 'bg-slate-700 text-white' : status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
+    }
+
+    function renderDashboardGrid() {
+      const header = document.getElementById('dash-grid-header');
+      const body = document.getElementById('dash-grid-body');
+      const matches = dashboardMatchesCache;
+      if (matches.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">まだマッチング結果がありません</td></tr>';
+        return;
+      }
+      const dates = [...new Set(matches.map(m => m.match_date))].sort();
+      const rowKey = dashboardView === 'store' ? 'store_name' : 'driver_name';
+      const rows = [...new Set(matches.map(m => m[rowKey]))].sort((a, b) => a.localeCompare(b, 'ja'));
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 bg-white border-b border-slate-200 whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
+        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(d)}</th>`).join('');
+
+      body.innerHTML = rows.map(rowName => {
+        const cells = dates.map(d => {
+          const entries = matches.filter(m => m[rowKey] === rowName && m.match_date === d);
+          if (entries.length === 0) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>`;
+          const content = entries.map(m => {
+            const other = dashboardView === 'store' ? m.driver_name : m.store_name;
+            return `<span class="block text-xs px-1.5 py-0.5 rounded mb-0.5 whitespace-nowrap ${dashboardStatusColor(m.status)}">${esc(other)}</span>`;
+          }).join('');
+          return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
+        }).join('');
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 bg-white border-b border-slate-100 whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
+      }).join('');
+    }
+
+    function populateDashboardExportSelects() {
+      const storeNames = [...new Set(dashboardMatchesCache.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      const driverNames = [...new Set(dashboardMatchesCache.map(m => m.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      document.getElementById('dash-export-store-select').innerHTML =
+        storeNames.length ? storeNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') : '<option value="">(店舗なし)</option>';
+      document.getElementById('dash-export-driver-select').innerHTML =
+        driverNames.length ? driverNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('') : '<option value="">(ドライバーなし)</option>';
+    }
+
+    function downloadCsv(filename, header, rows) {
+      const csvEscape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const lines = [header.map(csvEscape).join(',')];
+      for (const r of rows) lines.push(r.map(csvEscape).join(','));
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    const DASH_EXPORT_HEADER = ['日付', '店舗名', 'ドライバー名', '開始時刻', '終了時刻', 'ステータス', '距離(km)', '電話番号', '自宅住所'];
+    function dashMatchToRow(m) {
+      return [m.match_date, m.store_name, m.driver_name, m.time_start, m.time_end, m.status, m.distance_km != null ? m.distance_km.toFixed(1) : '', m.driver_phone, m.home_address];
+    }
+
+    function exportDashboardForStore() {
+      const name = document.getElementById('dash-export-store-select').value;
+      if (!name) { alert('店舗を選択してください'); return; }
+      const rows = dashboardMatchesCache.filter(m => m.store_name === name).map(dashMatchToRow);
+      if (rows.length === 0) { alert('この店舗のマッチングがありません'); return; }
+      downloadCsv(`シフト表_${name}_${new Date().toISOString().slice(0, 10)}.csv`, DASH_EXPORT_HEADER, rows);
+    }
+
+    function exportDashboardForDriver() {
+      const name = document.getElementById('dash-export-driver-select').value;
+      if (!name) { alert('ドライバーを選択してください'); return; }
+      const rows = dashboardMatchesCache.filter(m => m.driver_name === name).map(dashMatchToRow);
+      if (rows.length === 0) { alert('このドライバーのマッチングがありません'); return; }
+      downloadCsv(`シフト表_${name}_${new Date().toISOString().slice(0, 10)}.csv`, DASH_EXPORT_HEADER, rows);
+    }
+
+    function exportDashboardAll() {
+      const rows = dashboardMatchesCache.map(dashMatchToRow);
+      if (rows.length === 0) { alert('マッチングがありません'); return; }
+      downloadCsv(`マッチング全体_${new Date().toISOString().slice(0, 10)}.csv`, DASH_EXPORT_HEADER, rows);
     }
 
     switchTab('matches');
