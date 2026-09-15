@@ -1654,4 +1654,109 @@ app.post('/api/archive/:month/restore', async (req, res) => {
   });
 });
 
+// 「候補」を一括で「確定」にする(1件ずつ確定ボタンを押さなくても、シフト表送付の準備がすぐできるように)
+app.post('/api/matches/confirm-all', async (req, res) => {
+  const result = await dbRun(`UPDATE matches SET status = '確定' WHERE archived_month IS NULL AND status = '候補'`);
+  res.json({ success: true, confirmed: result.changes });
+});
+
+function weekdayLabelOf(dateStr) {
+  const WEEKDAY_LABELS_JP = ['日', '月', '火', '水', '木', '金', '土'];
+  const d = new Date(dateStr + 'T00:00:00');
+  return WEEKDAY_LABELS_JP[d.getDay()];
+}
+
+// Excelのシート名制約(31文字以内、: \ / ? * [ ] 不可、重複不可)に収まるように名前を整形する
+function sanitizeSheetName(name, usedNames) {
+  let base = String(name || '').replace(/[:\\/?*[\]]/g, '').trim() || 'シート';
+  base = base.slice(0, 28); // 重複時の番号サフィックス分の余裕を残す
+  let candidate = base;
+  let i = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${base}(${i})`;
+    i++;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+// 個人事業主ごとの月間シフト表をExcelで一括出力する(1人1シート)。「確定」「完了」のみが対象(候補はまだ未確定のため含めない)
+app.get('/api/export/shift-by-driver', async (req, res) => {
+  const matches = await dbAll(`
+    SELECT m.*, d.name AS driver_name, d.phone AS driver_phone,
+           s.store_name, s.area, s.address AS store_address, s.time_start, s.time_end
+    FROM matches m
+    JOIN drivers d ON d.id = m.driver_id
+    JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+    ORDER BY d.name ASC, m.match_date ASC
+  `);
+  if (matches.length === 0) return res.status(400).json({ success: false, message: '「確定」または「完了」のマッチングがありません(候補のままの場合は先に確定してください)' });
+
+  const byDriver = new Map();
+  for (const m of matches) {
+    if (!byDriver.has(m.driver_id)) byDriver.set(m.driver_id, { name: m.driver_name, phone: m.driver_phone, rows: [] });
+    byDriver.get(m.driver_id).rows.push(m);
+  }
+
+  const wb = XLSX.utils.book_new();
+  const usedNames = new Set();
+  for (const info of byDriver.values()) {
+    const aoa = [
+      [`氏名: ${info.name}`, `電話: ${info.phone || '-'}`],
+      [],
+      ['日付', '曜日', '店舗名', '開始', '終了', 'ステータス'],
+      ...info.rows.map(m => [m.match_date, weekdayLabelOf(m.match_date), m.store_name, m.time_start || '', m.time_end || '', m.status])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 22 }, { wch: 8 }, { wch: 8 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(info.name, usedNames));
+  }
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="driver_shifts_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(buffer);
+});
+
+// 店舗ごとの月間シフト表(誰が何時から何時まで来るか)をExcelで一括出力する(1店舗1シート)
+app.get('/api/export/shift-by-store', async (req, res) => {
+  const matches = await dbAll(`
+    SELECT m.*, d.name AS driver_name, d.phone AS driver_phone,
+           s.store_name, s.area, s.address AS store_address, s.time_start, s.time_end
+    FROM matches m
+    JOIN drivers d ON d.id = m.driver_id
+    JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+    ORDER BY s.store_name ASC, m.match_date ASC
+  `);
+  if (matches.length === 0) return res.status(400).json({ success: false, message: '「確定」または「完了」のマッチングがありません(候補のままの場合は先に確定してください)' });
+
+  const byStore = new Map();
+  for (const m of matches) {
+    const key = m.store_name; // store_requestsは店舗名の表記ゆれ吸収済み(resolveStoreId)だが、念のため店舗名単位でまとめる
+    if (!byStore.has(key)) byStore.set(key, { name: m.store_name, rows: [] });
+    byStore.get(key).rows.push(m);
+  }
+
+  const wb = XLSX.utils.book_new();
+  const usedNames = new Set();
+  for (const info of byStore.values()) {
+    const aoa = [
+      [`店舗名: ${info.name}`],
+      [],
+      ['日付', '曜日', '開始', '終了', '担当ドライバー', '電話番号', 'ステータス'],
+      ...info.rows.map(m => [m.match_date, weekdayLabelOf(m.match_date), m.time_start || '', m.time_end || '', m.driver_name, m.driver_phone || '-', m.status])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(info.name, usedNames));
+  }
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="store_shifts_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(buffer);
+});
+
 app.listen(PORT, () => console.log(`マッチングアプリ起動: http://localhost:${PORT}`));

@@ -518,10 +518,21 @@
         </div>
       </details>
 
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
+        <h2 class="font-bold text-slate-800">📨 シフト表の送付</h2>
+        <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、まず一括で確定してください。</p>
+        <div class="flex gap-2 items-center flex-wrap">
+          <button onclick="confirmAllMatches()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">✅ 候補を全て確定にする</button>
+          <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
+          <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
+        </div>
+      </div>
+
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
-        <div class="flex gap-1.5">
+        <div class="flex gap-1.5 items-center">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
           <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
+          <span class="text-[10px] text-slate-400">(下の書き出しは社内確認用の生データCSVです。送付用は上の「シフト表の送付」から)</span>
         </div>
         <div class="flex gap-1.5 items-center flex-wrap">
           <select id="dash-export-store-select" class="p-1.5 border rounded text-xs"></select>
@@ -2046,6 +2057,47 @@
       const rows = dashboardMatchesCache.map(dashMatchToRow);
       if (rows.length === 0) { alert('マッチングがありません'); return; }
       downloadCsv(`マッチング全体_${new Date().toISOString().slice(0, 10)}.csv`, DASH_EXPORT_HEADER, rows);
+    }
+
+    // ===== シフト表の送付(確定済みマッチングを個人事業主/店舗ごとにExcelで一括書き出し) =====
+    async function confirmAllMatches() {
+      if (!confirm('「候補」ステータスのマッチングを全て「確定」にします。よろしいですか？')) return;
+      const res = await fetch('/api/matches/confirm-all', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert('確定に失敗しました'); return; }
+      alert(`✅ ${data.confirmed}件を確定にしました`);
+      loadMatches();
+      loadDashboard();
+    }
+
+    async function downloadShiftExcel(url, fallbackName) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        let message = 'エラーが発生しました';
+        try { const data = await res.json(); message = data.message || message; } catch (e) { /* ignore */ }
+        alert(message);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const m = disposition.match(/filename="?([^"]+)"?/);
+      const filename = m ? m[1] : fallbackName;
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(dlUrl);
+    }
+
+    function exportShiftByDriver() {
+      downloadShiftExcel('/api/export/shift-by-driver', 'driver_shifts.xlsx');
+    }
+
+    function exportShiftByStore() {
+      downloadShiftExcel('/api/export/shift-by-store', 'store_shifts.xlsx');
     }
 
     switchTab('matches');
