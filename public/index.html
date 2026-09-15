@@ -495,10 +495,10 @@
         </div>
       </div>
 
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <h2 class="font-bold text-slate-800 mb-3">🏬 店舗別 依頼件数ランキング</h2>
-        <div id="dash-store-ranking" class="space-y-1.5"></div>
-      </div>
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🏬 店舗別 依頼件数</summary>
+        <div id="dash-store-ranking" class="pt-3 space-y-1.5"></div>
+      </details>
 
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">👍🚫 店舗の相性 統計</summary>
@@ -1959,11 +1959,12 @@
     function renderDashboardStoreRanking() {
       const counts = {};
       for (const r of dashboardStoreRequestsCache) counts[r.store_name] = (counts[r.store_name] || 0) + 1;
-      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      // ランキング(件数順)ではなく、店舗名の五十音順で一覧表示する
+      const sorted = Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0], 'ja'));
       const el = document.getElementById('dash-store-ranking');
       if (sorted.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm p-2">まだ店舗依頼がありません</p>'; return; }
-      const max = sorted[0][1];
-      el.innerHTML = sorted.slice(0, 15).map(([name, count]) => `
+      const max = Math.max(...sorted.map(([, count]) => count));
+      el.innerHTML = sorted.map(([name, count]) => `
         <div class="flex items-center gap-2">
           <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
           <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
