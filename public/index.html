@@ -14,6 +14,7 @@
   </header>
 
   <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-10">
+    <button id="btn-nav-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📊 ダッシュボード</button>
     <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap"><span id="nav-label-matches">📋 マッチング結果</span></button>
     <button id="btn-nav-store" onclick="switchTab('store')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏬 店舗依頼</button>
     <button id="btn-nav-availability" onclick="switchTab('availability')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🗓️ 希望シフト</button>
@@ -21,7 +22,6 @@
     <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
     <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗相性マスタ</button>
     <button id="btn-nav-history" onclick="switchTab('history')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📜 派遣履歴</button>
-    <button id="btn-nav-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📊 ダッシュボード</button>
   </nav>
 
   <main class="p-4 max-w-6xl mx-auto space-y-4">
