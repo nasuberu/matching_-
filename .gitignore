@@ -1,4 +1,7 @@
 node_modules/
 matching.db
+matching.db-wal
+matching.db-shm
 uploads/
 .claude/
+.vscode/

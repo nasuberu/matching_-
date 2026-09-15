@@ -29,6 +29,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const db = new sqlite3.Database(path.join(__dirname, 'matching.db'));
 
+// 複数プロセスから同時にこのDBファイルが開かれても書き込みが失われにくいようにする。
+// WALモードは読み取りと書き込みが競合しにくく、busy_timeoutは他プロセスが書き込み中でも
+// すぐにエラーにせず一定時間リトライしてから諦めるようにする(誤って二重起動してしまった場合の保険)
+db.run('PRAGMA journal_mode = WAL');
+db.run('PRAGMA busy_timeout = 5000');
+
 db.serialize(() => {
   // 個人事業主ドライバーのマスタ(自宅住所を持たせ、依頼店舗までの距離をマッチング時に計算する)
   db.run(`
@@ -159,6 +165,9 @@ db.serialize(() => {
   ensureColumn('drivers', 'insurance_info', 'TEXT');        // 保険加入状況(貨物保険等のメモ)
   ensureColumn('drivers', 'company_name', 'TEXT');          // 会社名(法人として契約している個人事業主向け。個人の場合は空欄)
   ensureColumn('drivers', 'fixed_store_id', 'INTEGER REFERENCES stores(id)'); // 固定希望店舗(希望シフトで店舗未入力の日の初期値として使う)
+  ensureColumn('store_requests', 'archived_month', 'TEXT');     // 月次クローズで「YYYY-MM」を入れ、作業画面から隠す(データは消さない)
+  ensureColumn('driver_availability', 'archived_month', 'TEXT');
+  ensureColumn('matches', 'archived_month', 'TEXT');
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
 });
 
@@ -375,6 +384,29 @@ function parseUploadedSpreadsheet(buffer, filename) {
   return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, dateNF: 'yyyy-mm-dd' });
 }
 
+// 「氏名×日付」のワイド形式(1行目=日付見出し、1列目=氏名、セル=勤務時間 or 休み)のシフト表を
+// 見出し行+各行を配列のまま返す(通常のparseUploadedSpreadsheetは列名をキーにしたオブジェクトを返すため、
+// 「1(火)」のような日付見出しを順序どおり扱いたいこちらの用途には配列のままの形が必要)
+function parseWideSpreadsheet(buffer, filename) {
+  const ext = (filename || '').toLowerCase();
+  if (ext.endsWith('.csv') || ext.endsWith('.txt')) {
+    const detected = jschardet.detect(buffer) || {};
+    let text;
+    try {
+      text = iconv.decode(buffer, detected.encoding || 'UTF-8');
+    } catch (e) {
+      text = buffer.toString('utf8');
+    }
+    const objRows = parseCsvText(text);
+    if (objRows.length === 0) return [];
+    const keys = Object.keys(objRows[0]);
+    return [keys, ...objRows.map(o => keys.map(k => o[k]))];
+  }
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+}
+
 // 列名は実際のExcel/楽シフのエクスポート形式が分かり次第、ここに実際の見出し名を追記して合わせていく想定。
 // 現時点ではよくありそうな見出し名をいくつか候補として登録しておく
 function pickField(row, aliases) {
@@ -564,15 +596,23 @@ app.get('/api/driver-availability', async (req, res) => {
   const rows = await dbAll(`
     SELECT a.*, d.name AS driver_name, d.phone AS driver_phone
     FROM driver_availability a JOIN drivers d ON d.id = a.driver_id
+    WHERE a.archived_month IS NULL
     ORDER BY a.desired_date DESC, a.id DESC
   `);
   res.json({ success: true, availability: rows });
 });
 
 app.post('/api/driver-availability', async (req, res) => {
-  const { driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests } = req.body;
+  const { id, driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests } = req.body;
   if (!driver_id || !desired_date) return res.status(400).json({ success: false, message: 'driver_id, desired_date は必須です' });
   const now = new Date().toISOString();
+  if (id) {
+    await dbRun(
+      `UPDATE driver_availability SET driver_id=?, desired_date=?, desired_area=?, desired_store=?, time_start=?, time_end=?, requests=? WHERE id=?`,
+      [driver_id, desired_date, desired_area || '', desired_store || '', time_start || '', time_end || '', requests || '', id]
+    );
+    return res.json({ success: true, id });
+  }
   const result = await dbRun(
     `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [driver_id, desired_date, desired_area || '', desired_store || '', time_start || '', time_end || '', requests || '', now]
@@ -619,7 +659,7 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
 
     // 同じドライバー×同じ希望日の行が既にあれば上書き更新する(同じファイルの再取込みで重複登録されないように)
     const existing = await dbGet(
-      'SELECT id FROM driver_availability WHERE driver_id = ? AND desired_date = ?',
+      'SELECT id FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
       [driver_id, desired_date]
     );
     if (existing) {
@@ -639,9 +679,84 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
   res.json({ success: true, imported, total: rows.length, errors });
 });
 
+// ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
+// セル=勤務時間「10:00〜22:00」or「休み」or 空欄)で取込む。年月はファイルに含まれないためフォームで指定してもらう。
+// 空欄・「休み」のセルは希望シフトを作らない(その日は稼働しない扱い)
+app.post('/api/driver-availability/import-wide', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
+  const year = parseInt(req.body.year, 10);
+  const month = parseInt(req.body.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, message: '対象年月を指定してください' });
+  }
+
+  let rows;
+  try {
+    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+  if (rows.length < 2) return res.status(400).json({ success: false, message: 'データ行が見つかりませんでした' });
+
+  const header = rows[0];
+  // 「1(火)」のような見出しから日付の数字部分だけを取り出す
+  const dayColumns = [];
+  for (let c = 1; c < header.length; c++) {
+    const m = String(header[c] ?? '').match(/^(\d{1,2})/);
+    if (m) dayColumns.push({ colIndex: c, day: parseInt(m[1], 10) });
+  }
+  if (dayColumns.length === 0) {
+    return res.status(400).json({ success: false, message: '日付の列見出しが読み取れませんでした(例: 「1(火)」のような形式を想定しています)' });
+  }
+
+  const drivers = await dbAll('SELECT id, name FROM drivers');
+  const driverByName = new Map(drivers.map(d => [d.name.trim(), d.id]));
+
+  let imported = 0;
+  const errors = [];
+  const now = new Date().toISOString();
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const driverName = String(row[0] ?? '').trim();
+    if (!driverName) continue; // 空行はスキップ
+
+    const driver_id = driverByName.get(driverName);
+    if (!driver_id) { errors.push(`${r + 1}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+
+    for (const { colIndex, day } of dayColumns) {
+      const cell = String(row[colIndex] ?? '').trim();
+      if (!cell || cell === '休み') continue; // 空欄・休みは希望シフトを作らない
+
+      const timeMatch = cell.match(/^(\d{1,2}:\d{2})\s*[〜~\-−ー]\s*(\d{1,2}:\d{2})$/);
+      if (!timeMatch) { errors.push(`${r + 1}行目 ${driverName} ${day}日: 「${cell}」を勤務時間として読み取れませんでした`); continue; }
+
+      const desired_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const time_start = timeMatch[1];
+      const time_end = timeMatch[2];
+
+      const existing = await dbGet(
+        'SELECT id FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
+        [driver_id, desired_date]
+      );
+      if (existing) {
+        await dbRun('UPDATE driver_availability SET time_start=?, time_end=? WHERE id=?', [time_start, time_end, existing.id]);
+      } else {
+        await dbRun(
+          `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [driver_id, desired_date, '', '', time_start, time_end, '', now]
+        );
+      }
+      imported++;
+    }
+  }
+
+  res.json({ success: true, imported, errors });
+});
+
 // ===== 店舗からの人員要請 =====
 app.get('/api/store-requests', async (req, res) => {
-  const rows = await dbAll('SELECT * FROM store_requests ORDER BY request_date DESC, id DESC');
+  const rows = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date DESC, id DESC');
   res.json({ success: true, requests: rows });
 });
 
@@ -717,7 +832,7 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
     // 同じ店舗×同じ依頼日×同じ開始時刻の行が既にあれば上書き更新する(同じファイルの再取込みで重複登録されないように。
     // 1日に時間帯違いで複数依頼が来る店舗もあるため、開始時刻もキーに含めて別依頼として区別する)
     const existing = await dbGet(
-      'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ?',
+      'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ? AND archived_month IS NULL',
       [store_id, request_date, time_start || '']
     );
     if (existing) {
@@ -735,6 +850,133 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
   }
 
   res.json({ success: true, imported, total: rows.length, errors });
+});
+
+// 店舗の「曜日ごとの週間必要枠」表(1行=1人分の必要枠。同じ店舗が複数行あれば必要人数として合算する)を取込む。
+// 列は固定位置ではなく見出しのテキスト(店舗名/月/火/水/木/金/土/日/フラグ/備考)で探すため、
+// 見出し行がどこにあっても(先頭にメモ行が入っていても)対応できる。
+// 年月はファイルに含まれないためフォームで指定してもらい、対象月の該当曜日すべてに展開して店舗依頼を作る。
+// 備考に社員番号(5〜7桁の数字)らしき記載があれば、その社員のドライバーマスタの「固定希望店舗」にこの店舗を自動設定する
+app.post('/api/store-requests/import-weekly', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
+  const year = parseInt(req.body.year, 10);
+  const month = parseInt(req.body.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, message: '対象年月を指定してください' });
+  }
+
+  let rows;
+  try {
+    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+
+  // 見出し行を「店舗名」という見出しが含まれる行として自動検出する(先頭にメモ行が挿入されていることがあるため)
+  let headerRowIndex = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    if (rows[i].some(cell => String(cell ?? '').trim() === '店舗名')) { headerRowIndex = i; break; }
+  }
+  if (headerRowIndex === -1) {
+    return res.status(400).json({ success: false, message: '見出し行(「店舗名」の列)が見つかりませんでした' });
+  }
+  const header = rows[headerRowIndex].map(h => String(h ?? '').trim());
+  const colOf = (label) => header.indexOf(label);
+  const colStoreName = colOf('店舗名');
+  const colFlag = colOf('フラグ');
+  const colNotes = colOf('備考');
+  const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
+  const WEEKDAY_JSDAY = [1, 2, 3, 4, 5, 6, 0]; // Date.getDay()に合わせる(0=日,1=月,...,6=土)
+  const weekdayCols = WEEKDAY_LABELS.map(colOf);
+
+  if (weekdayCols.some(c => c === -1)) {
+    return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
+  }
+
+  const drivers = await dbAll('SELECT id, driver_code FROM drivers');
+  const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [String(d.driver_code).trim(), d.id]));
+
+  // 対象月の日付を曜日ごとにまとめておく(この曜日は月内のこの日付たち、という対応表)
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const datesByJsDay = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    const jsDay = new Date(year, month - 1, d).getDay();
+    (datesByJsDay[jsDay] = datesByJsDay[jsDay] || []).push(d);
+  }
+
+  const errors = [];
+  let fixedDriverLinks = 0;
+
+  // 1周目: 同じ店舗×同じ曜日×同じ時間帯の行を合算し、必要人数を数える(1行=1人分のため)
+  const slotMap = new Map(); // "storeId|weekdayIndex|time_start|time_end" -> { count, storeName, notesSet }
+  for (let r = headerRowIndex + 1; r < rows.length; r++) {
+    const row = rows[r];
+    const store_name = String(row[colStoreName] ?? '').trim();
+    if (!store_name) continue;
+
+    const flag = colFlag !== -1 ? String(row[colFlag] ?? '').trim() : '';
+    const notesRaw = colNotes !== -1 ? String(row[colNotes] ?? '').trim() : '';
+    const note = flag ? `(${flag}) ${notesRaw}`.trim() : notesRaw;
+
+    const store_id = await resolveStoreId({ store_name });
+
+    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する
+    const codeMatch = notesRaw.match(/(\d{5,7})/);
+    if (codeMatch && driverByCode.has(codeMatch[1])) {
+      await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, driverByCode.get(codeMatch[1])]);
+      fixedDriverLinks++;
+    }
+
+    let hasAnySchedule = false;
+    for (let w = 0; w < WEEKDAY_LABELS.length; w++) {
+      const cell = String(row[weekdayCols[w]] ?? '').trim();
+      if (!cell) continue;
+      const timeMatch = cell.match(/(\d{1,2})[:時]?(\d{2})?\s*[-〜~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
+      if (!timeMatch) continue;
+      hasAnySchedule = true;
+      const time_start = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
+      const time_end = `${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`;
+
+      const key = `${store_id}|${w}|${time_start}|${time_end}`;
+      const entry = slotMap.get(key) || { count: 0, storeName: store_name, notesSet: new Set(), weekdayIndex: w, time_start, time_end, storeId: store_id };
+      entry.count++;
+      if (note) entry.notesSet.add(note);
+      slotMap.set(key, entry);
+    }
+
+    if (!hasAnySchedule && notesRaw) {
+      errors.push(`${r + 1}行目「${store_name}」: 曜日の時間帯が読み取れず、備考「${notesRaw}」があるため要確認です(手動で確認してください)`);
+    }
+  }
+
+  // 2周目: 曜日×時間帯の枠を、対象月の実際の日付に展開して店舗依頼を作る(既存の重複防止と同じキーで上書き更新)
+  const now = new Date().toISOString();
+  let imported = 0;
+  for (const entry of slotMap.values()) {
+    const jsDay = WEEKDAY_JSDAY[entry.weekdayIndex];
+    const requests = [...entry.notesSet].join(' / ');
+    for (const day of (datesByJsDay[jsDay] || [])) {
+      const request_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const existing = await dbGet(
+        'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ? AND archived_month IS NULL',
+        [entry.storeId, request_date, entry.time_start]
+      );
+      if (existing) {
+        await dbRun(
+          `UPDATE store_requests SET store_name=?, time_end=?, required_count=?, requests=? WHERE id=?`,
+          [entry.storeName, entry.time_end, entry.count, requests, existing.id]
+        );
+      } else {
+        await dbRun(
+          `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [entry.storeName, '', '', null, null, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId]
+        );
+      }
+      imported++;
+    }
+  }
+
+  res.json({ success: true, imported, fixedDriverLinks, errors });
 });
 
 // ===== 店舗マスタ =====
@@ -879,12 +1121,19 @@ app.get('/api/dispatch-history', async (req, res) => {
 });
 
 app.post('/api/dispatch-history', async (req, res) => {
-  const { driver_id, store_name, work_date, notes } = req.body;
+  const { id, driver_id, store_name, work_date, notes } = req.body;
   if (!driver_id || !store_name || !work_date) {
     return res.status(400).json({ success: false, message: 'driver_id, store_name, work_date は必須です' });
   }
   const store_id = await resolveStoreId({ store_name });
   const now = new Date().toISOString();
+  if (id) {
+    await dbRun(
+      'UPDATE dispatch_history SET driver_id=?, store_id=?, work_date=?, notes=? WHERE id=?',
+      [driver_id, store_id, work_date, notes || '', id]
+    );
+    return res.json({ success: true, id });
+  }
   const result = await dbRun(
     'INSERT INTO dispatch_history (driver_id, store_id, work_date, notes, created_at) VALUES (?, ?, ?, ?, ?)',
     [driver_id, store_id, work_date, notes || '', now]
@@ -942,6 +1191,7 @@ app.get('/api/matches', async (req, res) => {
     FROM matches m
     JOIN drivers d ON d.id = m.driver_id
     JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL
     ORDER BY m.match_date DESC, m.id DESC
   `);
   res.json({ success: true, matches: rows });
@@ -955,14 +1205,16 @@ app.get('/api/matches', async (req, res) => {
 // 距離がDIST_WARNING_KMを超える場合はマッチング自体は作るが「遠い」警告フラグを立てる(除外はしない)。
 // 既に他のマッチングで同日確定しているドライバーは対象から外す(ダブルブッキング防止)。
 app.post('/api/matches/run', async (req, res) => {
-  await dbRun('DELETE FROM matches'); // 一旦候補を作り直す(確定済みの運用に育ったら「候補のみ削除」に変更する想定)
+  // 一旦候補を作り直す(確定済みの運用に育ったら「候補のみ削除」に変更する想定)。アーカイブ済み(過去に月次クローズしたもの)は対象外にする
+  await dbRun('DELETE FROM matches WHERE archived_month IS NULL');
 
-  const storeRequests = await dbAll('SELECT * FROM store_requests ORDER BY request_date ASC');
+  const storeRequests = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date ASC');
   const availabilityRows = await dbAll(`
     SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, fs.name AS fixed_store_name
     FROM driver_availability a
     JOIN drivers d ON d.id = a.driver_id
     LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+    WHERE a.archived_month IS NULL
   `);
   // 希望シフトで店舗が未入力の場合は、ドライバーマスタの「固定希望店舗」を初期値として使う
   const availability = availabilityRows.map(a => ({ ...a, desired_store: a.desired_store || a.fixed_store_name || '' }));
@@ -1031,12 +1283,32 @@ app.post('/api/matches/:id/complete', async (req, res) => {
   res.json({ success: true });
 });
 
+// 「完了」を取り消して「確定」に戻す(押し間違い・後からの取り消し用)。あわせて自動作成された派遣履歴も削除する
+app.post('/api/matches/:id/undo-complete', async (req, res) => {
+  const match = await dbGet(`SELECT id, status FROM matches WHERE id = ?`, [req.params.id]);
+  if (!match) return res.status(404).json({ success: false, message: 'マッチングが見つかりません' });
+  if (match.status !== '完了') return res.status(400).json({ success: false, message: '「完了」のマッチングのみ取り消せます' });
+
+  await dbRun(`UPDATE matches SET status = '確定' WHERE id = ?`, [req.params.id]);
+  await dbRun('DELETE FROM dispatch_history WHERE match_id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+
 // 欠勤にする(削除はせず、理由付きで履歴として残す。実際には稼働していないので派遣履歴には記録しない)
 app.post('/api/matches/:id/absence', async (req, res) => {
   const { reason } = req.body;
   const match = await dbGet('SELECT id FROM matches WHERE id = ?', [req.params.id]);
   if (!match) return res.status(404).json({ success: false, message: 'マッチングが見つかりません' });
   await dbRun(`UPDATE matches SET status = '欠勤', absence_reason = ? WHERE id = ?`, [reason || '', req.params.id]);
+  res.json({ success: true });
+});
+
+// 欠勤以外の理由(店舗都合・ドライバー都合など)で担当を変更する。欠勤と同じく代替候補探しの対象になる
+app.post('/api/matches/:id/change', async (req, res) => {
+  const { reason } = req.body;
+  const match = await dbGet('SELECT id FROM matches WHERE id = ?', [req.params.id]);
+  if (!match) return res.status(404).json({ success: false, message: 'マッチングが見つかりません' });
+  await dbRun(`UPDATE matches SET status = '変更', absence_reason = ? WHERE id = ?`, [reason || '', req.params.id]);
   res.json({ success: true });
 });
 
@@ -1052,7 +1324,7 @@ app.get('/api/matches/:id/substitutes', async (req, res) => {
 
   // 同日に他のマッチングで既に候補/確定/完了になっているドライバーは除外(ダブルブッキング防止。欠勤した本人も除外)
   const busyRows = await dbAll(
-    `SELECT driver_id FROM matches WHERE match_date = ? AND status IN ('候補', '確定', '完了')`,
+    `SELECT driver_id FROM matches WHERE match_date = ? AND status IN ('候補', '確定', '完了') AND archived_month IS NULL`,
     [match.match_date]
   );
   const excluded = new Set(busyRows.map(r => r.driver_id));
@@ -1064,7 +1336,7 @@ app.get('/api/matches/:id/substitutes', async (req, res) => {
     LEFT JOIN stores fs ON fs.id = d.fixed_store_id
   `);
   const availabilityToday = await dbAll(
-    'SELECT driver_id, desired_store, desired_area FROM driver_availability WHERE desired_date = ?',
+    'SELECT driver_id, desired_store, desired_area FROM driver_availability WHERE desired_date = ? AND archived_month IS NULL',
     [match.match_date]
   );
   const availabilityByDriver = new Map(availabilityToday.map(a => [a.driver_id, a]));
@@ -1114,7 +1386,7 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
 
   const av = await dbGet(
-    'SELECT desired_store, desired_area FROM driver_availability WHERE driver_id = ? AND desired_date = ?',
+    'SELECT desired_store, desired_area FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
     [driver_id, match.match_date]
   );
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
@@ -1136,9 +1408,161 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   res.json({ success: true, id: result.lastID });
 });
 
+// 特定の日付(・任意で店舗)について、その日に空いているドライバーを単独で検索する。
+// 既存のマッチングに紐付けずに「今日は誰が空いているか」をすぐ調べたい場合に使う(読み取り専用、何も変更しない)
+app.get('/api/availability-search', async (req, res) => {
+  const date = req.query.date;
+  const storeId = req.query.store_id ? parseInt(req.query.store_id, 10) : null;
+  if (!date) return res.status(400).json({ success: false, message: '日付を指定してください' });
+
+  const busyRows = await dbAll(
+    `SELECT driver_id FROM matches WHERE match_date = ? AND status IN ('候補', '確定', '完了') AND archived_month IS NULL`,
+    [date]
+  );
+  const excluded = new Set(busyRows.map(r => r.driver_id));
+
+  const drivers = await dbAll(`
+    SELECT d.id, d.name, d.phone, d.status, d.home_lat, d.home_lng, fs.name AS fixed_store_name
+    FROM drivers d
+    LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+  `);
+  const availabilityToday = await dbAll(
+    'SELECT driver_id, desired_store, desired_area, time_start, time_end FROM driver_availability WHERE desired_date = ? AND archived_month IS NULL',
+    [date]
+  );
+  const availabilityByDriver = new Map(availabilityToday.map(a => [a.driver_id, a]));
+
+  let store = null;
+  const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
+  if (storeId) {
+    store = await dbGet('SELECT id AS store_id, name AS store_name, area, lat, lng FROM stores WHERE id = ?', [storeId]);
+  }
+
+  const candidates = drivers
+    .filter(d => !excluded.has(d.id))
+    .filter(d => d.status !== '契約終了')
+    .filter(d => !store || preferenceByDriverStore.get(`${d.id}:${store.store_id}`) !== 'NG')
+    .map(d => {
+      const av = availabilityByDriver.get(d.id);
+      let scored = { distance: null, score: null, preference: null, experienceCount: 0 };
+      if (store) {
+        const candidateLike = {
+          driver_id: d.id, home_lat: d.home_lat, home_lng: d.home_lng,
+          desired_store: (av && av.desired_store) || d.fixed_store_name || null,
+          desired_area: av ? av.desired_area : null
+        };
+        scored = scoreCandidate(candidateLike, store, preferenceByDriverStore, storeVisitCount, areaVisitCount);
+      }
+      return {
+        driver_id: d.id, name: d.name, phone: d.phone, driver_status: d.status,
+        has_availability_today: !!av,
+        desired_area: av ? av.desired_area : null,
+        desired_store: av ? av.desired_store : null,
+        time_start: av ? av.time_start : null,
+        time_end: av ? av.time_end : null,
+        is_far_warning: scored.distance != null && scored.distance > DIST_WARNING_KM,
+        ...scored
+      };
+    })
+    .sort((a, b) => {
+      if (store) return (b.score ?? -Infinity) - (a.score ?? -Infinity);
+      return a.name.localeCompare(b.name, 'ja');
+    });
+
+  res.json({ success: true, candidates, storeSelected: !!store });
+});
+
 app.delete('/api/matches/:id', async (req, res) => {
   await dbRun('DELETE FROM matches WHERE id = ?', [req.params.id]);
   res.json({ success: true });
+});
+
+// ===== 月次クローズ =====
+// 指定した年月の希望シフト・店舗依頼・マッチング結果(その月の作業データ)を「アーカイブ済み」にして作業画面から隠し、
+// 次の月の準備をする。削除はしない(archived_monthに「YYYY-MM」を入れるだけ)ので、後から「過去の月を見る」で参照できる。
+// 店舗マスタ・ドライバーマスタ・派遣履歴はそもそも対象外(実績として恒久的に残す)。
+// 「確定」のまま「完了」になっていないマッチングが残っている場合は、force指定が無ければ一旦確認を促す
+app.post('/api/month-close', async (req, res) => {
+  const { year, month, force } = req.body;
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, message: '対象年月を指定してください' });
+  }
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+  const archivedMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+  const unfinished = await dbGet(
+    `SELECT COUNT(*) AS cnt FROM matches WHERE match_date >= ? AND match_date <= ? AND status = '確定' AND archived_month IS NULL`,
+    [startDate, endDate]
+  );
+  if (unfinished.cnt > 0 && !force) {
+    return res.json({ success: true, needsConfirmation: true, unfinishedCount: unfinished.cnt });
+  }
+
+  const matchesResult = await dbRun(
+    'UPDATE matches SET archived_month = ? WHERE match_date >= ? AND match_date <= ? AND archived_month IS NULL',
+    [archivedMonth, startDate, endDate]
+  );
+  const requestsResult = await dbRun(
+    'UPDATE store_requests SET archived_month = ? WHERE request_date >= ? AND request_date <= ? AND archived_month IS NULL',
+    [archivedMonth, startDate, endDate]
+  );
+  const availabilityResult = await dbRun(
+    'UPDATE driver_availability SET archived_month = ? WHERE desired_date >= ? AND desired_date <= ? AND archived_month IS NULL',
+    [archivedMonth, startDate, endDate]
+  );
+
+  res.json({
+    success: true,
+    archivedMonth,
+    archived: { matches: matchesResult.changes, storeRequests: requestsResult.changes, availability: availabilityResult.changes }
+  });
+});
+
+// クローズ済み(アーカイブ済み)の月の一覧を返す
+app.get('/api/archive/months', async (req, res) => {
+  const rows = await dbAll(`
+    SELECT archived_month FROM store_requests WHERE archived_month IS NOT NULL
+    UNION SELECT archived_month FROM driver_availability WHERE archived_month IS NOT NULL
+    UNION SELECT archived_month FROM matches WHERE archived_month IS NOT NULL
+    ORDER BY archived_month DESC
+  `);
+  res.json({ success: true, months: rows.map(r => r.archived_month) });
+});
+
+// 指定した月にクローズされた店舗依頼・希望シフト・マッチング結果を参照専用で返す
+app.get('/api/archive/:month', async (req, res) => {
+  const month = req.params.month;
+  const [storeRequests, availability, matches] = await Promise.all([
+    dbAll('SELECT * FROM store_requests WHERE archived_month = ? ORDER BY request_date ASC, id ASC', [month]),
+    dbAll(`
+      SELECT a.*, d.name AS driver_name FROM driver_availability a
+      JOIN drivers d ON d.id = a.driver_id
+      WHERE a.archived_month = ? ORDER BY a.desired_date ASC, a.id ASC
+    `, [month]),
+    dbAll(`
+      SELECT m.*, d.name AS driver_name, s.store_name
+      FROM matches m
+      JOIN drivers d ON d.id = m.driver_id
+      JOIN store_requests s ON s.id = m.store_request_id
+      WHERE m.archived_month = ? ORDER BY m.match_date ASC, m.id ASC
+    `, [month]),
+  ]);
+  res.json({ success: true, storeRequests, availability, matches });
+});
+
+// クローズ済みの月を作業画面に戻す(archived_monthを外す)。間違えてクローズしてしまった場合や、
+// 過去の月に戻って作業を再開したい場合に使う
+app.post('/api/archive/:month/restore', async (req, res) => {
+  const month = req.params.month;
+  const storeRequestsResult = await dbRun('UPDATE store_requests SET archived_month = NULL WHERE archived_month = ?', [month]);
+  const availabilityResult = await dbRun('UPDATE driver_availability SET archived_month = NULL WHERE archived_month = ?', [month]);
+  const matchesResult = await dbRun('UPDATE matches SET archived_month = NULL WHERE archived_month = ?', [month]);
+  res.json({
+    success: true,
+    restored: { matches: matchesResult.changes, storeRequests: storeRequestsResult.changes, availability: availabilityResult.changes }
+  });
 });
 
 app.listen(PORT, () => console.log(`マッチングアプリ起動: http://localhost:${PORT}`));

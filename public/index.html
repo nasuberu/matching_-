@@ -35,6 +35,20 @@
         </div>
         <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
       </div>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🔍 空き状況を調べる(単独検索)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">既存のマッチングとは関係なく、「その日に誰が空いているか」をすぐ調べられます。店舗を指定すると距離・相性・経験を加味したスコア順に、指定しなければ全員を氏名順に表示します。</p>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="avsearch-date" type="date" class="p-2 border rounded text-sm">
+            <select id="avsearch-store" class="p-2 border rounded text-sm"></select>
+            <button onclick="runAvailabilitySearch()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-sm">検索</button>
+          </div>
+          <div id="avsearch-result"></div>
+        </div>
+      </details>
+
       <div id="matches-list" class="space-y-2"></div>
     </div>
 
@@ -121,14 +135,41 @@
         <h2 class="font-bold text-slate-800">🏬 店舗依頼を登録</h2>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み</p>
-          <p class="text-[10px] text-slate-400">列名の例: 店舗名・エリア・住所・依頼日・開始時刻・終了時刻・必要人数・要望(実際のファイル形式が分かれば調整します)</p>
-          <p class="text-[10px] text-slate-400">※ 同じ店舗・同じ依頼日・同じ開始時刻の行は上書き更新されます(1日に時間帯違いで複数依頼がある場合は別依頼として扱われます)</p>
+          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み(1行=1件の依頼)</p>
+          <details class="text-[10px] text-slate-400">
+            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
+            <div class="mt-1 space-y-1">
+              <p>列名の例: 店舗名・エリア・住所・依頼日・開始時刻・終了時刻・必要人数・要望(実際のファイル形式が分かれば調整します)</p>
+              <p>※ 同じ店舗・同じ依頼日・同じ開始時刻の行は上書き更新されます(1日に時間帯違いで複数依頼がある場合は別依頼として扱われます)</p>
+            </div>
+          </details>
           <div class="flex gap-2 items-center">
             <input id="sr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <button onclick="importStoreRequests()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
           </div>
           <div id="sr-import-result" class="text-xs"></div>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 週間必要枠表(曜日パターン)から一括取込み</p>
+          <details class="text-[10px] text-slate-400">
+            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
+            <div class="mt-1 space-y-1">
+              <p>「店舗名」「月」「火」「水」「木」「金」「土」「日」の見出しを含む表を想定しています(見出しさえあれば、前に他のメモ行や他の列があっても大丈夫です)。各曜日のセルには「9:30-21:30」のような時間帯を入れてください</p>
+              <p>※ 同じ店舗・同じ曜日・同じ時間帯の行が複数あれば、必要人数として合算します(1行=1人分の必要枠)</p>
+              <p>※ 指定した年月のうち、その曜日に該当するすべての日付に展開して依頼を作成します。再取込みすると同じ枠は上書き更新されます</p>
+              <p>※ 「備考」欄に社員番号(5〜7桁の数字)らしき記載があれば、その社員のドライバーマスタの「固定希望店舗」に自動で反映します</p>
+            </div>
+          </details>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <input id="sr-weekly-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
+            <span class="text-xs text-slate-500">年</span>
+            <input id="sr-weekly-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
+            <span class="text-xs text-slate-500">月分</span>
+            <button onclick="importStoreRequestsWeekly()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
 
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
@@ -244,19 +285,65 @@
 
     <!-- 希望シフトタブ -->
     <div id="tab-availability" class="hidden space-y-4">
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-        <h2 class="font-bold text-slate-800">🗓️ ドライバーの希望シフトを登録</h2>
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🗓️ ドライバーの希望シフトを登録</summary>
+        <div class="space-y-3 pt-3">
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 楽シフ等のエクスポート(Excel/CSV)から一括取込み</p>
-          <p class="text-[10px] text-slate-400">列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望(実際のファイル形式が分かれば調整します)</p>
-          <p class="text-[10px] text-slate-400">※ 同じドライバー・同じ希望日の行は上書き更新されます</p>
-          <p class="text-[10px] text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
+          <details class="text-[10px] text-slate-400">
+            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
+            <div class="mt-1 space-y-1">
+              <p>列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望(実際のファイル形式が分かれば調整します)</p>
+              <p>※ 同じドライバー・同じ希望日の行は上書き更新されます</p>
+              <p class="text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
+            </div>
+          </details>
           <div class="flex gap-2 items-center">
             <input id="av-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <button onclick="importAvailability()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
           </div>
           <div id="av-import-result" class="text-xs"></div>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 月間シフト表(氏名×日付のワイド形式)から一括取込み</p>
+          <details class="text-[10px] text-slate-400">
+            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
+            <div class="mt-1 space-y-1">
+              <p>1行目に「1(火)」のように日付見出しが横に並び、1列目が氏名、各セルが「10:00〜22:00」等の勤務時間または「休み」の形式のExcelを想定しています</p>
+              <p>※ 空欄・「休み」のセルは希望シフトを作りません。同じドライバー・同じ日付は上書き更新されます</p>
+              <p class="text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
+            </div>
+          </details>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="av-wide-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <input id="av-wide-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
+            <span class="text-xs text-slate-500">年</span>
+            <input id="av-wide-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
+            <span class="text-xs text-slate-500">月分</span>
+            <button onclick="importAvailabilityWide()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="av-wide-import-result" class="text-xs"></div>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📱 LINEメッセージから登録</p>
+          <details class="text-[10px] text-slate-400">
+            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
+            <div class="mt-1 space-y-1">
+              <p>ドライバーを選び、LINEで届いた文章をそのまま貼り付けて「解析する」を押すと、日付・時間を自動で読み取ってプレビューします。内容を確認・修正してから登録できます</p>
+              <p>1行1日付を想定(例: 「9/16 10:00〜18:00」「18日 10-18」「20日 休み」)。「休み」の行は登録されません</p>
+            </div>
+          </details>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <select id="line-driver" class="p-2 border rounded text-sm"></select>
+            <input id="line-year" type="number" value="2026" placeholder="年" class="p-2 border rounded text-sm">
+            <input id="line-month" type="number" min="1" max="12" placeholder="月(日付だけの行に使用)" class="p-2 border rounded text-sm">
+          </div>
+          <textarea id="line-text" rows="4" placeholder="ここにLINEのメッセージを貼り付け" class="w-full p-2 border rounded text-sm"></textarea>
+          <button onclick="parseLineShiftMessage()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🔍 解析してプレビュー</button>
+          <div id="line-preview"></div>
         </div>
 
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
@@ -269,9 +356,50 @@
           <input id="av-time-end" type="time" class="p-2 border rounded text-sm">
           <input id="av-requests" placeholder="要望(自由記述)" class="p-2 border rounded text-sm md:col-span-4">
         </div>
-        <button onclick="saveAvailability()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+        <div class="flex gap-2">
+          <button id="av-submit-btn" onclick="saveAvailability()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+          <button id="av-cancel-btn" onclick="cancelAvailabilityEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+        </div>
+        </div>
+      </details>
+
+      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
+        <div class="flex gap-1.5">
+          <button id="av-view-list-btn" onclick="switchAvailabilityView('list')" class="text-xs px-3 py-1.5 rounded font-bold">リスト表示</button>
+          <button id="av-view-grid-btn" onclick="switchAvailabilityView('grid')" class="text-xs px-3 py-1.5 rounded font-bold">📅 カレンダー表示</button>
+        </div>
+        <label class="text-xs font-bold text-slate-600 ml-2">並び替え:</label>
+        <select id="av-sort" onchange="renderAvailabilityCurrentView()" class="p-1.5 border rounded text-xs">
+          <option value="date">希望日順</option>
+          <option value="name">ドライバー名順</option>
+        </select>
+        <input id="av-search" oninput="renderAvailabilityCurrentView()" placeholder="🔍 ドライバー名・希望日・エリア・店舗で検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
       </div>
-      <div id="availability-list" class="space-y-2"></div>
+
+      <div id="av-list-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+              <th class="p-2.5">ドライバー名</th>
+              <th class="p-2.5">希望日</th>
+              <th class="p-2.5">希望エリア</th>
+              <th class="p-2.5">希望店舗</th>
+              <th class="p-2.5">開始</th>
+              <th class="p-2.5">終了</th>
+              <th class="p-2.5">要望</th>
+              <th class="p-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="availability-list"></tbody>
+        </table>
+      </div>
+
+      <div id="av-grid-view" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="text-sm border-collapse">
+          <thead><tr id="av-grid-header"></tr></thead>
+          <tbody id="av-grid-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 店舗の相性タブ -->
@@ -308,13 +436,39 @@
           <input id="hist-date" type="date" class="p-2 border rounded text-sm">
           <input id="hist-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
         </div>
-        <button onclick="saveHistory()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+        <div class="flex gap-2">
+          <button id="hist-submit-btn" onclick="saveHistory()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+          <button id="hist-cancel-btn" onclick="cancelHistoryEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+        </div>
       </div>
       <div id="history-list" class="space-y-2"></div>
     </div>
 
     <!-- ダッシュボードタブ -->
     <div id="tab-dashboard" class="hidden space-y-4">
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🗓️ 月次クローズ(月を締めて次の月の準備をする)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">指定した年月の「希望シフト・店舗依頼・マッチング結果」を作業画面から外し、過去の月としてアーカイブします(削除ではないので、下の「過去の月を見る」からいつでも参照できます)。店舗マスタ・ドライバーマスタ・派遣履歴は対象外です。「確定」のまま「完了」にしていないマッチングが残っている場合は事前に警告します。</p>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="close-year" type="number" value="2026" class="p-2 border rounded text-sm w-24">
+            <span class="text-xs text-slate-500">年</span>
+            <input id="close-month" type="number" min="1" max="12" class="p-2 border rounded text-sm w-20">
+            <span class="text-xs text-slate-500">月を締める</span>
+            <button onclick="closeMonth()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-lg text-sm">この月を締める</button>
+          </div>
+          <div id="close-result" class="text-xs"></div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📦 過去の月を見る(アーカイブ)</summary>
+        <div class="pt-3 space-y-2">
+          <select id="archive-month-select" onchange="loadArchiveMonth()" class="p-2 border rounded text-sm"></select>
+          <div id="archive-content"></div>
+        </div>
+      </details>
+
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
           <p class="text-xs text-slate-500">店舗依頼件数</p>
@@ -370,7 +524,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') loadMatches();
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); }
       if (tab === 'store') loadStoreRequests();
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -600,6 +754,8 @@
         driversCache = data.drivers || [];
       }
       document.getElementById('av-driver').innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
+        driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+      document.getElementById('line-driver').innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
         driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     }
 
@@ -857,6 +1013,33 @@
       if (data.success) loadStoreRequests();
     }
 
+    async function importStoreRequestsWeekly() {
+      const fileInput = document.getElementById('sr-weekly-import-file');
+      const resultEl = document.getElementById('sr-weekly-import-result');
+      const year = document.getElementById('sr-weekly-year').value;
+      const month = document.getElementById('sr-weekly-month').value;
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      if (!year || !month) { alert('対象の年月を入力してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      form.append('year', year);
+      form.append('month', month);
+      const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!data.success) {
+        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
+      } else {
+        let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の店舗依頼を作成しました${data.fixedDriverLinks > 0 ? `(固定希望店舗を${data.fixedDriverLinks}件反映)` : ''}</span>`;
+        if (data.errors && data.errors.length > 0) {
+          html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 要確認(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+        }
+        resultEl.innerHTML = html;
+      }
+      fileInput.value = '';
+      if (data.success) loadStoreRequests();
+    }
+
     function renderImportResult(el, data) {
       if (!data.success) { el.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`; return; }
       let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}/${data.total}件を取り込みました</span>`;
@@ -867,22 +1050,123 @@
     }
 
     // ===== 希望シフト =====
+    let availabilityCache = [];
+    let editingAvailabilityId = null;
+    let availabilityView = 'list';
+
     async function loadAvailability() {
       const res = await fetch('/api/driver-availability');
       const data = await res.json();
-      const list = document.getElementById('availability-list');
-      const rows = data.availability || [];
-      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
-      list.innerHTML = rows.map(a => `
-        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
-          <div>
-            <p class="font-bold text-sm">${esc(a.driver_name)} <span class="text-xs text-slate-400 font-normal">${esc(a.desired_area || '')} ${esc(a.desired_store || '')}</span></p>
-            <p class="text-xs text-slate-500">📅 ${esc(a.desired_date)} ${esc(a.time_start || '')}〜${esc(a.time_end || '')}</p>
-            ${a.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(a.requests)}</p>` : ''}
-          </div>
-          <button onclick="deleteAvailability(${a.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
-        </div>
+      availabilityCache = data.availability || [];
+      switchAvailabilityView(availabilityView);
+    }
+
+    function switchAvailabilityView(view) {
+      availabilityView = view;
+      document.getElementById('av-view-list-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'list' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('av-view-grid-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'grid' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('av-list-view').classList.toggle('hidden', view !== 'list');
+      document.getElementById('av-grid-view').classList.toggle('hidden', view !== 'grid');
+      renderAvailabilityCurrentView();
+    }
+
+    function renderAvailabilityCurrentView() {
+      if (availabilityView === 'list') renderAvailabilityList();
+      else renderAvailabilityGrid();
+    }
+
+    // カレンダー表示(氏名×日付のマス目)。取込み元のExcelと同じ見た目で一覧できるようにする
+    function renderAvailabilityGrid() {
+      const header = document.getElementById('av-grid-header');
+      const body = document.getElementById('av-grid-body');
+      const keyword = document.getElementById('av-search').value.trim().toLowerCase();
+      const rows = keyword ? availabilityCache.filter(a => a.driver_name.toLowerCase().includes(keyword)) : availabilityCache;
+      if (rows.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</td></tr>';
+        return;
+      }
+      const dates = [...new Set(rows.map(a => a.desired_date))].sort();
+      const names = [...new Set(rows.map(a => a.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 bg-white border-b border-slate-200 whitespace-nowrap">氏名</th>` +
+        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(d.slice(5))}</th>`).join('');
+
+      body.innerHTML = names.map(name => {
+        const cells = dates.map(d => {
+          const entry = rows.find(a => a.driver_name === name && a.desired_date === d);
+          if (!entry) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">休み</td>`;
+          const label = entry.time_start && entry.time_end ? `${entry.time_start}〜${entry.time_end}` : (entry.time_start || entry.time_end || '○');
+          return `<td class="p-1.5 border-b border-slate-100 text-center whitespace-nowrap"><span class="inline-block text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">${esc(label)}</span></td>`;
+        }).join('');
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 bg-white border-b border-slate-100 whitespace-nowrap">${esc(name)}</td>${cells}</tr>`;
+      }).join('');
+    }
+
+    function getVisibleAvailability() {
+      const sortBy = document.getElementById('av-sort').value;
+      const keyword = document.getElementById('av-search').value.trim().toLowerCase();
+
+      let rows = availabilityCache;
+      if (keyword) {
+        rows = rows.filter(a => [a.driver_name, a.desired_date, a.desired_area, a.desired_store, a.requests]
+          .some(v => (v || '').toLowerCase().includes(keyword)));
+      }
+      return [...rows].sort((a, b) => {
+        if (sortBy === 'name') return a.driver_name.localeCompare(b.driver_name, 'ja') || a.desired_date.localeCompare(b.desired_date);
+        return b.desired_date.localeCompare(a.desired_date) || a.driver_name.localeCompare(b.driver_name, 'ja');
+      });
+    }
+
+    function renderAvailabilityList() {
+      const tbody = document.getElementById('availability-list');
+      const keyword = document.getElementById('av-search').value.trim();
+      const rows = getVisibleAvailability();
+
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する希望シフトが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(a => `
+        <tr class="border-b border-slate-100 last:border-0 align-top">
+          <td class="p-2.5 font-bold">${esc(a.driver_name)}</td>
+          <td class="p-2.5 text-xs text-slate-500">${esc(a.desired_date)}</td>
+          <td class="p-2.5">${esc(a.desired_area || '-')}</td>
+          <td class="p-2.5">${esc(a.desired_store || '-')}</td>
+          <td class="p-2.5 text-xs text-slate-500">${esc(a.time_start || '-')}</td>
+          <td class="p-2.5 text-xs text-slate-500">${esc(a.time_end || '-')}</td>
+          <td class="p-2.5 text-xs text-slate-500">${esc(a.requests || '-')}</td>
+          <td class="p-2.5 whitespace-nowrap">
+            <button onclick="editAvailability(${a.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+            <button onclick="deleteAvailability(${a.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          </td>
+        </tr>
       `).join('');
+    }
+
+    function editAvailability(id) {
+      const a = availabilityCache.find(x => x.id === id);
+      if (!a) return;
+      editingAvailabilityId = id;
+      document.getElementById('av-driver').value = a.driver_id;
+      document.getElementById('av-date').value = a.desired_date || '';
+      document.getElementById('av-area').value = a.desired_area || '';
+      document.getElementById('av-store').value = a.desired_store || '';
+      document.getElementById('av-time-start').value = a.time_start || '';
+      document.getElementById('av-time-end').value = a.time_end || '';
+      document.getElementById('av-requests').value = a.requests || '';
+      document.getElementById('av-submit-btn').textContent = '更新する';
+      document.getElementById('av-cancel-btn').classList.remove('hidden');
+      document.getElementById('av-driver').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function cancelAvailabilityEdit() {
+      editingAvailabilityId = null;
+      ['av-area', 'av-store', 'av-time-start', 'av-time-end', 'av-requests'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('av-driver').value = '';
+      document.getElementById('av-date').value = '';
+      document.getElementById('av-submit-btn').textContent = '＋ 登録する';
+      document.getElementById('av-cancel-btn').classList.add('hidden');
     }
 
     async function saveAvailability() {
@@ -898,14 +1182,16 @@
         time_end: document.getElementById('av-time-end').value,
         requests: document.getElementById('av-requests').value.trim()
       };
+      if (editingAvailabilityId) payload.id = editingAvailabilityId;
       const res = await fetch('/api/driver-availability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
-      ['av-area', 'av-store', 'av-time-start', 'av-time-end', 'av-requests'].forEach(id => document.getElementById(id).value = '');
+      cancelAvailabilityEdit();
       loadAvailability();
     }
 
     async function deleteAvailability(id) {
+      if (editingAvailabilityId === id) cancelAvailabilityEdit();
       await fetch(`/api/driver-availability/${id}`, { method: 'DELETE' });
       loadAvailability();
     }
@@ -922,6 +1208,141 @@
       renderImportResult(resultEl, data);
       fileInput.value = '';
       if (data.success) loadAvailability();
+    }
+
+    async function importAvailabilityWide() {
+      const fileInput = document.getElementById('av-wide-import-file');
+      const resultEl = document.getElementById('av-wide-import-result');
+      const year = document.getElementById('av-wide-year').value;
+      const month = document.getElementById('av-wide-month').value;
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      if (!year || !month) { alert('対象の年月を入力してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      form.append('year', year);
+      form.append('month', month);
+      const res = await fetch('/api/driver-availability/import-wide', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!data.success) {
+        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
+      } else {
+        let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の希望シフトを登録しました</span>`;
+        if (data.errors && data.errors.length > 0) {
+          html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 読み取れなかった行/セル(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+        }
+        resultEl.innerHTML = html;
+      }
+      fileInput.value = '';
+      if (data.success) loadAvailability();
+    }
+
+    // ===== LINEメッセージから希望シフトを登録 =====
+    let lineParsedRows = [];
+
+    // LINEなどの自由文から日付・時間を抜き出す。1行1日付を想定し、
+    // 「休み」を含む行はスキップ(希望シフトを作らない)。時間は「10-18」「10:00〜18:00」「10時〜18時」等の表記に対応、
+    // 日付は「9/16」「9月16日」「16日」に対応(月省略時はフォームで指定した月を使う。1行に複数日ある場合は直前に出た月を引き継ぐ)
+    function parseLineShiftText(text, year, defaultMonth) {
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const results = [];
+      for (const line of lines) {
+        const isOff = /休み|お休み|不可|欠勤/.test(line);
+
+        const timeMatch = line.match(/(\d{1,2})[:時]?(\d{2})?\s*[-〜~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
+        let time_start = '', time_end = '', rest = line;
+        if (timeMatch) {
+          time_start = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
+          time_end = `${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`;
+          rest = line.slice(0, timeMatch.index) + line.slice(timeMatch.index + timeMatch[0].length);
+        }
+        if (isOff) continue;
+
+        let lastMonth = defaultMonth;
+        const dateRe = /(\d{1,2})\s*[\/月]\s*(\d{1,2})|(\d{1,2})\s*日/g;
+        let m;
+        let found = false;
+        while ((m = dateRe.exec(rest)) !== null) {
+          let month, day;
+          if (m[1] !== undefined) { month = parseInt(m[1], 10); day = parseInt(m[2], 10); lastMonth = month; }
+          else { day = parseInt(m[3], 10); month = lastMonth; }
+          if (!month || day < 1 || day > 31 || month < 1 || month > 12) continue;
+          found = true;
+          results.push({
+            desired_date: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+            time_start, time_end, raw: line
+          });
+        }
+        if (!found) results.push({ desired_date: '', time_start, time_end, raw: line, unrecognized: true });
+      }
+      return results;
+    }
+
+    function parseLineShiftMessage() {
+      const year = parseInt(document.getElementById('line-year').value, 10);
+      const month = parseInt(document.getElementById('line-month').value, 10);
+      const text = document.getElementById('line-text').value;
+      if (!document.getElementById('line-driver').value) { alert('ドライバーを選択してください'); return; }
+      if (!year || !month) { alert('年月を入力してください'); return; }
+      if (!text.trim()) { alert('メッセージを貼り付けてください'); return; }
+
+      lineParsedRows = parseLineShiftText(text, year, month);
+      renderLinePreview();
+    }
+
+    function renderLinePreview() {
+      const el = document.getElementById('line-preview');
+      if (lineParsedRows.length === 0) {
+        el.innerHTML = '<p class="text-slate-400 text-xs p-2">日付を読み取れませんでした。手入力で登録してください</p>';
+        return;
+      }
+      el.innerHTML = `
+        <table class="w-full text-xs border-collapse mt-2">
+          <thead><tr class="text-slate-500 text-left"><th class="p-1">元の文</th><th class="p-1">日付</th><th class="p-1">開始</th><th class="p-1">終了</th><th class="p-1"></th></tr></thead>
+          <tbody>
+            ${lineParsedRows.map((r, i) => `
+              <tr class="border-t border-slate-200 ${r.unrecognized ? 'bg-amber-50' : ''}">
+                <td class="p-1 text-slate-400">${esc(r.raw)}</td>
+                <td class="p-1">
+                  ${r.unrecognized
+                    ? '<span class="text-amber-600 font-bold">日付不明</span>'
+                    : `<input type="date" value="${r.desired_date}" onchange="lineParsedRows[${i}].desired_date=this.value" class="p-1 border rounded text-xs">`}
+                </td>
+                <td class="p-1"><input type="time" value="${r.time_start}" onchange="lineParsedRows[${i}].time_start=this.value" class="p-1 border rounded text-xs"></td>
+                <td class="p-1"><input type="time" value="${r.time_end}" onchange="lineParsedRows[${i}].time_end=this.value" class="p-1 border rounded text-xs"></td>
+                <td class="p-1"><button onclick="removeLineParsedRow(${i})" class="text-red-600 text-xs font-bold">除外</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <button onclick="confirmLineShiftImport()" class="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">この内容で登録する</button>
+      `;
+    }
+
+    function removeLineParsedRow(i) {
+      lineParsedRows.splice(i, 1);
+      renderLinePreview();
+    }
+
+    async function confirmLineShiftImport() {
+      const driver_id = parseInt(document.getElementById('line-driver').value, 10);
+      const validRows = lineParsedRows.filter(r => !r.unrecognized && r.desired_date);
+      if (validRows.length === 0) { alert('登録できる行がありません'); return; }
+
+      let ok = 0;
+      for (const r of validRows) {
+        const res = await fetch('/api/driver-availability', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ driver_id, desired_date: r.desired_date, desired_area: '', desired_store: '', time_start: r.time_start, time_end: r.time_end, requests: r.raw })
+        });
+        const data = await res.json();
+        if (data.success) ok++;
+      }
+      alert(`${ok}/${validRows.length}件登録しました`);
+      lineParsedRows = [];
+      document.getElementById('line-text').value = '';
+      document.getElementById('line-preview').innerHTML = '';
+      loadAvailability();
     }
 
     // ===== 店舗の相性 =====
@@ -987,11 +1408,15 @@
         driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     }
 
+    let historyCache = [];
+    let editingHistoryId = null;
+
     async function loadHistory() {
       const res = await fetch('/api/dispatch-history');
       const data = await res.json();
+      historyCache = data.history || [];
       const list = document.getElementById('history-list');
-      const rows = data.history || [];
+      const rows = historyCache;
       if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
       list.innerHTML = rows.map(h => `
         <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
@@ -1000,9 +1425,34 @@
             <p class="text-xs text-slate-500">📅 ${esc(h.work_date)}</p>
             ${h.notes ? `<p class="text-[11px] text-slate-400">${esc(h.notes)}</p>` : ''}
           </div>
-          <button onclick="deleteHistory(${h.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          <div class="flex gap-1.5">
+            <button onclick="editHistory(${h.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+            <button onclick="deleteHistory(${h.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          </div>
         </div>
       `).join('');
+    }
+
+    function editHistory(id) {
+      const h = historyCache.find(x => x.id === id);
+      if (!h) return;
+      editingHistoryId = id;
+      document.getElementById('hist-driver').value = h.driver_id;
+      document.getElementById('hist-store').value = h.store_name || '';
+      document.getElementById('hist-date').value = h.work_date || '';
+      document.getElementById('hist-notes').value = h.notes || '';
+      document.getElementById('hist-submit-btn').textContent = '更新する';
+      document.getElementById('hist-cancel-btn').classList.remove('hidden');
+      document.getElementById('hist-driver').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function cancelHistoryEdit() {
+      editingHistoryId = null;
+      ['hist-store', 'hist-notes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('hist-driver').value = '';
+      document.getElementById('hist-date').value = '';
+      document.getElementById('hist-submit-btn').textContent = '＋ 登録する';
+      document.getElementById('hist-cancel-btn').classList.add('hidden');
     }
 
     async function saveHistory() {
@@ -1016,14 +1466,16 @@
         work_date,
         notes: document.getElementById('hist-notes').value.trim()
       };
+      if (editingHistoryId) payload.id = editingHistoryId;
       const res = await fetch('/api/dispatch-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data.success) { alert('登録に失敗しました: ' + (data.message || '')); return; }
-      ['hist-store', 'hist-notes'].forEach(id => document.getElementById(id).value = '');
+      cancelHistoryEdit();
       loadHistory();
     }
 
     async function deleteHistory(id) {
+      if (editingHistoryId === id) cancelHistoryEdit();
       await fetch(`/api/dispatch-history/${id}`, { method: 'DELETE' });
       loadHistory();
     }
@@ -1042,6 +1494,50 @@
       if (data.success) loadHistory();
     }
 
+    // ===== 空き状況検索(単独) =====
+    async function loadAvSearchStoreSelect() {
+      const res = await fetch('/api/stores');
+      const data = await res.json();
+      const sel = document.getElementById('avsearch-store');
+      const keep = sel.value;
+      sel.innerHTML = '<option value="">店舗を指定しない(全員をリスト表示)</option>' +
+        (data.stores || []).map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
+      sel.value = keep;
+    }
+
+    async function runAvailabilitySearch() {
+      const date = document.getElementById('avsearch-date').value;
+      const storeId = document.getElementById('avsearch-store').value;
+      const el = document.getElementById('avsearch-result');
+      if (!date) { alert('日付を選択してください'); return; }
+      el.innerHTML = '<p class="text-slate-400 text-xs p-2">検索中...</p>';
+      const params = new URLSearchParams({ date });
+      if (storeId) params.set('store_id', storeId);
+      const res = await fetch(`/api/availability-search?${params}`);
+      const data = await res.json();
+      if (!data.success) { el.innerHTML = `<p class="text-red-600 text-xs p-2">${esc(data.message || '検索に失敗しました')}</p>`; return; }
+      if (data.candidates.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs p-2">空いているドライバーが見つかりませんでした</p>'; return; }
+      el.innerHTML = `
+        <div class="space-y-1.5 mt-2 max-h-96 overflow-y-auto">
+          ${data.candidates.map(c => `
+            <div class="flex justify-between items-center bg-slate-50 rounded p-2">
+              <p class="text-xs">
+                🚚 <span class="font-bold">${esc(c.name)}</span> ／ 📞 ${esc(c.phone || '-')}
+                ${c.driver_status ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded ${c.driver_status === '稼働中' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${esc(c.driver_status)}</span>` : ''}
+                ${data.storeSelected && c.distance != null ? `／ 約${c.distance.toFixed(1)}km` : ''}
+                ${c.is_far_warning ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700">⚠️遠め</span>' : ''}
+                ${c.preference ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐相性${esc(c.preference)}</span>` : ''}
+                ${c.experienceCount > 0 ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-blue-100 text-blue-700">🧭経験${c.experienceCount}回</span>` : ''}
+                ${c.has_availability_today
+                  ? `<span class="text-[10px] px-1 py-0.5 rounded bg-blue-50 text-blue-600">希望: ${esc(c.desired_area || '')} ${esc(c.desired_store || '')} ${esc(c.time_start || '')}${c.time_start || c.time_end ? '〜' : ''}${esc(c.time_end || '')}</span>`
+                  : '<span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-500">当日希望シフト未提出</span>'}
+              </p>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
     // ===== マッチング結果 =====
     async function runMatching() {
       const res = await fetch('/api/matches/run', { method: 'POST' });
@@ -1052,6 +1548,7 @@
     }
 
     const ABSENCE_REASONS = ['体調不良', '車両トラブル', '交通機関の乱れ', '私用', 'その他'];
+    const CHANGE_REASONS = ['店舗都合', 'ドライバー都合(欠勤以外)', 'その他'];
     let matchesCache = [];
     let openAbsenceMatchId = null;   // 欠勤理由の入力パネルを開いているmatch id
     let openSubstituteMatchId = null; // 代替候補パネルを開いているmatch id
@@ -1074,20 +1571,21 @@
             <div>
               <p class="font-bold text-sm">
                 🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
-                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '変更' ? 'bg-orange-100 text-orange-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
                 ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
                 ${m.preference_flag ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 相性${esc(m.preference_flag)}</span>` : ''}
                 ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
               </p>
               <p class="text-xs text-slate-500">📅 ${esc(m.match_date)} ${esc(m.time_start || '')}〜${esc(m.time_end || '')} ／ 📞 ${esc(m.driver_phone || '-')}</p>
               <p class="text-[11px] text-slate-400">🏠 ${esc(m.home_address || '-')} → 🏬 ${esc(m.store_address || '-')} ${m.distance_km != null ? `(約${m.distance_km.toFixed(1)}km)` : '(距離不明)'}</p>
-              ${m.status === '欠勤' && m.absence_reason ? `<p class="text-[11px] text-red-600 font-bold">欠勤理由: ${esc(m.absence_reason)}</p>` : ''}
+              ${(m.status === '欠勤' || m.status === '変更') && m.absence_reason ? `<p class="text-[11px] ${m.status === '欠勤' ? 'text-red-600' : 'text-orange-600'} font-bold">${esc(m.status)}理由: ${esc(m.absence_reason)}</p>` : ''}
             </div>
             <div class="flex gap-1.5">
               ${m.status === '候補' ? `<button onclick="confirmMatch(${m.id})" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded font-bold">確定</button>` : ''}
               ${m.status === '確定' ? `<button onclick="completeMatch(${m.id})" class="text-xs bg-slate-700 hover:bg-slate-800 text-white px-2.5 py-1 rounded font-bold">完了にする</button>` : ''}
-              ${(m.status === '候補' || m.status === '確定') ? `<button onclick="toggleAbsenceForm(${m.id})" class="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded font-bold hover:bg-amber-100">⚠️ 欠勤にする</button>` : ''}
-              ${m.status === '欠勤' ? `<button onclick="toggleSubstitutes(${m.id})" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded font-bold">🔁 代替を探す</button>` : ''}
+              ${m.status === '完了' ? `<button onclick="undoComplete(${m.id})" class="text-xs bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-1 rounded font-bold hover:bg-slate-200">↩️ 完了を取り消す</button>` : ''}
+              ${(m.status === '候補' || m.status === '確定') ? `<button onclick="toggleAbsenceForm(${m.id})" class="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded font-bold hover:bg-amber-100">🔁 交代させる</button>` : ''}
+              ${(m.status === '欠勤' || m.status === '変更') ? `<button onclick="toggleSubstitutes(${m.id})" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded font-bold">🔁 代替を探す</button>` : ''}
               <button onclick="deleteMatch(${m.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
             </div>
           </div>
@@ -1101,7 +1599,12 @@
       return `
         <div class="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-2 items-center">
           <select id="absence-reason-${id}" class="p-1.5 border rounded text-xs">
-            ${ABSENCE_REASONS.map(r => `<option value="${r}">${r}</option>`).join('')}
+            <optgroup label="欠勤">
+              ${ABSENCE_REASONS.map(r => `<option value="${r}">${r}</option>`).join('')}
+            </optgroup>
+            <optgroup label="欠勤以外の変更">
+              ${CHANGE_REASONS.map(r => `<option value="${r}">${r}</option>`).join('')}
+            </optgroup>
           </select>
           <input id="absence-note-${id}" placeholder="補足(任意)" class="p-1.5 border rounded text-xs flex-1 min-w-[120px]">
           <button onclick="submitAbsence(${id})" class="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded font-bold">登録する</button>
@@ -1142,7 +1645,9 @@
       const reasonCategory = document.getElementById(`absence-reason-${id}`).value;
       const note = document.getElementById(`absence-note-${id}`).value.trim();
       const reason = note ? `${reasonCategory}(${note})` : reasonCategory;
-      await fetch(`/api/matches/${id}/absence`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+      // 選んだ理由が「欠勤」系か「欠勤以外の変更」系かでエンドポイントを振り分ける
+      const endpoint = ABSENCE_REASONS.includes(reasonCategory) ? 'absence' : 'change';
+      await fetch(`/api/matches/${id}/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
       openAbsenceMatchId = null;
       loadMatches();
     }
@@ -1174,6 +1679,14 @@
       loadMatches();
     }
 
+    async function undoComplete(id) {
+      if (!confirm('「完了」を取り消して「確定」に戻します。派遣履歴に自動記録された分も削除されます。よろしいですか？')) return;
+      const res = await fetch(`/api/matches/${id}/undo-complete`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert('取り消しに失敗しました: ' + (data.message || '')); return; }
+      loadMatches();
+    }
+
     async function deleteMatch(id) {
       await fetch(`/api/matches/${id}`, { method: 'DELETE' });
       loadMatches();
@@ -1189,6 +1702,31 @@
     let dashboardAvailabilityCache = [];
     let dashboardView = 'store';
 
+    async function closeMonth(force) {
+      const year = document.getElementById('close-year').value;
+      const month = document.getElementById('close-month').value;
+      const el = document.getElementById('close-result');
+      if (!year || !month) { alert('年月を入力してください'); return; }
+      if (!force && !confirm(`${year}年${month}月分の希望シフト・店舗依頼・マッチング結果を削除します。よろしいですか？`)) return;
+
+      const res = await fetch('/api/month-close', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: parseInt(year, 10), month: parseInt(month, 10), force: !!force })
+      });
+      const data = await res.json();
+      if (!data.success) { el.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '失敗しました')}</span>`; return; }
+      if (data.needsConfirmation) {
+        if (confirm(`「確定」のまま「完了」にしていないマッチングが${data.unfinishedCount}件残っています。このまま削除してよろしいですか？(先にマッチング結果タブで「完了」にすることをおすすめします)`)) {
+          return closeMonth(true);
+        }
+        el.innerHTML = '<span class="text-amber-600">キャンセルしました。先に「完了」にしてから再度実行してください</span>';
+        return;
+      }
+      el.innerHTML = `<span class="text-emerald-600 font-bold">✅ ${year}年${month}月分をクローズしました(希望シフト${data.archived.availability}件・店舗依頼${data.archived.storeRequests}件・マッチング${data.archived.matches}件をアーカイブ。データは削除されず「過去の月を見る」からいつでも参照できます)</span>`;
+      loadDashboard();
+      loadArchiveMonthList();
+    }
+
     async function loadDashboard() {
       const [matchesRes, requestsRes, availRes] = await Promise.all([
         fetch('/api/matches'), fetch('/api/store-requests'), fetch('/api/driver-availability')
@@ -1200,6 +1738,55 @@
       renderDashboardStoreRanking();
       populateDashboardExportSelects();
       switchDashboardView(dashboardView);
+      loadArchiveMonthList();
+    }
+
+    // ===== 過去の月を見る(アーカイブ) =====
+    async function loadArchiveMonthList() {
+      const res = await fetch('/api/archive/months');
+      const data = await res.json();
+      const sel = document.getElementById('archive-month-select');
+      const keepValue = sel.value;
+      const months = data.months || [];
+      sel.innerHTML = '<option value="">-- 過去の月を選択 --</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('');
+      if (months.includes(keepValue)) { sel.value = keepValue; loadArchiveMonth(); }
+    }
+
+    async function loadArchiveMonth() {
+      const month = document.getElementById('archive-month-select').value;
+      const el = document.getElementById('archive-content');
+      if (!month) { el.innerHTML = ''; return; }
+      el.innerHTML = '<p class="text-slate-400 text-xs p-2">読み込み中...</p>';
+      const res = await fetch(`/api/archive/${month}`);
+      const data = await res.json();
+      if (!data.success) { el.innerHTML = `<p class="text-red-600 text-xs">${esc(data.message || '取得に失敗しました')}</p>`; return; }
+
+      el.innerHTML = `
+        <div class="grid grid-cols-3 gap-2 my-2">
+          <div class="bg-slate-50 rounded p-2 text-center"><p class="text-[10px] text-slate-500">店舗依頼</p><p class="font-bold">${data.storeRequests.length}件</p></div>
+          <div class="bg-slate-50 rounded p-2 text-center"><p class="text-[10px] text-slate-500">希望シフト</p><p class="font-bold">${data.availability.length}件</p></div>
+          <div class="bg-slate-50 rounded p-2 text-center"><p class="text-[10px] text-slate-500">マッチング</p><p class="font-bold">${data.matches.length}件</p></div>
+        </div>
+        <button onclick="restoreArchiveMonth('${month}')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold">↩️ この月を作業画面に戻す</button>
+        <p class="text-xs font-bold text-slate-600 mt-2">マッチング結果</p>
+        <div class="overflow-x-auto max-h-80 overflow-y-auto border border-slate-100 rounded">
+          <table class="w-full text-xs">
+            <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日付</th><th class="p-1.5">店舗</th><th class="p-1.5">ドライバー</th><th class="p-1.5">ステータス</th></tr></thead>
+            <tbody>
+              ${data.matches.map(m => `<tr class="border-b border-slate-100"><td class="p-1.5">${esc(m.match_date)}</td><td class="p-1.5">${esc(m.store_name)}</td><td class="p-1.5">${esc(m.driver_name)}</td><td class="p-1.5">${esc(m.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="p-2 text-center text-slate-400">なし</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    async function restoreArchiveMonth(month) {
+      if (!confirm(`${month}分を作業画面に戻します。今の作業データと日付が重複する場合は混在します。よろしいですか？`)) return;
+      const res = await fetch(`/api/archive/${month}/restore`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert('復元に失敗しました'); return; }
+      alert(`✅ ${month}分を作業画面に戻しました(希望シフト${data.restored.availability}件・店舗依頼${data.restored.storeRequests}件・マッチング${data.restored.matches}件)`);
+      loadDashboard();
     }
 
     function renderDashboardStats() {
