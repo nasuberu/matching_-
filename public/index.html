@@ -2013,7 +2013,12 @@
           if (entries.length === 0) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>`;
           const content = entries.map(m => {
             const other = dashboardView === 'store' ? m.driver_name : m.store_name;
-            return `<span class="block text-xs px-1.5 py-0.5 rounded mb-0.5 whitespace-nowrap ${dashboardStatusColor(m.status)}">${esc(other)}</span>`;
+            const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
+            return `
+              <span class="relative group block mb-0.5">
+                <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(other)}</span>
+                <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
+              </span>`;
           }).join('');
           return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
         }).join('');
