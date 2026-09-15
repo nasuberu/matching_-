@@ -14,7 +14,7 @@
   </header>
 
   <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-10">
-    <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📋 マッチング結果</button>
+    <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap"><span id="nav-label-matches">📋 マッチング結果</span></button>
     <button id="btn-nav-store" onclick="switchTab('store')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏬 店舗依頼</button>
     <button id="btn-nav-availability" onclick="switchTab('availability')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🗓️ 希望シフト</button>
     <button id="btn-nav-storemaster" onclick="switchTab('storemaster')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏪 店舗マスタ</button>
@@ -36,7 +36,9 @@
         <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
       </div>
 
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+      <div id="unmatched-alert" class="hidden"></div>
+
+      <details id="avsearch-details" class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🔍 空き状況を調べる(単独検索)</summary>
         <div class="pt-3 space-y-2">
           <p class="text-xs text-slate-500">既存のマッチングとは関係なく、「その日に誰が空いているか」をすぐ調べられます。店舗を指定すると距離・相性・経験を加味したスコア順に、指定しなければ全員を氏名順に表示します。</p>
@@ -1566,7 +1568,7 @@
       const res = await fetch('/api/matches/run', { method: 'POST' });
       const data = await res.json();
       if (!data.success) { alert('マッチングに失敗しました: ' + (data.message || '')); return; }
-      alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした` : ''}`);
+      alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした(下の一覧で確認できます)` : ''}`);
       loadMatches();
     }
 
@@ -1582,6 +1584,66 @@
       const data = await res.json();
       matchesCache = data.matches || [];
       renderMatchesList();
+      loadUnmatchedAlert();
+    }
+
+    // ===== 候補ゼロ件アラート =====
+    // マッチング(候補・確定・完了・欠勤・変更のいずれも)が1件も無い店舗依頼を、常に最新の状態で一覧表示する。
+    // matches/store-requests のどちらが変わっても、loadMatches() のたびに再計算されるので手動更新は不要
+    let unmatchedAlertCache = [];
+    async function loadUnmatchedAlert() {
+      const [reqRes, matchRes] = await Promise.all([fetch('/api/store-requests'), fetch('/api/matches')]);
+      const reqData = await reqRes.json();
+      const matchData = await matchRes.json();
+      const requests = reqData.requests || [];
+      const matches = matchData.matches || [];
+      const matchedIds = new Set(matches.map(m => m.store_request_id));
+      unmatchedAlertCache = requests
+        .filter(r => !matchedIds.has(r.id))
+        .sort((a, b) => a.request_date.localeCompare(b.request_date));
+      renderUnmatchedAlert();
+      updateNavBadge('matches', unmatchedAlertCache.length);
+    }
+
+    function renderUnmatchedAlert() {
+      const el = document.getElementById('unmatched-alert');
+      if (unmatchedAlertCache.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <div class="bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <p class="font-bold text-amber-800 text-sm">⚠️ 候補が見つからない店舗依頼が ${unmatchedAlertCache.length} 件あります</p>
+          <p class="text-xs text-amber-700 mt-0.5 mb-2">その日に希望シフトを出しているドライバーがいない、または全員が相性NGで除外された可能性があります。「調べる」から個別に空き状況を確認できます</p>
+          <div class="max-h-52 overflow-y-auto space-y-1">
+            ${unmatchedAlertCache.map(r => `
+              <div class="flex justify-between items-center bg-white rounded px-2 py-1.5 border border-amber-100">
+                <p class="text-xs">📅 ${esc(r.request_date)} 🏬 ${esc(r.store_name)} ${esc(r.time_start || '')}〜${esc(r.time_end || '')} ／ 必要${r.required_count}名</p>
+                <button onclick="jumpToAvSearch('${r.request_date}', ${r.store_id || 'null'})" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold shrink-0">🔍 調べる</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function jumpToAvSearch(date, storeId) {
+      document.getElementById('avsearch-details').open = true;
+      document.getElementById('avsearch-date').value = date;
+      document.getElementById('avsearch-store').value = storeId != null ? String(storeId) : '';
+      document.getElementById('avsearch-details').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      runAvailabilitySearch();
+    }
+
+    function updateNavBadge(tab, count) {
+      const label = document.getElementById(`nav-label-${tab}`);
+      if (!label) return;
+      const existing = label.querySelector('.nav-badge');
+      if (existing) existing.remove();
+      if (count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'nav-badge inline-flex items-center justify-center bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 ml-1 align-top';
+        badge.textContent = count > 99 ? '99+' : String(count);
+        label.appendChild(badge);
+      }
     }
 
     function renderMatchesList() {
