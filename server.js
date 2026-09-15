@@ -629,9 +629,18 @@ app.post('/api/driver-availability', async (req, res) => {
     );
     return res.json({ success: true, id });
   }
+  // 新規作成時、希望店舗/エリアが未入力なら固定希望店舗を初期値として使う(一覧上も実態のマッチング挙動と一致させる)
+  let finalArea = desired_area || '', finalStore = desired_store || '';
+  if (!finalArea && !finalStore) {
+    const fixedStore = await dbGet(
+      'SELECT fs.name, fs.area FROM drivers d LEFT JOIN stores fs ON fs.id = d.fixed_store_id WHERE d.id = ?',
+      [driver_id]
+    );
+    if (fixedStore && fixedStore.name) { finalStore = fixedStore.name; finalArea = fixedStore.area || ''; }
+  }
   const result = await dbRun(
     `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [driver_id, desired_date, desired_area || '', desired_store || '', time_start || '', time_end || '', requests || '', now]
+    [driver_id, desired_date, finalArea, finalStore, time_start || '', time_end || '', requests || '', now]
   );
   res.json({ success: true, id: result.lastID });
 });
@@ -652,8 +661,11 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
 
-  const drivers = await dbAll('SELECT id, name FROM drivers');
-  const driverByName = new Map(drivers.map(d => [d.name.trim(), d.id]));
+  const drivers = await dbAll(`
+    SELECT d.id, d.name, fs.name AS fixed_store_name, fs.area AS fixed_store_area
+    FROM drivers d LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+  `);
+  const driverByName = new Map(drivers.map(d => [d.name.trim(), d]));
 
   const now = new Date().toISOString();
   let imported = 0;
@@ -664,11 +676,17 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
     const desired_date = normalizeDateStr(pickField(row, AVAILABILITY_ALIASES.desired_date));
     if (!driverName || !desired_date) { errors.push(`${i + 2}行目: ドライバー名または希望日が読み取れませんでした`); continue; }
 
-    const driver_id = driverByName.get(driverName);
-    if (!driver_id) { errors.push(`${i + 2}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+    const driver = driverByName.get(driverName);
+    if (!driver) { errors.push(`${i + 2}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+    const driver_id = driver.id;
 
-    const desired_area = pickField(row, AVAILABILITY_ALIASES.desired_area);
-    const desired_store = pickField(row, AVAILABILITY_ALIASES.desired_store);
+    // ファイルに希望店舗/エリアの記載がなければ、固定希望店舗を初期値として使う
+    let desired_area = pickField(row, AVAILABILITY_ALIASES.desired_area);
+    let desired_store = pickField(row, AVAILABILITY_ALIASES.desired_store);
+    if (!desired_area && !desired_store && driver.fixed_store_name) {
+      desired_store = driver.fixed_store_name;
+      desired_area = driver.fixed_store_area || '';
+    }
     const time_start = pickField(row, AVAILABILITY_ALIASES.time_start);
     const time_end = pickField(row, AVAILABILITY_ALIASES.time_end);
     const requests = pickField(row, AVAILABILITY_ALIASES.requests);
@@ -725,8 +743,11 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
     return res.status(400).json({ success: false, message: '日付の列見出しが読み取れませんでした(例: 「1(火)」のような形式を想定しています)' });
   }
 
-  const drivers = await dbAll('SELECT id, name FROM drivers');
-  const driverByName = new Map(drivers.map(d => [d.name.trim(), d.id]));
+  const drivers = await dbAll(`
+    SELECT d.id, d.name, fs.name AS fixed_store_name, fs.area AS fixed_store_area
+    FROM drivers d LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+  `);
+  const driverByName = new Map(drivers.map(d => [d.name.trim(), d]));
 
   let imported = 0;
   const errors = [];
@@ -737,8 +758,13 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
     const driverName = String(row[0] ?? '').trim();
     if (!driverName) continue; // 空行はスキップ
 
-    const driver_id = driverByName.get(driverName);
-    if (!driver_id) { errors.push(`${r + 1}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+    const driver = driverByName.get(driverName);
+    if (!driver) { errors.push(`${r + 1}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+    const driver_id = driver.id;
+    // 希望シフト自体には店舗/エリアの列がないため、固定希望店舗が設定済みならその値を初期値として入れておく
+    // (マッチングロジックは元々この値を動的にフォールバック利用していたが、一覧画面でも実態が見えるようにする)
+    const fallbackStore = driver.fixed_store_name || '';
+    const fallbackArea = driver.fixed_store_area || '';
 
     for (const { colIndex, day } of dayColumns) {
       const cell = String(row[colIndex] ?? '').trim();
@@ -752,15 +778,21 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
       const time_end = timeMatch[2];
 
       const existing = await dbGet(
-        'SELECT id FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
+        'SELECT id, desired_store, desired_area FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
         [driver_id, desired_date]
       );
       if (existing) {
-        await dbRun('UPDATE driver_availability SET time_start=?, time_end=? WHERE id=?', [time_start, time_end, existing.id]);
+        // 既に希望店舗/エリアが入っている(LINE取込みや手動編集による本人の実際の希望)場合は上書きしない
+        const desired_store = existing.desired_store || fallbackStore;
+        const desired_area = existing.desired_area || fallbackArea;
+        await dbRun(
+          'UPDATE driver_availability SET time_start=?, time_end=?, desired_store=?, desired_area=? WHERE id=?',
+          [time_start, time_end, desired_store, desired_area, existing.id]
+        );
       } else {
         await dbRun(
           `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [driver_id, desired_date, '', '', time_start, time_end, '', now]
+          [driver_id, desired_date, fallbackArea, fallbackStore, time_start, time_end, '', now]
         );
       }
       imported++;
