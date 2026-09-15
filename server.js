@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
@@ -6,11 +7,17 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 const PORT = 4001;
 const DIST_WARNING_KM = 30; // これを超える距離のマッチングは「距離が遠い」として画面上で警告表示する
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// 備考・LINEメッセージのAI解析(任意機能)。.envにANTHROPIC_API_KEYが設定されていない場合はnullのままで、
+// 関連エンドポイントは「AI未設定」を返す(既存の正規表現ベースの解析は影響を受けない)
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
+const AI_MODEL = 'claude-haiku-4-5-20251001'; // 解析用途のため、速く安価なモデルを使う
 
 // 自動マッチングのスコアリング重み(調整しやすいようファイル冒頭に定数化しておく)
 const SCORE_WEIGHT_DISTANCE_KM = -1;     // 距離1kmごとの減点
@@ -279,6 +286,41 @@ async function resolveStoreId({ store_name, area, address, lat, lng }) {
 async function getStoreMasterInfo(store_id) {
   if (!store_id) return null;
   return dbGet('SELECT area, address, lat, lng FROM stores WHERE id = ?', [store_id]);
+}
+
+// 週次パターン取込みで、曜日/時間の列が読み取れず「要確認」になった行の備考を、AI(Claude)で試しに解釈する(試験的機能)。
+// 自動登録はせず、コーディネーターが確認しやすいようエラーメッセージにAIの解釈候補を添えるだけに留める。
+// 未設定時やAI呼び出し失敗時はnullを返し、呼び出し側は従来通りの「要確認」メッセージのみ表示する
+async function interpretNoteWithAI(noteText, year, month) {
+  if (!anthropic || !noteText) return null;
+  try {
+    const response = await anthropic.messages.create({
+      model: AI_MODEL,
+      max_tokens: 500,
+      tools: [{
+        name: 'interpret_note',
+        description: '店舗からの依頼スプレッドシートの備考欄から、具体的な依頼内容(日付・時間帯・人数)を読み取る',
+        input_schema: {
+          type: 'object',
+          properties: {
+            understood: { type: 'boolean', description: '具体的な日付や時間帯の依頼として読み取れたかどうか' },
+            desired_date: { type: 'string', description: `YYYY-MM-DD形式。年は${year}年、月の記載がなければ${month}月として補う。読み取れなければ空文字` },
+            time_start: { type: 'string', description: 'HH:MM形式。読み取れなければ空文字' },
+            time_end: { type: 'string', description: 'HH:MM形式。読み取れなければ空文字' },
+            required_count: { type: 'number', description: '必要人数。読み取れなければ1' }
+          },
+          required: ['understood', 'desired_date', 'time_start', 'time_end', 'required_count']
+        }
+      }],
+      tool_choice: { type: 'tool', name: 'interpret_note' },
+      messages: [{ role: 'user', content: `店舗からの依頼スプレッドシートの備考欄です。具体的な依頼内容を読み取ってください:\n「${noteText}」` }]
+    });
+    const toolUse = response.content.find(c => c.type === 'tool_use');
+    if (!toolUse || !toolUse.input.understood) return null;
+    return toolUse.input;
+  } catch (e) {
+    return null; // AI解析に失敗しても取込み自体は止めない(従来通りの要確認メッセージのみ表示する)
+  }
 }
 
 // 候補者(driver_id, home_lat, home_lng, desired_store, desired_area を持つオブジェクト)を
@@ -802,6 +844,56 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
   res.json({ success: true, imported, errors });
 });
 
+// LINEなどで届く自由文の希望シフトメッセージをAI(Claude)で解析する(試験的機能)。
+// 既存の正規表現ベースの解析(parseLineShiftText、クライアント側)と同じ形の結果を返し、
+// どちらで解析しても同じプレビュー・確認画面を経由してから登録される(AIの解析結果を無条件に信用しない)
+app.post('/api/ai/parse-line-shift', async (req, res) => {
+  if (!anthropic) return res.status(400).json({ success: false, message: 'AI解析は未設定です(.envにANTHROPIC_API_KEYを設定してサーバーを再起動してください)' });
+  const { text, year, month } = req.body;
+  if (!text || !year || !month) return res.status(400).json({ success: false, message: 'text, year, month は必須です' });
+
+  try {
+    const response = await anthropic.messages.create({
+      model: AI_MODEL,
+      max_tokens: 2000,
+      tools: [{
+        name: 'extract_shift_rows',
+        description: '個人事業主がLINEで送ってきた希望シフトの自由文から、勤務可能な日付ごとの時間帯を抽出する',
+        input_schema: {
+          type: 'object',
+          properties: {
+            rows: {
+              type: 'array',
+              description: '休みの日・出勤しない日は含めない(登録対象は勤務可能な日のみ)',
+              items: {
+                type: 'object',
+                properties: {
+                  desired_date: { type: 'string', description: `YYYY-MM-DD形式。年は${year}年、月の記載が省略されている行は${month}月として補う` },
+                  time_start: { type: 'string', description: 'HH:MM形式。読み取れなければ空文字' },
+                  time_end: { type: 'string', description: 'HH:MM形式。読み取れなければ空文字' },
+                  raw: { type: 'string', description: '元のメッセージのうち、この行に対応する部分の抜粋' },
+                  unrecognized: { type: 'boolean', description: '日付や時間の解釈に自信が持てない場合はtrue' }
+                },
+                required: ['desired_date', 'time_start', 'time_end', 'raw', 'unrecognized']
+              }
+            }
+          },
+          required: ['rows']
+        }
+      }],
+      tool_choice: { type: 'tool', name: 'extract_shift_rows' },
+      messages: [{
+        role: 'user',
+        content: `以下はドライバー(個人事業主)がLINEで送ってきた希望シフトのメッセージです。勤務可能な日付と時間帯を抽出してください。\n\n---\n${text}\n---`
+      }]
+    });
+    const toolUse = response.content.find(c => c.type === 'tool_use');
+    res.json({ success: true, rows: (toolUse && toolUse.input.rows) || [] });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'AI解析に失敗しました: ' + e.message });
+  }
+});
+
 // ===== 店舗からの人員要請 =====
 app.get('/api/store-requests', async (req, res) => {
   const rows = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date DESC, id DESC');
@@ -1022,7 +1114,12 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     }
 
     if (!hasAnySchedule && notesRaw) {
-      errors.push(`${r + 1}行目「${store_name}」: 曜日の時間帯が読み取れず、備考「${notesRaw}」があるため要確認です(手動で確認してください)`);
+      let message = `${r + 1}行目「${store_name}」: 曜日の時間帯が読み取れず、備考「${notesRaw}」があるため要確認です(手動で確認してください)`;
+      const aiGuess = await interpretNoteWithAI(notesRaw, year, month);
+      if (aiGuess) {
+        message += ` ／ 🤖AI解釈(参考・自動登録はされていません): ${aiGuess.desired_date || '?'} ${aiGuess.time_start || '?'}〜${aiGuess.time_end || '?'} ${aiGuess.required_count}名`;
+      }
+      errors.push(message);
     }
   }
 

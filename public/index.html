@@ -344,7 +344,10 @@
             <input id="line-month" type="number" min="1" max="12" placeholder="月(日付だけの行に使用)" class="p-2 border rounded text-sm">
           </div>
           <textarea id="line-text" rows="4" placeholder="ここにLINEのメッセージを貼り付け" class="w-full p-2 border rounded text-sm"></textarea>
-          <button onclick="parseLineShiftMessage()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🔍 解析してプレビュー</button>
+          <div class="flex gap-2 items-center flex-wrap">
+            <button onclick="parseLineShiftMessage()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🔍 解析してプレビュー</button>
+            <button onclick="parseLineShiftMessageWithAI()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">🤖 AIで解析してプレビュー(試験的機能)</button>
+          </div>
           <div id="line-preview"></div>
         </div>
 
@@ -1330,6 +1333,29 @@
       if (!text.trim()) { alert('メッセージを貼り付けてください'); return; }
 
       lineParsedRows = parseLineShiftText(text, year, month);
+      renderLinePreview();
+    }
+
+    // 正規表現の代わりにAI(Claude)で解析する(試験的機能)。結果は同じプレビュー・確認画面に表示され、
+    // 登録前に必ず内容を確認できる(AIの解析結果を無条件に信用しない設計)
+    async function parseLineShiftMessageWithAI() {
+      const year = parseInt(document.getElementById('line-year').value, 10);
+      const month = parseInt(document.getElementById('line-month').value, 10);
+      const text = document.getElementById('line-text').value;
+      if (!document.getElementById('line-driver').value) { alert('ドライバーを選択してください'); return; }
+      if (!year || !month) { alert('年月を入力してください'); return; }
+      if (!text.trim()) { alert('メッセージを貼り付けてください'); return; }
+
+      const preview = document.getElementById('line-preview');
+      preview.innerHTML = '<p class="text-slate-400 text-xs p-2">🤖 AIが解析中...</p>';
+      const res = await fetch('/api/ai/parse-line-shift', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, year, month })
+      });
+      const data = await res.json();
+      if (!data.success) { preview.innerHTML = `<p class="text-red-600 text-xs p-2">❌ ${esc(data.message || 'AI解析に失敗しました')}</p>`; return; }
+
+      lineParsedRows = data.rows;
       renderLinePreview();
     }
 
