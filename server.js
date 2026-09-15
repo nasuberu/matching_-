@@ -245,10 +245,20 @@ async function geocodeAddress(address) {
   }
 }
 
+// 店舗名の表記ゆれ(「class」接頭辞、「【Tax-Free】」等の装飾)を取り除いて正規化する
+function normalizeStoreName(store_name) {
+  return (store_name || '')
+    .replace(/^class/i, '')
+    .replace(/【[^】]*】/g, '')
+    .trim();
+}
+
 // 店舗名(自由入力)を店舗マスタに名寄せする。既存店舗が見つかればそのidを返し、
 // 住所/緯度経度が未設定であれば補完する。見つからなければ新規に登録する
 async function resolveStoreId({ store_name, area, address, lat, lng }) {
-  const name = (store_name || '').trim();
+  // 取込み元によって店舗名に「class」接頭辞や「【Tax-Free】」表記が付いたり付かなかったりするため、
+  // 正規化してから既存の店舗マスタと照合する(そうしないと同じ店舗が表記違いで重複登録されてしまう)
+  const name = normalizeStoreName(store_name);
   if (!name) return null;
   const now = new Date().toISOString();
   const existing = await dbGet('SELECT * FROM stores WHERE name = ?', [name]);
@@ -263,6 +273,12 @@ async function resolveStoreId({ store_name, area, address, lat, lng }) {
     [name, area || '', address || '', lat, lng, '', now]
   );
   return result.lastID;
+}
+
+// 店舗マスタに登録済みの住所・緯度経度・エリアを取得する(店舗依頼側で住所が未入力のときのフォールバックに使う)
+async function getStoreMasterInfo(store_id) {
+  if (!store_id) return null;
+  return dbGet('SELECT area, address, lat, lng FROM stores WHERE id = ?', [store_id]);
 }
 
 // 候補者(driver_id, home_lat, home_lng, desired_store, desired_area を持つオブジェクト)を
@@ -764,7 +780,7 @@ app.post('/api/store-requests', async (req, res) => {
   const { id, store_name, area, address, request_date, time_start, time_end, required_count, requests } = req.body;
   if (!store_name || !request_date) return res.status(400).json({ success: false, message: 'store_name, request_date は必須です' });
 
-  let lat = null, lng = null;
+  let finalArea = area || '', finalAddress = address || '', lat = null, lng = null;
   if (address) {
     const existing = id ? await dbGet('SELECT address, lat, lng FROM store_requests WHERE id = ?', [id]) : null;
     if (existing && existing.address === address && existing.lat != null) {
@@ -777,17 +793,28 @@ app.post('/api/store-requests', async (req, res) => {
   // 店舗名は自由入力のまま、裏側で店舗マスタに名寄せしておく(相性・派遣履歴を店舗単位で扱うため)
   const store_id = await resolveStoreId({ store_name, area, address, lat, lng });
 
+  // 住所が未入力の場合は、店舗マスタに登録済みの住所を自動で補完する(距離計算ができるように)
+  if (!address) {
+    const storeInfo = await getStoreMasterInfo(store_id);
+    if (storeInfo && storeInfo.address) {
+      finalArea = finalArea || storeInfo.area || '';
+      finalAddress = storeInfo.address;
+      lat = storeInfo.lat;
+      lng = storeInfo.lng;
+    }
+  }
+
   const now = new Date().toISOString();
   if (id) {
     await dbRun(
       `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, request_date=?, time_start=?, time_end=?, required_count=?, requests=?, store_id=? WHERE id=?`,
-      [store_name, area || '', address || '', lat, lng, request_date, time_start || '', time_end || '', required_count || 1, requests || '', store_id, id]
+      [store_name, finalArea, finalAddress, lat, lng, request_date, time_start || '', time_end || '', required_count || 1, requests || '', store_id, id]
     );
     return res.json({ success: true, id });
   }
   const result = await dbRun(
     `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [store_name, area || '', address || '', lat, lng, request_date, time_start || '', time_end || '', required_count || 1, requests || '', now, store_id]
+    [store_name, finalArea, finalAddress, lat, lng, request_date, time_start || '', time_end || '', required_count || 1, requests || '', now, store_id]
   );
   res.json({ success: true, id: result.lastID });
 });
@@ -816,14 +843,26 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
     const request_date = normalizeDateStr(pickField(row, STORE_ALIASES.request_date));
     if (!store_name || !request_date) { errors.push(`${i + 2}行目: 店舗名または依頼日が読み取れませんでした`); continue; }
 
-    const address = pickField(row, STORE_ALIASES.address);
-    const area = pickField(row, STORE_ALIASES.area);
+    let address = pickField(row, STORE_ALIASES.address);
+    let area = pickField(row, STORE_ALIASES.area);
     let lat = null, lng = null;
     if (address) {
       const geo = await geocodeAddress(address);
       if (geo) { lat = geo.lat; lng = geo.lng; }
     }
     const store_id = await resolveStoreId({ store_name, area, address, lat, lng });
+
+    // 住所が未入力の場合は、店舗マスタに登録済みの住所を自動で補完する(距離計算ができるように)
+    if (!address) {
+      const storeInfo = await getStoreMasterInfo(store_id);
+      if (storeInfo && storeInfo.address) {
+        area = area || storeInfo.area || '';
+        address = storeInfo.address;
+        lat = storeInfo.lat;
+        lng = storeInfo.lng;
+      }
+    }
+
     const time_start = pickField(row, STORE_ALIASES.time_start);
     const time_end = pickField(row, STORE_ALIASES.time_end);
     const required_count = parseInt(pickField(row, STORE_ALIASES.required_count), 10) || 1;
@@ -919,6 +958,8 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     const note = flag ? `(${flag}) ${notesRaw}`.trim() : notesRaw;
 
     const store_id = await resolveStoreId({ store_name });
+    // 店舗マスタに住所が登録されていれば、それを店舗依頼側にも使う(距離計算ができるように)
+    const storeInfo = await getStoreMasterInfo(store_id);
 
     // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する
     const codeMatch = notesRaw.match(/(\d{5,7})/);
@@ -938,7 +979,11 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       const time_end = `${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`;
 
       const key = `${store_id}|${w}|${time_start}|${time_end}`;
-      const entry = slotMap.get(key) || { count: 0, storeName: store_name, notesSet: new Set(), weekdayIndex: w, time_start, time_end, storeId: store_id };
+      const entry = slotMap.get(key) || {
+        count: 0, storeName: store_name, notesSet: new Set(), weekdayIndex: w, time_start, time_end, storeId: store_id,
+        area: storeInfo ? (storeInfo.area || '') : '', address: storeInfo ? (storeInfo.address || '') : '',
+        lat: storeInfo ? storeInfo.lat : null, lng: storeInfo ? storeInfo.lng : null
+      };
       entry.count++;
       if (note) entry.notesSet.add(note);
       slotMap.set(key, entry);
@@ -963,13 +1008,13 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       );
       if (existing) {
         await dbRun(
-          `UPDATE store_requests SET store_name=?, time_end=?, required_count=?, requests=? WHERE id=?`,
-          [entry.storeName, entry.time_end, entry.count, requests, existing.id]
+          `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=? WHERE id=?`,
+          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, entry.time_end, entry.count, requests, existing.id]
         );
       } else {
         await dbRun(
           `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [entry.storeName, '', '', null, null, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId]
+          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId]
         );
       }
       imported++;
@@ -1071,6 +1116,18 @@ app.post('/api/stores/import', upload.single('file'), async (req, res) => {
 });
 
 // ===== ドライバー×店舗の相性(好き/NG) =====
+// 設定済みの相性を全件返す(ダッシュボードの統計表示用)
+app.get('/api/driver-store-preferences', async (req, res) => {
+  const rows = await dbAll(`
+    SELECT p.*, d.name AS driver_name, s.name AS store_name, s.area
+    FROM driver_store_preferences p
+    JOIN drivers d ON d.id = p.driver_id
+    JOIN stores s ON s.id = p.store_id
+    ORDER BY p.id DESC
+  `);
+  res.json({ success: true, preferences: rows });
+});
+
 // 指定ドライバーについて、登録済み全店舗と現在の相性設定(未設定はnull)を一覧で返す
 app.get('/api/drivers/:id/preferences', async (req, res) => {
   const rows = await dbAll(`

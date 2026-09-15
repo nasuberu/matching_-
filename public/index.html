@@ -469,7 +469,7 @@
         </div>
       </details>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
           <p class="text-xs text-slate-500">店舗依頼件数</p>
           <p id="dash-stat-requests" class="text-2xl font-bold text-slate-800">0</p>
@@ -486,12 +486,35 @@
           <p class="text-xs text-slate-500">候補が見つからない店舗依頼</p>
           <p id="dash-stat-unmatched" class="text-2xl font-bold text-amber-600">0</p>
         </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-emerald-200">
+          <p class="text-xs text-slate-500">マッチング率(必要人数に対する充足率)</p>
+          <p id="dash-stat-fillrate" class="text-2xl font-bold text-emerald-600">0%</p>
+          <p id="dash-stat-fillrate-sub" class="text-[10px] text-slate-400">0 / 0人</p>
+        </div>
       </div>
 
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <h2 class="font-bold text-slate-800 mb-3">🏬 店舗別 依頼件数ランキング</h2>
         <div id="dash-store-ranking" class="space-y-1.5"></div>
       </div>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">👍🚫 店舗の相性 統計</summary>
+        <div class="pt-3 space-y-4">
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">評価段階ごとの件数</p>
+            <div id="dash-pref-levels" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">🚫 NGが多い店舗ランキング</p>
+            <div id="dash-pref-ng-ranking" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">⭐ 好き・OKが多い店舗ランキング</p>
+            <div id="dash-pref-good-ranking" class="space-y-1.5"></div>
+          </div>
+        </div>
+      </details>
 
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
         <div class="flex gap-1.5">
@@ -1727,15 +1750,19 @@
       loadArchiveMonthList();
     }
 
+    let dashboardPreferencesCache = [];
+
     async function loadDashboard() {
-      const [matchesRes, requestsRes, availRes] = await Promise.all([
-        fetch('/api/matches'), fetch('/api/store-requests'), fetch('/api/driver-availability')
+      const [matchesRes, requestsRes, availRes, prefRes] = await Promise.all([
+        fetch('/api/matches'), fetch('/api/store-requests'), fetch('/api/driver-availability'), fetch('/api/driver-store-preferences')
       ]);
       dashboardMatchesCache = (await matchesRes.json()).matches || [];
       dashboardStoreRequestsCache = (await requestsRes.json()).requests || [];
       dashboardAvailabilityCache = (await availRes.json()).availability || [];
+      dashboardPreferencesCache = (await prefRes.json()).preferences || [];
       renderDashboardStats();
       renderDashboardStoreRanking();
+      renderPreferenceStats();
       populateDashboardExportSelects();
       switchDashboardView(dashboardView);
       loadArchiveMonthList();
@@ -1796,6 +1823,57 @@
       const matchedRequestIds = new Set(dashboardMatchesCache.map(m => m.store_request_id));
       const unmatched = dashboardStoreRequestsCache.filter(r => !matchedRequestIds.has(r.id)).length;
       document.getElementById('dash-stat-unmatched').textContent = unmatched;
+
+      // マッチング率 = 実際に埋まった人数(候補/確定/完了。欠勤・変更で未補充のままの枠は含めない) ÷ 必要人数の合計
+      const totalNeeded = dashboardStoreRequestsCache.reduce((sum, r) => sum + (r.required_count || 1), 0);
+      const filledCount = dashboardMatchesCache.filter(m => m.status === '候補' || m.status === '確定' || m.status === '完了').length;
+      const fillRate = totalNeeded > 0 ? Math.round(filledCount / totalNeeded * 100) : 0;
+      document.getElementById('dash-stat-fillrate').textContent = `${fillRate}%`;
+      document.getElementById('dash-stat-fillrate-sub').textContent = `${filledCount} / ${totalNeeded}人`;
+    }
+
+    function renderPreferenceStats() {
+      const PREF_LEVELS = ['NG', '1', '2', '3', '4', '5', 'OK'];
+      const levelCounts = {};
+      PREF_LEVELS.forEach(l => levelCounts[l] = 0);
+      const ngByStore = {};
+      const goodByStore = {}; // 4・5・OKをまとめて「好き寄り」として集計する
+
+      for (const p of dashboardPreferencesCache) {
+        if (levelCounts[p.preference] !== undefined) levelCounts[p.preference]++;
+        if (p.preference === 'NG') ngByStore[p.store_name] = (ngByStore[p.store_name] || 0) + 1;
+        if (['4', '5', 'OK'].includes(p.preference)) goodByStore[p.store_name] = (goodByStore[p.store_name] || 0) + 1;
+      }
+
+      const levelEl = document.getElementById('dash-pref-levels');
+      const maxLevelCount = Math.max(1, ...PREF_LEVELS.map(l => levelCounts[l]));
+      levelEl.innerHTML = PREF_LEVELS.map(l => `
+        <div class="flex items-center gap-2">
+          <span class="text-xs w-12 shrink-0 font-bold ${l === 'NG' ? 'text-red-600' : l === 'OK' ? 'text-emerald-600' : 'text-slate-600'}">${l}</span>
+          <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+            <div class="${l === 'NG' ? 'bg-red-400' : l === 'OK' ? 'bg-emerald-500' : 'bg-blue-400'} h-4" style="width:${Math.round(levelCounts[l] / maxLevelCount * 100)}%"></div>
+          </div>
+          <span class="text-xs font-bold w-10 text-right shrink-0">${levelCounts[l]}件</span>
+        </div>
+      `).join('');
+
+      const renderRanking = (elId, counts, emptyMsg) => {
+        const el = document.getElementById(elId);
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        if (sorted.length === 0) { el.innerHTML = `<p class="text-slate-400 text-xs p-2">${emptyMsg}</p>`; return; }
+        const max = sorted[0][1];
+        el.innerHTML = sorted.map(([name, count]) => `
+          <div class="flex items-center gap-2">
+            <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
+            <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+              <div class="bg-slate-400 h-4" style="width:${Math.round(count / max * 100)}%"></div>
+            </div>
+            <span class="text-xs font-bold w-8 text-right shrink-0">${count}件</span>
+          </div>
+        `).join('');
+      };
+      renderRanking('dash-pref-ng-ranking', ngByStore, 'NG評価はまだありません');
+      renderRanking('dash-pref-good-ranking', goodByStore, '好き・OK評価(4/5/OK)はまだありません');
     }
 
     function renderDashboardStoreRanking() {
@@ -1824,7 +1902,7 @@
     }
 
     function dashboardStatusColor(status) {
-      return status === '欠勤' ? 'bg-red-100 text-red-700' : status === '完了' ? 'bg-slate-700 text-white' : status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
+      return status === '欠勤' ? 'bg-red-100 text-red-700' : status === '変更' ? 'bg-orange-100 text-orange-700' : status === '完了' ? 'bg-slate-700 text-white' : status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600';
     }
 
     function renderDashboardGrid() {
