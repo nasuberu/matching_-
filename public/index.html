@@ -1135,7 +1135,7 @@
       const dates = [...new Set(rows.map(a => a.desired_date))].sort();
       const names = [...new Set(rows.map(a => a.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 bg-white border-b border-slate-200 whitespace-nowrap">氏名</th>` +
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">氏名</th>` +
         dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(d.slice(5))}</th>`).join('');
 
       body.innerHTML = names.map(name => {
@@ -1145,7 +1145,7 @@
           const label = entry.time_start && entry.time_end ? `${entry.time_start}〜${entry.time_end}` : (entry.time_start || entry.time_end || '○');
           return `<td class="p-1.5 border-b border-slate-100 text-center whitespace-nowrap"><span class="inline-block text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">${esc(label)}</span></td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 bg-white border-b border-slate-100 whitespace-nowrap">${esc(name)}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(name)}</td>${cells}</tr>`;
       }).join('');
     }
 
@@ -2031,7 +2031,7 @@
       const rowKey = dashboardView === 'store' ? 'store_name' : 'driver_name';
       const rows = [...new Set(matches.map(m => m[rowKey]))].sort((a, b) => a.localeCompare(b, 'ja'));
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 bg-white border-b border-slate-200 whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
         dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(d)}</th>`).join('');
 
       body.innerHTML = rows.map(rowName => {
@@ -2049,7 +2049,7 @@
           }).join('');
           return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 bg-white border-b border-slate-100 whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
       }).join('');
     }
 
