@@ -332,7 +332,7 @@ async function interpretNoteWithAI(noteText, year, month) {
 // 「10:00-22:00」「10〜22」「10時〜22時」のような自由な書き方の時間帯を{start, end}(HH:MM)に変換する。
 // 読み取れなければnull(エリア固定の曜日パターン入力欄で使う)
 function parseTimeRangeText(text) {
-  const m = String(text || '').match(/(\d{1,2})[:時]?(\d{2})?\s*[-〜~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
+  const m = String(text || '').match(/(\d{1,2})[:時]?(\d{2})?\s*[-－‐–—〜～~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
   if (!m) return null;
   return {
     start: `${m[1].padStart(2, '0')}:${(m[2] || '00').padStart(2, '0')}`,
@@ -859,7 +859,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
       const cell = String(row[colIndex] ?? '').trim();
       if (!cell || cell === '休み') continue; // 空欄・休みは希望シフトを作らない
 
-      const timeMatch = cell.match(/^(\d{1,2}:\d{2})\s*[〜~\-−ー]\s*(\d{1,2}:\d{2})$/);
+      const timeMatch = cell.match(/^(\d{1,2}:\d{2})\s*[-－‐–—〜～~ー―−]\s*(\d{1,2}:\d{2})$/);
       if (!timeMatch) { errors.push(`${r + 1}行目 ${driverName} ${day}日: 「${cell}」を勤務時間として読み取れませんでした`); continue; }
 
       const desired_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -1143,7 +1143,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     for (let w = 0; w < WEEKDAY_LABELS.length; w++) {
       const cell = String(row[weekdayCols[w]] ?? '').trim();
       if (!cell) continue;
-      const timeMatch = cell.match(/(\d{1,2})[:時]?(\d{2})?\s*[-〜~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
+      const timeMatch = cell.match(/(\d{1,2})[:時]?(\d{2})?\s*[-－‐–—〜～~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
       if (!timeMatch) continue;
       hasAnySchedule = true;
       const time_start = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
