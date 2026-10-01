@@ -164,13 +164,15 @@
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForWeeklyImport()">
+            <select id="sr-weekly-sheet" class="p-1.5 border rounded text-xs hidden"></select>
             <input id="sr-weekly-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
             <input id="sr-weekly-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
             <span class="text-xs text-slate-500">月分</span>
             <button onclick="importStoreRequestsWeekly()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
           </div>
+          <p class="text-[10px] text-slate-400">複数シートのファイルを選ぶと、使うシートを選択できます(未選択時は先頭シートを使用)</p>
           <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
 
@@ -1059,8 +1061,24 @@
       if (data.success) loadStoreRequests();
     }
 
+    async function loadSheetNamesForWeeklyImport() {
+      const fileInput = document.getElementById('sr-weekly-import-file');
+      const sheetSelect = document.getElementById('sr-weekly-sheet');
+      sheetSelect.innerHTML = '';
+      sheetSelect.classList.add('hidden');
+      if (!fileInput.files[0]) return;
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/sheet-names', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!data.success || !data.sheets || data.sheets.length <= 1) return; // 単一シート(またはCSV)なら選択不要
+      sheetSelect.innerHTML = data.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      sheetSelect.classList.remove('hidden');
+    }
+
     async function importStoreRequestsWeekly() {
       const fileInput = document.getElementById('sr-weekly-import-file');
+      const sheetSelect = document.getElementById('sr-weekly-sheet');
       const resultEl = document.getElementById('sr-weekly-import-result');
       const year = document.getElementById('sr-weekly-year').value;
       const month = document.getElementById('sr-weekly-month').value;
@@ -1071,6 +1089,7 @@
       form.append('file', fileInput.files[0]);
       form.append('year', year);
       form.append('month', month);
+      if (!sheetSelect.classList.contains('hidden') && sheetSelect.value) form.append('sheet', sheetSelect.value);
       const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: form });
       const data = await res.json();
       if (!data.success) {

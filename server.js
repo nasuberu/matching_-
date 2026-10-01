@@ -445,7 +445,8 @@ function parseUploadedSpreadsheet(buffer, filename) {
 // 「氏名×日付」のワイド形式(1行目=日付見出し、1列目=氏名、セル=勤務時間 or 休み)のシフト表を
 // 見出し行+各行を配列のまま返す(通常のparseUploadedSpreadsheetは列名をキーにしたオブジェクトを返すため、
 // 「1(火)」のような日付見出しを順序どおり扱いたいこちらの用途には配列のままの形が必要)
-function parseWideSpreadsheet(buffer, filename) {
+// sheetNameを指定すればそのシートを、未指定(またはファイル内に無い名前)なら先頭シートを読む
+function parseWideSpreadsheet(buffer, filename, sheetName) {
   const ext = (filename || '').toLowerCase();
   if (ext.endsWith('.csv') || ext.endsWith('.txt')) {
     const detected = jschardet.detect(buffer) || {};
@@ -461,7 +462,8 @@ function parseWideSpreadsheet(buffer, filename) {
     return [keys, ...objRows.map(o => keys.map(k => o[k]))];
   }
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const targetName = (sheetName && workbook.SheetNames.includes(sheetName)) ? sheetName : workbook.SheetNames[0];
+  const sheet = workbook.Sheets[targetName];
   return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
 }
 
@@ -755,6 +757,20 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
   res.json({ success: true, imported, total: rows.length, errors });
 });
 
+// アップロードされたExcelファイルのシート名一覧を返す(CSVは単一シート扱いで空配列)。
+// 1ファイルに複数シートがある場合に、取込み前にどのシートを使うか選べるようにするため
+app.post('/api/sheet-names', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
+  const ext = (req.file.originalname || '').toLowerCase();
+  if (ext.endsWith('.csv') || ext.endsWith('.txt')) return res.json({ success: true, sheets: [] });
+  try {
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', bookSheets: true });
+    res.json({ success: true, sheets: workbook.SheetNames });
+  } catch (e) {
+    res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+});
+
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
 // セル=勤務時間「10:00〜22:00」or「休み」or 空欄)で取込む。年月はファイルに含まれないためフォームで指定してもらう。
 // 空欄・「休み」のセルは希望シフトを作らない(その日は稼働しない扱い)
@@ -768,7 +784,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname);
+    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname, req.body.sheet);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
@@ -1030,7 +1046,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname);
+    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname, req.body.sheet);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
