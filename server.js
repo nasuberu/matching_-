@@ -14,6 +14,12 @@ const PORT = 4001;
 const DIST_WARNING_KM = 30; // これを超える距離のマッチングは「距離が遠い」として画面上で警告表示する
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
+// 「所定フォルダ」: 担当者から共有されたExcel/CSVをここに置いておけば、ブラウザでファイルを都度選ばなくても
+// 取込み画面から一覧表示→選択して取込みできる(uploads/フォルダをそのまま使う)
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+const INCOMING_FILE_EXTENSIONS = ['.xlsx', '.xls', '.csv', '.txt'];
+
 // 備考・LINEメッセージのAI解析(任意機能)。.envにANTHROPIC_API_KEYが設定されていない場合はnullのままで、
 // 関連エンドポイントは「AI未設定」を返す(既存の正規表現ベースの解析は影響を受けない)
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
@@ -802,11 +808,58 @@ app.post('/api/sheet-names', upload.single('file'), async (req, res) => {
   }
 });
 
+// filenameを「uploads/」フォルダ直下のファイル名に限定して安全な絶対パスにする(..などでの脱出を防ぐ)。
+// 存在しない・フォルダ外を指す場合はnullを返す
+function resolveIncomingFilePath(filename) {
+  if (!filename) return null;
+  const safeName = path.basename(String(filename));
+  const fullPath = path.join(UPLOADS_DIR, safeName);
+  if (path.dirname(fullPath) !== UPLOADS_DIR) return null;
+  if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return null;
+  return fullPath;
+}
+
+// 所定フォルダ(uploads/)に置かれているファイルの一覧を返す(名前・サイズ・更新日時、更新が新しい順)
+app.get('/api/incoming-files', (req, res) => {
+  const files = fs.readdirSync(UPLOADS_DIR)
+    .filter(name => INCOMING_FILE_EXTENSIONS.includes(path.extname(name).toLowerCase()))
+    .map(name => {
+      const stat = fs.statSync(path.join(UPLOADS_DIR, name));
+      return { name, size: stat.size, mtime: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.mtime.localeCompare(a.mtime));
+  res.json({ success: true, files });
+});
+
+// 各種取込みエンドポイントで、multerでのアップロードと所定フォルダ(uploads/)内のファイル名指定の
+// どちらからでも取込み元を得られるようにする共通ヘルパー。{buffer, filename}を返す。どちらも無ければnull
+function getImportSource(req) {
+  if (req.file) return { buffer: req.file.buffer, filename: req.file.originalname };
+  const fullPath = resolveIncomingFilePath(req.body.source_filename);
+  if (fullPath) return { buffer: fs.readFileSync(fullPath), filename: path.basename(fullPath) };
+  return null;
+}
+
+// 所定フォルダ内の指定ファイルのシート名一覧を返す(/api/sheet-namesの、アップロードでなくファイル名指定版)
+app.post('/api/incoming-files/sheet-names', (req, res) => {
+  const fullPath = resolveIncomingFilePath(req.body.filename);
+  if (!fullPath) return res.status(404).json({ success: false, message: 'ファイルが見つかりません' });
+  const ext = path.extname(fullPath).toLowerCase();
+  if (ext === '.csv' || ext === '.txt') return res.json({ success: true, sheets: [] });
+  try {
+    const workbook = XLSX.read(fs.readFileSync(fullPath), { type: 'buffer', bookSheets: true });
+    res.json({ success: true, sheets: workbook.SheetNames });
+  } catch (e) {
+    res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+});
+
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
 // セル=勤務時間「10:00〜22:00」or「休み」or 空欄)で取込む。年月はファイルに含まれないためフォームで指定してもらう。
 // 空欄・「休み」のセルは希望シフトを作らない(その日は稼働しない扱い)
 app.post('/api/driver-availability/import-wide', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
+  const source = getImportSource(req);
+  if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
   const year = parseInt(req.body.year, 10);
   const month = parseInt(req.body.month, 10);
   if (!year || !month || month < 1 || month > 12) {
@@ -815,7 +868,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname, req.body.sheet);
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
@@ -1069,7 +1122,8 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
 // 年月はファイルに含まれないためフォームで指定してもらい、対象月の該当曜日すべてに展開して店舗依頼を作る。
 // 備考に社員番号(5〜7桁の数字)らしき記載があれば、その社員のドライバーマスタの「固定希望店舗」にこの店舗を自動設定する
 app.post('/api/store-requests/import-weekly', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
+  const source = getImportSource(req);
+  if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
   const year = parseInt(req.body.year, 10);
   const month = parseInt(req.body.month, 10);
   if (!year || !month || month < 1 || month > 12) {
@@ -1078,7 +1132,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(req.file.buffer, req.file.originalname, req.body.sheet);
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }

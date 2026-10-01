@@ -165,7 +165,12 @@
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForWeeklyImport()">
+            <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
+            <select id="sr-weekly-folder-file" onchange="onIncomingFileSelected('sr-weekly')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
+            <button onclick="loadIncomingFiles('sr-weekly-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
+          </div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('sr-weekly')">
             <select id="sr-weekly-sheet" class="p-1.5 border rounded text-xs hidden"></select>
             <input id="sr-weekly-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
@@ -347,7 +352,13 @@
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <input id="av-wide-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
+            <select id="av-wide-folder-file" onchange="onIncomingFileSelected('av-wide')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
+            <button onclick="loadIncomingFiles('av-wide-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
+          </div>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="av-wide-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('av-wide')">
+            <select id="av-wide-sheet" class="p-1.5 border rounded text-xs hidden"></select>
             <input id="av-wide-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
             <input id="av-wide-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
@@ -599,8 +610,8 @@
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
       if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); }
-      if (tab === 'store') loadStoreRequests();
-      if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
+      if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); }
+      if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
       if (tab === 'storemaster') loadStoreMaster();
       if (tab === 'driver') loadDrivers();
       if (tab === 'preferences') loadDriversForPreferenceSelect();
@@ -1134,9 +1145,39 @@
       if (data.success) loadStoreRequests();
     }
 
-    async function loadSheetNamesForWeeklyImport() {
-      const fileInput = document.getElementById('sr-weekly-import-file');
-      const sheetSelect = document.getElementById('sr-weekly-sheet');
+    // ===== 所定フォルダ(uploads/)からのファイル選択(複数の取込み画面で共通利用) =====
+    // prefixは 'sr-weekly' や 'av-wide' のように、各取込み画面のid接頭辞
+    async function loadIncomingFiles(selectId) {
+      const sel = document.getElementById(selectId);
+      const keep = sel.value;
+      const res = await fetch('/api/incoming-files');
+      const data = await res.json();
+      const files = data.files || [];
+      sel.innerHTML = '<option value="">-- ファイルをアップロードする場合は選択しない --</option>' +
+        files.map(f => `<option value="${esc(f.name)}">${esc(f.name)} (${Math.round(f.size / 1024)}KB・${esc(f.mtime.slice(0, 16).replace('T', ' '))})</option>`).join('');
+      sel.value = keep;
+    }
+
+    async function onIncomingFileSelected(prefix) {
+      const folderSelect = document.getElementById(`${prefix}-folder-file`);
+      const sheetSelect = document.getElementById(`${prefix}-sheet`);
+      sheetSelect.innerHTML = '';
+      sheetSelect.classList.add('hidden');
+      if (!folderSelect.value) return;
+      document.getElementById(`${prefix}-import-file`).value = ''; // フォルダ選択を優先する(手動アップロードはクリア)
+      const res = await fetch('/api/incoming-files/sheet-names', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: folderSelect.value })
+      });
+      const data = await res.json();
+      if (!data.success || !data.sheets || data.sheets.length <= 1) return; // 単一シート(またはCSV)なら選択不要
+      sheetSelect.innerHTML = data.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      sheetSelect.classList.remove('hidden');
+    }
+
+    async function loadSheetNamesForImport(prefix) {
+      const fileInput = document.getElementById(`${prefix}-import-file`);
+      const sheetSelect = document.getElementById(`${prefix}-sheet`);
+      document.getElementById(`${prefix}-folder-file`).value = ''; // ファイル選択を優先する(フォルダ選択はクリア)
       sheetSelect.innerHTML = '';
       sheetSelect.classList.add('hidden');
       if (!fileInput.files[0]) return;
@@ -1144,25 +1185,41 @@
       form.append('file', fileInput.files[0]);
       const res = await fetch('/api/sheet-names', { method: 'POST', body: form });
       const data = await res.json();
-      if (!data.success || !data.sheets || data.sheets.length <= 1) return; // 単一シート(またはCSV)なら選択不要
+      if (!data.success || !data.sheets || data.sheets.length <= 1) return;
       sheetSelect.innerHTML = data.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
       sheetSelect.classList.remove('hidden');
     }
 
+    // アップロードしたファイル、または所定フォルダで選んだファイルのどちらかをFormDataに積む。
+    // どちらも未選択ならfalseを返す(呼び出し側で「ファイルを選択してください」と案内する)
+    function appendImportSource(prefix, form) {
+      const sheetSelect = document.getElementById(`${prefix}-sheet`);
+      const sheetValue = (sheetSelect && !sheetSelect.classList.contains('hidden') && sheetSelect.value) ? sheetSelect.value : null;
+      const folderFile = document.getElementById(`${prefix}-folder-file`).value;
+      if (folderFile) {
+        form.append('source_filename', folderFile);
+        if (sheetValue) form.append('sheet', sheetValue);
+        return true;
+      }
+      const fileInput = document.getElementById(`${prefix}-import-file`);
+      if (fileInput.files[0]) {
+        form.append('file', fileInput.files[0]);
+        if (sheetValue) form.append('sheet', sheetValue);
+        return true;
+      }
+      return false;
+    }
+
     async function importStoreRequestsWeekly() {
-      const fileInput = document.getElementById('sr-weekly-import-file');
-      const sheetSelect = document.getElementById('sr-weekly-sheet');
       const resultEl = document.getElementById('sr-weekly-import-result');
       const year = document.getElementById('sr-weekly-year').value;
       const month = document.getElementById('sr-weekly-month').value;
-      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      const form = new FormData();
+      if (!appendImportSource('sr-weekly', form)) { alert('ファイルを選択してください'); return; }
       if (!year || !month) { alert('対象の年月を入力してください'); return; }
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
       form.append('year', year);
       form.append('month', month);
-      if (!sheetSelect.classList.contains('hidden') && sheetSelect.value) form.append('sheet', sheetSelect.value);
       const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: form });
       const data = await res.json();
       if (!data.success) {
@@ -1174,7 +1231,7 @@
         }
         resultEl.innerHTML = html;
       }
-      fileInput.value = '';
+      document.getElementById('sr-weekly-import-file').value = '';
       if (data.success) loadStoreRequests();
     }
 
@@ -1349,15 +1406,13 @@
     }
 
     async function importAvailabilityWide() {
-      const fileInput = document.getElementById('av-wide-import-file');
       const resultEl = document.getElementById('av-wide-import-result');
       const year = document.getElementById('av-wide-year').value;
       const month = document.getElementById('av-wide-month').value;
-      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      const form = new FormData();
+      if (!appendImportSource('av-wide', form)) { alert('ファイルを選択してください'); return; }
       if (!year || !month) { alert('対象の年月を入力してください'); return; }
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
       form.append('year', year);
       form.append('month', month);
       const res = await fetch('/api/driver-availability/import-wide', { method: 'POST', body: form });
@@ -1371,7 +1426,7 @@
         }
         resultEl.innerHTML = html;
       }
-      fileInput.value = '';
+      document.getElementById('av-wide-import-file').value = '';
       if (data.success) loadAvailability();
     }
 
