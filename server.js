@@ -1062,7 +1062,8 @@ app.post('/api/store-requests/import', upload.single('file'), async (req, res) =
   res.json({ success: true, imported, total: rows.length, errors });
 });
 
-// 店舗の「曜日ごとの週間必要枠」表(1行=1人分の必要枠。同じ店舗が複数行あれば必要人数として合算する)を取込む。
+// 店舗の「曜日ごとの週間必要枠」表(1行=1人分の必要枠。同じ店舗が複数行あれば必要人数として合算する。
+// セルに「10-22*2」のように*(全角＊も可)+数字が付いていれば、その曜日だけ人数分(例:2人)として数える)を取込む。
 // 列は固定位置ではなく見出しのテキスト(店舗名/月/火/水/木/金/土/日/フラグ/備考)で探すため、
 // 見出し行がどこにあっても(先頭にメモ行が入っていても)対応できる。
 // 年月はファイルに含まれないためフォームで指定してもらい、対象月の該当曜日すべてに展開して店舗依頼を作る。
@@ -1148,6 +1149,9 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       hasAnySchedule = true;
       const time_start = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
       const time_end = `${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`;
+      // セルに「*2」「＊3」のような倍数指定があれば、その人数分を必要枠として数える(無ければ1人分)
+      const multiplierMatch = cell.match(/[*＊]\s*(\d+)/);
+      const multiplier = multiplierMatch ? parseInt(multiplierMatch[1], 10) : 1;
 
       const key = `${store_id}|${w}|${time_start}|${time_end}`;
       const entry = slotMap.get(key) || {
@@ -1155,7 +1159,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
         area: storeInfo ? (storeInfo.area || '') : '', address: storeInfo ? (storeInfo.address || '') : '',
         lat: storeInfo ? storeInfo.lat : null, lng: storeInfo ? storeInfo.lng : null
       };
-      entry.count++;
+      entry.count += multiplier;
       if (note) entry.notesSet.add(note);
       slotMap.set(key, entry);
     }
