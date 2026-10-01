@@ -172,6 +172,12 @@ db.serialize(() => {
   ensureColumn('drivers', 'insurance_info', 'TEXT');        // 保険加入状況(貨物保険等のメモ)
   ensureColumn('drivers', 'company_name', 'TEXT');          // 会社名(法人として契約している個人事業主向け。個人の場合は空欄)
   ensureColumn('drivers', 'fixed_store_id', 'INTEGER REFERENCES stores(id)'); // 固定希望店舗(希望シフトで店舗未入力の日の初期値として使う)
+  // エリア固定: 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群(想定デポ)の中から
+  // 優先的に割り当てる仕組み。area_fixed_patternは{mon:"10:00-22:00", ...}形式のJSON文字列、
+  // area_fixed_store_idsは候補店舗idの配列のJSON文字列
+  ensureColumn('drivers', 'area_fixed_enabled', 'INTEGER DEFAULT 0');
+  ensureColumn('drivers', 'area_fixed_pattern', 'TEXT');
+  ensureColumn('drivers', 'area_fixed_store_ids', 'TEXT');
   ensureColumn('store_requests', 'archived_month', 'TEXT');     // 月次クローズで「YYYY-MM」を入れ、作業画面から隠す(データは消さない)
   ensureColumn('driver_availability', 'archived_month', 'TEXT');
   ensureColumn('matches', 'archived_month', 'TEXT');
@@ -321,6 +327,23 @@ async function interpretNoteWithAI(noteText, year, month) {
   } catch (e) {
     return null; // AI解析に失敗しても取込み自体は止めない(従来通りの要確認メッセージのみ表示する)
   }
+}
+
+// 「10:00-22:00」「10〜22」「10時〜22時」のような自由な書き方の時間帯を{start, end}(HH:MM)に変換する。
+// 読み取れなければnull(エリア固定の曜日パターン入力欄で使う)
+function parseTimeRangeText(text) {
+  const m = String(text || '').match(/(\d{1,2})[:時]?(\d{2})?\s*[-〜~ー―−]\s*(\d{1,2})[:時]?(\d{2})?/);
+  if (!m) return null;
+  return {
+    start: `${m[1].padStart(2, '0')}:${(m[2] || '00').padStart(2, '0')}`,
+    end: `${m[3].padStart(2, '0')}:${(m[4] || '00').padStart(2, '0')}`
+  };
+}
+
+// JSの Date.getDay()(0=日,1=月,...,6=土)を、エリア固定パターンのキー(mon/tue/...)に変換する
+const WEEKDAY_KEY_BY_JSDAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function weekdayKeyOf(dateStr) {
+  return WEEKDAY_KEY_BY_JSDAY[new Date(dateStr + 'T00:00:00').getDay()];
 }
 
 // 候補者(driver_id, home_lat, home_lng, desired_store, desired_area を持つオブジェクト)を
@@ -556,13 +579,15 @@ app.get('/api/drivers', async (req, res) => {
 });
 
 app.post('/api/drivers', async (req, res) => {
-  const { id, name, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes } = req.body;
+  const { id, name, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes,
+          area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids } = req.body;
   if (!name) return res.status(400).json({ success: false, message: '氏名は必須です' });
+
+  const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids FROM drivers WHERE id = ?', [id]) : null;
 
   // 住所が変わった場合のみ再ジオコーディングする(毎回叩くと無駄なため)
   let lat = null, lng = null;
   if (home_address) {
-    const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng FROM drivers WHERE id = ?', [id]) : null;
     if (existing && existing.home_address === home_address && existing.home_lat != null) {
       lat = existing.home_lat; lng = existing.home_lng;
     } else {
@@ -571,17 +596,23 @@ app.post('/api/drivers', async (req, res) => {
     }
   }
 
+  // エリア固定の設定はリクエストに含まれていれば更新し、含まれていなければ(一括編集など、この項目を
+  // 扱わない呼び出し元から送られてきた場合)既存の値をそのまま維持する(意図せず消してしまわないように)
+  const finalAreaFixedEnabled = area_fixed_enabled !== undefined ? (area_fixed_enabled ? 1 : 0) : (existing ? existing.area_fixed_enabled : 0);
+  const finalAreaFixedPattern = area_fixed_pattern !== undefined ? JSON.stringify(area_fixed_pattern || {}) : (existing ? existing.area_fixed_pattern : '{}');
+  const finalAreaFixedStoreIds = area_fixed_store_ids !== undefined ? JSON.stringify(area_fixed_store_ids || []) : (existing ? existing.area_fixed_store_ids : '[]');
+
   const now = new Date().toISOString();
   if (id) {
     await dbRun(
-      `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
-      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', id]
+      `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=?, area_fixed_enabled=?, area_fixed_pattern=?, area_fixed_store_ids=? WHERE id=?`,
+      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
     );
     return res.json({ success: true, id });
   }
   const result = await dbRun(
-    `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', now]
+    `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, now]
   );
   res.json({ success: true, id: result.lastID });
 });
@@ -1420,6 +1451,23 @@ app.post('/api/matches/run', async (req, res) => {
   `);
   // 希望シフトで店舗が未入力の場合は、ドライバーマスタの「固定希望店舗」を初期値として使う
   const availability = availabilityRows.map(a => ({ ...a, desired_store: a.desired_store || a.fixed_store_name || '' }));
+  // 実際に希望シフトを提出した(driver_id, date)の組を把握しておく(エリア固定の自動補完で、
+  // 本人が別の希望を出している日を上書きしないようにするため)
+  const explicitAvailabilitySet = new Set(availability.map(a => `${a.driver_id}|${a.desired_date}`));
+
+  // エリア固定ドライバー(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群の中から
+  // 優先的に割り当てる人)を読み込んでおく。希望シフト未提出の日だけ、このパターンから仮の候補を作る
+  const areaFixedRows = await dbAll(`
+    SELECT id, name, home_lat, home_lng, area_fixed_pattern, area_fixed_store_ids
+    FROM drivers WHERE area_fixed_enabled = 1
+  `);
+  const areaFixedDrivers = areaFixedRows.map(d => {
+    let pattern = {}, storeIds = [];
+    try { pattern = d.area_fixed_pattern ? JSON.parse(d.area_fixed_pattern) : {}; } catch (e) { /* ignore */ }
+    try { storeIds = d.area_fixed_store_ids ? JSON.parse(d.area_fixed_store_ids) : []; } catch (e) { /* ignore */ }
+    return { ...d, pattern, storeIds };
+  }).filter(d => d.storeIds.length > 0);
+
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
 
   const now = new Date().toISOString();
@@ -1432,11 +1480,32 @@ app.post('/api/matches/run', async (req, res) => {
     const assignedToday = assignedDriverIdsByDate[store.request_date];
 
     // 同じ日付の希望を持ち、この店舗をNGにしていないドライバーを候補にする
-    const candidates = availability.filter(a =>
+    const normalCandidates = availability.filter(a =>
       a.desired_date === store.request_date &&
       !assignedToday.has(a.driver_id) &&
       preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
     );
+
+    // エリア固定ドライバーのうち、この店舗が候補店舗に含まれ、その曜日のパターンがあり、
+    // 本人が別途希望シフトを出していない人を、希望店舗=この店舗として仮の候補に加える
+    // (strong-matchボーナスが働き、候補店舗の中で優先的に割り当てられるようになる)
+    const weekdayKey = weekdayKeyOf(store.request_date);
+    const areaFixedCandidates = [];
+    for (const af of areaFixedDrivers) {
+      if (!af.storeIds.includes(store.store_id)) continue;
+      if (assignedToday.has(af.id)) continue;
+      if (explicitAvailabilitySet.has(`${af.id}|${store.request_date}`)) continue;
+      if (preferenceByDriverStore.get(`${af.id}:${store.store_id}`) === 'NG') continue;
+      const timeRange = parseTimeRangeText(af.pattern[weekdayKey]);
+      if (!timeRange) continue;
+      areaFixedCandidates.push({
+        driver_id: af.id, driver_name: af.name, home_lat: af.home_lat, home_lng: af.home_lng,
+        desired_store: store.store_name, desired_area: store.area,
+        time_start: timeRange.start, time_end: timeRange.end
+      });
+    }
+
+    const candidates = [...normalCandidates, ...areaFixedCandidates];
 
     const scored = candidates
       .map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))

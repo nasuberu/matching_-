@@ -230,6 +230,31 @@
           <input id="dr-insurance" placeholder="保険加入状況(例: 貨物保険加入済み)" class="p-2 border rounded text-sm md:col-span-2">
           <input id="dr-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
         </div>
+
+        <details class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <summary class="cursor-pointer select-none text-xs font-bold text-indigo-700">🗺️ エリア固定の設定(任意)</summary>
+          <div class="pt-2 space-y-2">
+            <label class="flex items-center gap-2 text-xs font-bold text-slate-700">
+              <input type="checkbox" id="dr-area-fixed-enabled">
+              エリア固定を有効にする(店舗を1つに固定するのではなく、決まった曜日・時間帯で複数の候補店舗の中から優先的に割り当てる)
+            </label>
+            <div class="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+              <div><p class="text-[10px] text-slate-500 text-center">月</p><input id="dr-af-mon" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">火</p><input id="dr-af-tue" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">水</p><input id="dr-af-wed" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">木</p><input id="dr-af-thu" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">金</p><input id="dr-af-fri" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">土</p><input id="dr-af-sat" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+              <div><p class="text-[10px] text-slate-500 text-center">日</p><input id="dr-af-sun" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
+            </div>
+            <div>
+              <p class="text-xs text-slate-500 mb-1">候補店舗(想定デポ、複数選択可。この中からマッチング時に優先的に割り当てられます)</p>
+              <input id="dr-af-store-search" placeholder="店舗名で絞り込み" oninput="renderAreaFixedStoreList()" class="p-1.5 border rounded text-xs w-full mb-1">
+              <div id="dr-af-store-list" class="max-h-36 overflow-y-auto border border-slate-200 rounded p-2 grid grid-cols-2 sm:grid-cols-3 gap-1 bg-white"></div>
+            </div>
+          </div>
+        </details>
+
         <div class="flex gap-2">
           <button id="dr-submit-btn" onclick="saveDriver()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
           <button id="dr-cancel-btn" onclick="cancelDriverEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
@@ -591,12 +616,56 @@
       const driversData = await driversRes.json();
       const storesData = await storesRes.json();
       driversCache = driversData.drivers || [];
+      driverFormStoresCache = storesData.stores || [];
       const fixedStoreSelect = document.getElementById('dr-fixed-store');
       const keepValue = fixedStoreSelect.value;
       fixedStoreSelect.innerHTML = '<option value="">固定希望店舗(なし)</option>' +
-        (storesData.stores || []).map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
+        driverFormStoresCache.map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
       fixedStoreSelect.value = keepValue;
+      renderAreaFixedStoreList();
       renderDriverList();
+    }
+
+    // ===== エリア固定(曜日ごとの決まった時間帯で、複数の候補店舗から優先的に割り当てる仕組み) =====
+    let driverFormStoresCache = [];
+    let selectedAreaFixedStoreIds = new Set();
+    const AREA_FIXED_WEEKDAYS = [['mon', '月'], ['tue', '火'], ['wed', '水'], ['thu', '木'], ['fri', '金'], ['sat', '土'], ['sun', '日']];
+
+    function renderAreaFixedStoreList() {
+      const el = document.getElementById('dr-af-store-list');
+      const keyword = document.getElementById('dr-af-store-search').value.trim().toLowerCase();
+      const rows = keyword ? driverFormStoresCache.filter(s => s.name.toLowerCase().includes(keyword)) : driverFormStoresCache;
+      if (rows.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs col-span-full p-1">該当する店舗がありません</p>'; return; }
+      el.innerHTML = rows.map(s => `
+        <label class="flex items-center gap-1 text-xs truncate" title="${esc(s.name)}">
+          <input type="checkbox" value="${s.id}" ${selectedAreaFixedStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleAreaFixedStore(${s.id}, this.checked)">
+          ${esc(s.name)}
+        </label>
+      `).join('');
+    }
+
+    function toggleAreaFixedStore(id, checked) {
+      if (checked) selectedAreaFixedStoreIds.add(id); else selectedAreaFixedStoreIds.delete(id);
+    }
+
+    function getAreaFixedFormValues() {
+      return {
+        area_fixed_enabled: document.getElementById('dr-area-fixed-enabled').checked,
+        area_fixed_pattern: Object.fromEntries(AREA_FIXED_WEEKDAYS.map(([key]) => [key, document.getElementById(`dr-af-${key}`).value.trim()])),
+        area_fixed_store_ids: [...selectedAreaFixedStoreIds]
+      };
+    }
+
+    function setAreaFixedFormValues(d) {
+      document.getElementById('dr-area-fixed-enabled').checked = !!d.area_fixed_enabled;
+      let pattern = {};
+      try { pattern = d.area_fixed_pattern ? JSON.parse(d.area_fixed_pattern) : {}; } catch (e) { /* ignore */ }
+      AREA_FIXED_WEEKDAYS.forEach(([key]) => { document.getElementById(`dr-af-${key}`).value = pattern[key] || ''; });
+      let storeIds = [];
+      try { storeIds = d.area_fixed_store_ids ? JSON.parse(d.area_fixed_store_ids) : []; } catch (e) { /* ignore */ }
+      selectedAreaFixedStoreIds = new Set(storeIds);
+      document.getElementById('dr-af-store-search').value = '';
+      renderAreaFixedStoreList();
     }
 
     function getVisibleDrivers() {
@@ -636,7 +705,7 @@
             <td class="p-2.5 text-xs text-slate-500">${esc(d.first_contract_date || '-')}</td>
             <td class="p-2.5">${statusBadge(d.status)}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
-            <td class="p-2.5 text-xs text-slate-500">${esc(d.fixed_store_name || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500">${esc(d.fixed_store_name || '-')}${d.area_fixed_enabled ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🗺️エリア固定</span>' : ''}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.notes || '-')}</td>
             <td class="p-2.5 whitespace-nowrap">
@@ -737,6 +806,7 @@
       document.getElementById('dr-fixed-store').value = d.fixed_store_id || '';
       document.getElementById('dr-insurance').value = d.insurance_info || '';
       document.getElementById('dr-notes').value = d.notes || '';
+      setAreaFixedFormValues(d);
       document.getElementById('dr-submit-btn').textContent = '更新する';
       document.getElementById('dr-cancel-btn').classList.remove('hidden');
       document.getElementById('dr-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -745,6 +815,7 @@
     function cancelDriverEdit() {
       editingDriverId = null;
       ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
+      setAreaFixedFormValues({});
       document.getElementById('dr-submit-btn').textContent = '＋ 登録する';
       document.getElementById('dr-cancel-btn').classList.add('hidden');
     }
@@ -764,7 +835,8 @@
         email: document.getElementById('dr-email').value.trim(),
         fixed_store_id: document.getElementById('dr-fixed-store').value ? parseInt(document.getElementById('dr-fixed-store').value, 10) : null,
         insurance_info: document.getElementById('dr-insurance').value.trim(),
-        notes: document.getElementById('dr-notes').value.trim()
+        notes: document.getElementById('dr-notes').value.trim(),
+        ...getAreaFixedFormValues()
       };
       if (editingDriverId) payload.id = editingDriverId;
       const res = await fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
