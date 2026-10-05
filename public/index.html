@@ -2135,6 +2135,27 @@
       document.getElementById('dash-stat-fillrate-sub').textContent = `${filledCount} / ${totalNeeded}人`;
     }
 
+    // クリックで内訳(店舗×ドライバー)を開閉できるようにするための状態
+    let prefLevelExpanded = null;   // 'NG' | '1' | ... | null
+    let prefStoreExpanded = null;   // { type: 'ng' | 'good', store: 店舗名 } | null
+
+    function togglePrefLevel(level) {
+      prefLevelExpanded = (prefLevelExpanded === level) ? null : level;
+      renderPreferenceStats();
+    }
+
+    function togglePrefStoreByIndex(type, index) {
+      const list = type === 'ng' ? prefNgSortedList : prefGoodSortedList;
+      const name = list[index] ? list[index][0] : null;
+      if (!name) return;
+      prefStoreExpanded = (prefStoreExpanded && prefStoreExpanded.type === type && prefStoreExpanded.store === name)
+        ? null : { type, store: name };
+      renderPreferenceStats();
+    }
+
+    let prefNgSortedList = [];
+    let prefGoodSortedList = [];
+
     function renderPreferenceStats() {
       const PREF_LEVELS = ['NG', '1', '2', '3', '4', '5', 'OK'];
       const levelCounts = {};
@@ -2150,33 +2171,58 @@
 
       const levelEl = document.getElementById('dash-pref-levels');
       const maxLevelCount = Math.max(1, ...PREF_LEVELS.map(l => levelCounts[l]));
-      levelEl.innerHTML = PREF_LEVELS.map(l => `
-        <div class="flex items-center gap-2">
-          <span class="text-xs w-12 shrink-0 font-bold ${l === 'NG' ? 'text-red-600' : l === 'OK' ? 'text-emerald-600' : 'text-slate-600'}">${l}</span>
-          <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
-            <div class="${l === 'NG' ? 'bg-red-400' : l === 'OK' ? 'bg-emerald-500' : 'bg-blue-400'} h-4" style="width:${Math.round(levelCounts[l] / maxLevelCount * 100)}%"></div>
+      levelEl.innerHTML = PREF_LEVELS.map(l => {
+        const isOpen = prefLevelExpanded === l;
+        const detail = isOpen ? dashboardPreferencesCache.filter(p => p.preference === l) : [];
+        return `
+        <div>
+          <div class="flex items-center gap-2 cursor-pointer" onclick="togglePrefLevel('${l}')" title="クリックで内訳を表示">
+            <span class="text-xs w-12 shrink-0 font-bold ${l === 'NG' ? 'text-red-600' : l === 'OK' ? 'text-emerald-600' : 'text-slate-600'}">${l}</span>
+            <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+              <div class="${l === 'NG' ? 'bg-red-400' : l === 'OK' ? 'bg-emerald-500' : 'bg-blue-400'} h-4" style="width:${Math.round(levelCounts[l] / maxLevelCount * 100)}%"></div>
+            </div>
+            <span class="text-xs font-bold w-10 text-right shrink-0">${levelCounts[l]}件</span>
           </div>
-          <span class="text-xs font-bold w-10 text-right shrink-0">${levelCounts[l]}件</span>
+          ${isOpen ? `
+            <div class="pl-14 pr-2 pt-1 pb-2 space-y-0.5 bg-slate-50 rounded mt-0.5">
+              ${detail.length === 0 ? '<p class="text-slate-400 text-[11px] p-1">該当する組み合わせがありません</p>' :
+                detail.map(p => `<p class="text-[11px] text-slate-600">🏬 ${esc(p.store_name)} ／ 🚚 ${esc(p.driver_name)}</p>`).join('')}
+            </div>
+          ` : ''}
         </div>
-      `).join('');
+      `; }).join('');
 
-      const renderRanking = (elId, counts, emptyMsg) => {
+      const renderRanking = (elId, counts, emptyMsg, type) => {
         const el = document.getElementById(elId);
         const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        if (type === 'ng') prefNgSortedList = sorted; else prefGoodSortedList = sorted;
         if (sorted.length === 0) { el.innerHTML = `<p class="text-slate-400 text-xs p-2">${emptyMsg}</p>`; return; }
         const max = sorted[0][1];
-        el.innerHTML = sorted.map(([name, count]) => `
-          <div class="flex items-center gap-2">
-            <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
-            <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
-              <div class="bg-slate-400 h-4" style="width:${Math.round(count / max * 100)}%"></div>
+        const matchesLevel = type === 'ng' ? (pref => pref === 'NG') : (pref => ['4', '5', 'OK'].includes(pref));
+        el.innerHTML = sorted.map(([name, count], i) => {
+          const isOpen = prefStoreExpanded && prefStoreExpanded.type === type && prefStoreExpanded.store === name;
+          const detailNames = isOpen
+            ? dashboardPreferencesCache.filter(p => p.store_name === name && matchesLevel(p.preference)).map(p => p.driver_name)
+            : [];
+          return `
+          <div>
+            <div class="flex items-center gap-2 cursor-pointer" onclick="togglePrefStoreByIndex('${type}', ${i})" title="クリックで内訳を表示">
+              <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
+              <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+                <div class="bg-slate-400 h-4" style="width:${Math.round(count / max * 100)}%"></div>
+              </div>
+              <span class="text-xs font-bold w-8 text-right shrink-0">${count}件</span>
             </div>
-            <span class="text-xs font-bold w-8 text-right shrink-0">${count}件</span>
+            ${isOpen ? `
+              <div class="pl-[9.5rem] pr-2 pt-1 pb-2 bg-slate-50 rounded mt-0.5">
+                <p class="text-[11px] text-slate-600">${detailNames.length ? detailNames.map(esc).join('、') : '該当なし'}</p>
+              </div>
+            ` : ''}
           </div>
-        `).join('');
+        `; }).join('');
       };
-      renderRanking('dash-pref-ng-ranking', ngByStore, 'NG評価はまだありません');
-      renderRanking('dash-pref-good-ranking', goodByStore, '好き・OK評価(4/5/OK)はまだありません');
+      renderRanking('dash-pref-ng-ranking', ngByStore, 'NG評価はまだありません', 'ng');
+      renderRanking('dash-pref-good-ranking', goodByStore, '好き・OK評価(4/5/OK)はまだありません', 'good');
     }
 
     function renderDashboardStoreRanking() {
