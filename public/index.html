@@ -451,9 +451,20 @@
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
         <h2 class="font-bold text-slate-800">👍🚫 ドライバーごとの店舗との相性</h2>
         <p class="text-[11px] text-slate-400">NG〜1〜2〜3〜4〜5〜OKの7段階で相性を設定できます。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。未評価の店舗は「履歴なし」と表示されます。</p>
+        <div class="flex gap-1.5">
+          <button id="pref-view-driver-btn" onclick="switchPreferenceView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別に見る</button>
+          <button id="pref-view-all-btn" onclick="switchPreferenceView('all')" class="text-xs px-3 py-1.5 rounded font-bold">全件表示</button>
+        </div>
         <select id="pref-driver" onchange="loadPreferences()" class="p-2 border rounded text-sm w-full md:w-64"></select>
+        <input id="pref-all-search" oninput="renderAllPreferences()" placeholder="ドライバー名・店舗名で絞り込み" class="p-2 border rounded text-sm w-full md:w-64 hidden">
       </div>
       <div id="preferences-list" class="space-y-2"></div>
+      <div id="preferences-all-list" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left text-slate-500 border-b"><th class="p-2.5">ドライバー</th><th class="p-2.5">店舗名</th><th class="p-2.5">エリア</th><th class="p-2.5">相性</th><th class="p-2.5"></th></tr></thead>
+          <tbody id="preferences-all-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 派遣履歴タブ -->
@@ -632,7 +643,7 @@
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
       if (tab === 'storemaster') loadStoreMaster();
       if (tab === 'driver') loadDrivers();
-      if (tab === 'preferences') loadDriversForPreferenceSelect();
+      if (tab === 'preferences') { loadDriversForPreferenceSelect(); switchPreferenceView(prefView); }
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
       if (tab === 'dashboard') loadDashboard();
     }
@@ -1580,6 +1591,70 @@
     }
 
     // ===== 店舗の相性 =====
+    // ===== 店舗相性マスタ: ドライバー別/全件表示の切り替え =====
+    let prefView = 'driver';
+    function switchPreferenceView(view) {
+      prefView = view;
+      document.getElementById('pref-view-driver-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('pref-view-all-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('pref-driver').classList.toggle('hidden', view !== 'driver');
+      document.getElementById('preferences-list').classList.toggle('hidden', view !== 'driver');
+      document.getElementById('pref-all-search').classList.toggle('hidden', view !== 'all');
+      document.getElementById('preferences-all-list').classList.toggle('hidden', view !== 'all');
+      if (view === 'all') loadAllPreferences();
+    }
+
+    let allPreferencesCache = [];
+    async function loadAllPreferences() {
+      const res = await fetch('/api/driver-store-preferences');
+      const data = await res.json();
+      allPreferencesCache = data.preferences || [];
+      renderAllPreferences();
+    }
+
+    function renderAllPreferences() {
+      const tbody = document.getElementById('preferences-all-body');
+      const keyword = document.getElementById('pref-all-search').value.trim().toLowerCase();
+      const rows = keyword
+        ? allPreferencesCache.filter(p => p.driver_name.toLowerCase().includes(keyword) || p.store_name.toLowerCase().includes(keyword))
+        : allPreferencesCache;
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-slate-400 text-sm p-4 text-center">${allPreferencesCache.length === 0 ? 'まだ相性が設定されていません' : '該当する行が見つかりません'}</td></tr>`;
+        return;
+      }
+      const PREF_LEVELS = ['NG', '1', '2', '3', '4', '5', 'OK'];
+      const prefBadgeClass = v => v === 'NG' ? 'border-red-400 text-red-600' : v === 'OK' ? 'border-emerald-400 text-emerald-600' : v ? 'border-blue-400 text-blue-600' : 'border-slate-200 text-slate-400';
+      tbody.innerHTML = rows.map(p => `
+        <tr class="border-b border-slate-100 last:border-0">
+          <td class="p-2.5 font-bold">${esc(p.driver_name)}</td>
+          <td class="p-2.5">${esc(p.store_name)}</td>
+          <td class="p-2.5 text-xs text-slate-500">${esc(p.area || '-')}</td>
+          <td class="p-2.5">
+            <select onchange="setOrClearPreferenceAll(${p.driver_id}, ${p.store_id}, ${p.id}, this.value)" class="text-xs font-bold px-2 py-1.5 rounded border ${prefBadgeClass(p.preference)}">
+              ${PREF_LEVELS.map(v => `<option value="${v}" ${p.preference === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </td>
+          <td class="p-2.5">
+            <button onclick="deletePreferenceAll(${p.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function setOrClearPreferenceAll(driver_id, store_id, preferenceId, value) {
+      await fetch('/api/driver-store-preferences', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_id, store_id, preference: value })
+      });
+      loadAllPreferences();
+    }
+
+    async function deletePreferenceAll(preferenceId) {
+      if (!confirm('この相性設定を削除しますか？')) return;
+      await fetch(`/api/driver-store-preferences/${preferenceId}`, { method: 'DELETE' });
+      loadAllPreferences();
+    }
+
     async function loadDriversForPreferenceSelect() {
       if (driversCache.length === 0) {
         const res = await fetch('/api/drivers');
