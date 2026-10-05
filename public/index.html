@@ -570,6 +570,23 @@
         </div>
       </div>
 
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📋 マッチング結果一覧(SV確認シート形式)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">「確定」「完了」のマッチングを、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表で確認できます(提出用ファイルの「ＳＶ確認シート」と同じ列構成)。</p>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="sv-sheet-search" oninput="renderSvSheetTable()" placeholder="氏名・店舗名で絞り込み" class="p-1.5 border rounded text-xs flex-1 min-w-[140px]">
+            <button onclick="window.open('/api/export/sv-sheet.xlsx', '_blank')" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 Excelで出力</button>
+          </div>
+          <div class="overflow-x-auto max-h-[32rem] overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日付</th><th class="p-1.5">社員番号</th><th class="p-1.5">名前(個人事業主)</th><th class="p-1.5">シフト</th><th class="p-1.5">出勤場所</th><th class="p-1.5 text-right">勤務時間</th></tr></thead>
+              <tbody id="sv-sheet-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
         <div class="flex gap-1.5 items-center">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
@@ -2019,6 +2036,38 @@
       populateDashboardExportSelects();
       switchDashboardView(dashboardView);
       loadArchiveMonthList();
+      loadSvSheetTable();
+    }
+
+    // ===== マッチング結果一覧(SV確認シート形式: 日付/社員番号/名前/シフト/出勤場所/勤務時間) =====
+    let svSheetCache = [];
+    async function loadSvSheetTable() {
+      const res = await fetch('/api/export/sv-sheet');
+      const data = await res.json();
+      svSheetCache = data.rows || [];
+      renderSvSheetTable();
+    }
+
+    function renderSvSheetTable() {
+      const tbody = document.getElementById('sv-sheet-body');
+      const keyword = document.getElementById('sv-sheet-search').value.trim().toLowerCase();
+      const rows = keyword
+        ? svSheetCache.filter(r => r.driver_name.toLowerCase().includes(keyword) || r.store_name.toLowerCase().includes(keyword))
+        : svSheetCache;
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-slate-400 text-sm p-4 text-center">${svSheetCache.length === 0 ? '「確定」「完了」のマッチングがまだありません' : '該当する行が見つかりません'}</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr class="border-b border-slate-100">
+          <td class="p-1.5 whitespace-nowrap">${esc(r.date)}</td>
+          <td class="p-1.5 text-slate-500 whitespace-nowrap">${esc(r.driver_code || '-')}</td>
+          <td class="p-1.5 font-bold whitespace-nowrap">${esc(r.driver_name)}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(r.shift || '-')}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(r.store_name)}</td>
+          <td class="p-1.5 text-right whitespace-nowrap">${r.hours != null ? r.hours : '-'}</td>
+        </tr>
+      `).join('');
     }
 
     // ===== 過去の月を見る(アーカイブ) =====

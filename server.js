@@ -1477,7 +1477,7 @@ app.post('/api/dispatch-history/import', upload.single('file'), async (req, res)
 // ===== マッチング =====
 app.get('/api/matches', async (req, res) => {
   const rows = await dbAll(`
-    SELECT m.*, d.name AS driver_name, d.phone AS driver_phone, d.home_address,
+    SELECT m.*, d.name AS driver_name, d.phone AS driver_phone, d.home_address, d.driver_code,
            s.store_name, s.area, s.address AS store_address, s.time_start, s.time_end, s.requests AS store_requests
     FROM matches m
     JOIN drivers d ON d.id = m.driver_id
@@ -1996,6 +1996,58 @@ app.get('/api/export/shift-by-store', async (req, res) => {
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="store_shifts_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(buffer);
+});
+
+// 「HH:MM」同士の勤務時間(時間数)を計算する。終了が開始より前なら日またぎとみなし24時間分足す
+function hoursBetween(time_start, time_end) {
+  if (!time_start || !time_end) return null;
+  const toMinutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  let diff = toMinutes(time_end) - toMinutes(time_start);
+  if (diff <= 0) diff += 24 * 60;
+  return Math.round((diff / 60) * 100) / 100;
+}
+
+// 実データで共有された「ＳＶ確認シート」と同じ列構成(日付/社員番号/名前/シフト/出勤場所/勤務時間)で
+// マッチング結果を一覧出力する(JSON版はダッシュボードの表示用、Excel版はそのまま提出できる形式)
+async function getSvSheetRows() {
+  const matches = await dbAll(`
+    SELECT m.match_date, d.driver_code, d.name AS driver_name, s.store_name, s.time_start, s.time_end, m.status
+    FROM matches m
+    JOIN drivers d ON d.id = m.driver_id
+    JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+    ORDER BY m.match_date ASC, d.name ASC
+  `);
+  return matches.map(m => ({
+    date: m.match_date,
+    driver_code: m.driver_code || '',
+    driver_name: m.driver_name,
+    shift: (m.time_start && m.time_end) ? `${m.time_start}〜${m.time_end}` : '',
+    store_name: m.store_name,
+    hours: hoursBetween(m.time_start, m.time_end)
+  }));
+}
+
+app.get('/api/export/sv-sheet', async (req, res) => {
+  const rows = await getSvSheetRows();
+  res.json({ success: true, rows });
+});
+
+app.get('/api/export/sv-sheet.xlsx', async (req, res) => {
+  const rows = await getSvSheetRows();
+  if (rows.length === 0) return res.status(400).json({ success: false, message: '「確定」または「完了」のマッチングがありません(候補のままの場合は先に確定してください)' });
+  const aoa = [
+    ['日付', '社員番号', '名前(個人事業主)', 'シフト', '出勤場所', '勤務時間'],
+    ...rows.map(r => [r.date, r.driver_code, r.driver_name, r.shift, r.store_name, r.hours])
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 8 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'ＳＶ確認シート');
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="sv_sheet_${new Date().toISOString().slice(0, 10)}.xlsx"`);
   res.send(buffer);
 });
 
