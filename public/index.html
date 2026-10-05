@@ -563,6 +563,7 @@
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
         <h2 class="font-bold text-slate-800">📨 シフト表の送付</h2>
         <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、まず一括で確定してください。</p>
+        <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、ドライバーマスタの「固定希望店舗」に自動で反映されます(来月以降のマッチングで優先的に同じ店舗になりやすくなります)</p>
         <div class="flex gap-2 items-center flex-wrap">
           <button onclick="confirmAllMatches()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">✅ 候補を全て確定にする</button>
           <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
@@ -2306,7 +2307,7 @@
       const res = await fetch('/api/matches/confirm-all', { method: 'POST' });
       const data = await res.json();
       if (!data.success) { alert('確定に失敗しました'); return; }
-      alert(`✅ ${data.confirmed}件を確定にしました`);
+      alert(`✅ ${data.confirmed}件を確定にしました${data.autoFixedStoreUpdated > 0 ? `\n🏬 1ヶ月間ずっと同じ店舗だったドライバー${data.autoFixedStoreUpdated}人の固定希望店舗を自動反映しました` : ''}`);
       loadMatches();
       loadDashboard();
     }

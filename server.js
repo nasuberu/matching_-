@@ -300,6 +300,36 @@ async function getStoreMasterInfo(store_id) {
   return dbGet('SELECT area, address, lat, lng FROM stores WHERE id = ?', [store_id]);
 }
 
+// 「確定」「完了」のマッチングを見て、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、
+// そのドライバーマスタの「固定希望店舗」に自動反映する(2日以上、かつ全ての確定/完了マッチングが
+// 同じ店舗の場合のみ対象。既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定
+async function applyAutoFixedStoreFromMatches() {
+  const rows = await dbAll(`
+    SELECT m.driver_id, s.store_id, d.fixed_store_id
+    FROM matches m
+    JOIN store_requests s ON s.id = m.store_request_id
+    JOIN drivers d ON d.id = m.driver_id
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+  `);
+  const byDriver = new Map(); // driver_id -> { storeIds: Set, count, currentFixedStoreId }
+  for (const r of rows) {
+    const entry = byDriver.get(r.driver_id) || { storeIds: new Set(), count: 0, currentFixedStoreId: r.fixed_store_id };
+    entry.storeIds.add(r.store_id);
+    entry.count++;
+    byDriver.set(r.driver_id, entry);
+  }
+
+  let updated = 0;
+  for (const [driver_id, entry] of byDriver) {
+    if (entry.count < 2 || entry.storeIds.size !== 1) continue; // 同じ店舗が2件以上続いている場合のみ対象
+    const onlyStoreId = [...entry.storeIds][0];
+    if (entry.currentFixedStoreId === onlyStoreId) continue; // 既に同じ設定なら何もしない
+    await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [onlyStoreId, driver_id]);
+    updated++;
+  }
+  return updated;
+}
+
 // 週次パターン取込みで、曜日/時間の列が読み取れず「要確認」になった行の備考を、AI(Claude)で試しに解釈する(試験的機能)。
 // 自動登録はせず、コーディネーターが確認しやすいようエラーメッセージにAIの解釈候補を添えるだけに留める。
 // 未設定時やAI呼び出し失敗時はnullを返し、呼び出し側は従来通りの「要確認」メッセージのみ表示する
@@ -1589,7 +1619,8 @@ app.post('/api/matches/run', async (req, res) => {
 
 app.post('/api/matches/:id/confirm', async (req, res) => {
   await dbRun(`UPDATE matches SET status = '確定' WHERE id = ?`, [req.params.id]);
-  res.json({ success: true });
+  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, autoFixedStoreUpdated });
 });
 
 // 確定済みのマッチングを「完了」にし、派遣履歴に記録する(次回以降のマッチングで店舗/エリアの知見として使われる)
@@ -1609,7 +1640,8 @@ app.post('/api/matches/:id/complete', async (req, res) => {
       [match.driver_id, match.store_id, match.id, match.match_date, '', now]
     );
   }
-  res.json({ success: true });
+  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, autoFixedStoreUpdated });
 });
 
 // 「完了」を取り消して「確定」に戻す(押し間違い・後からの取り消し用)。あわせて自動作成された派遣履歴も削除する
@@ -1897,7 +1929,8 @@ app.post('/api/archive/:month/restore', async (req, res) => {
 // 「候補」を一括で「確定」にする(1件ずつ確定ボタンを押さなくても、シフト表送付の準備がすぐできるように)
 app.post('/api/matches/confirm-all', async (req, res) => {
   const result = await dbRun(`UPDATE matches SET status = '確定' WHERE archived_month IS NULL AND status = '候補'`);
-  res.json({ success: true, confirmed: result.changes });
+  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, confirmed: result.changes, autoFixedStoreUpdated });
 });
 
 function weekdayLabelOf(dateStr) {
