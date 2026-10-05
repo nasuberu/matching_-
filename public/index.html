@@ -2065,6 +2065,15 @@
       return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // "YYYY-MM-DD"の日付文字列に「(月)」のような曜日を付けて返す
+    const WEEKDAY_JP = ['日', '月', '火', '水', '木', '金', '土'];
+    function withWeekday(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isNaN(d.getTime())) return dateStr;
+      return `${dateStr}(${WEEKDAY_JP[d.getDay()]})`;
+    }
+
     // ===== ダッシュボード =====
     let dashboardMatchesCache = [];
     let dashboardStoreRequestsCache = [];
@@ -2136,7 +2145,7 @@
       }
       tbody.innerHTML = rows.map(r => `
         <tr class="border-b border-slate-100">
-          <td class="p-1.5 whitespace-nowrap">${esc(r.date)}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(withWeekday(r.date))}</td>
           <td class="p-1.5 text-slate-500 whitespace-nowrap">${esc(r.driver_code || '-')}</td>
           <td class="p-1.5 font-bold whitespace-nowrap">${esc(r.driver_name)}</td>
           <td class="p-1.5 whitespace-nowrap">${esc(r.shift || '-')}</td>
@@ -2350,7 +2359,7 @@
       const rows = [...new Set(matches.map(m => m[rowKey]))].sort((a, b) => a.localeCompare(b, 'ja'));
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
-        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(d)}</th>`).join('');
+        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = rows.map(rowName => {
         const cells = dates.map(d => {
