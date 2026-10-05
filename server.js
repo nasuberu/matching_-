@@ -1404,6 +1404,18 @@ app.get('/api/drivers/:id/preferences', async (req, res) => {
   res.json({ success: true, preferences: rows });
 });
 
+// 指定店舗について、登録済み全ドライバーと現在の相性設定(未設定はnull)を一覧で返す(上記の店舗版)
+app.get('/api/stores/:id/preferences', async (req, res) => {
+  const rows = await dbAll(`
+    SELECT d.id AS driver_id, d.name AS driver_name,
+           p.id AS preference_id, p.preference, p.notes
+    FROM drivers d
+    LEFT JOIN driver_store_preferences p ON p.driver_id = d.id AND p.store_id = ?
+    ORDER BY d.name ASC
+  `, [req.params.id]);
+  res.json({ success: true, preferences: rows });
+});
+
 // 相性の登録・更新(driver_id+store_idの組でupsert)
 app.post('/api/driver-store-preferences', async (req, res) => {
   const { driver_id, store_id, preference, notes } = req.body;

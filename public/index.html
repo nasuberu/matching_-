@@ -453,12 +453,15 @@
         <p class="text-[11px] text-slate-400">NG〜1〜2〜3〜4〜5〜OKの7段階で相性を設定できます。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。未評価の店舗は「履歴なし」と表示されます。</p>
         <div class="flex gap-1.5">
           <button id="pref-view-driver-btn" onclick="switchPreferenceView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別に見る</button>
+          <button id="pref-view-store-btn" onclick="switchPreferenceView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別に見る</button>
           <button id="pref-view-all-btn" onclick="switchPreferenceView('all')" class="text-xs px-3 py-1.5 rounded font-bold">全件表示</button>
         </div>
         <select id="pref-driver" onchange="loadPreferences()" class="p-2 border rounded text-sm w-full md:w-64"></select>
+        <select id="pref-store" onchange="loadPreferencesByStore()" class="p-2 border rounded text-sm w-full md:w-64 hidden"></select>
         <input id="pref-all-search" oninput="renderAllPreferences()" placeholder="ドライバー名・店舗名で絞り込み" class="p-2 border rounded text-sm w-full md:w-64 hidden">
       </div>
       <div id="preferences-list" class="space-y-2"></div>
+      <div id="preferences-by-store-list" class="hidden space-y-2"></div>
       <div id="preferences-all-list" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
         <table class="w-full text-sm">
           <thead><tr class="text-left text-slate-500 border-b"><th class="p-2.5">ドライバー</th><th class="p-2.5">店舗名</th><th class="p-2.5">エリア</th><th class="p-2.5">相性</th><th class="p-2.5"></th></tr></thead>
@@ -1591,17 +1594,67 @@
     }
 
     // ===== 店舗の相性 =====
-    // ===== 店舗相性マスタ: ドライバー別/全件表示の切り替え =====
+    // ===== 店舗相性マスタ: ドライバー別/店舗別/全件表示の切り替え =====
     let prefView = 'driver';
     function switchPreferenceView(view) {
       prefView = view;
       document.getElementById('pref-view-driver-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('pref-view-store-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'store' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
       document.getElementById('pref-view-all-btn').className = `text-xs px-3 py-1.5 rounded font-bold ${view === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
       document.getElementById('pref-driver').classList.toggle('hidden', view !== 'driver');
       document.getElementById('preferences-list').classList.toggle('hidden', view !== 'driver');
+      document.getElementById('pref-store').classList.toggle('hidden', view !== 'store');
+      document.getElementById('preferences-by-store-list').classList.toggle('hidden', view !== 'store');
       document.getElementById('pref-all-search').classList.toggle('hidden', view !== 'all');
       document.getElementById('preferences-all-list').classList.toggle('hidden', view !== 'all');
+      if (view === 'store') loadStoresForPreferenceSelect();
       if (view === 'all') loadAllPreferences();
+    }
+
+    let prefStoresCache = [];
+    async function loadStoresForPreferenceSelect() {
+      if (prefStoresCache.length === 0) {
+        const res = await fetch('/api/stores');
+        const data = await res.json();
+        prefStoresCache = data.stores || [];
+      }
+      const sel = document.getElementById('pref-store');
+      const keepValue = sel.value;
+      sel.innerHTML = '<option value="">-- 店舗を選択 --</option>' +
+        prefStoresCache.map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
+      if (keepValue) { sel.value = keepValue; loadPreferencesByStore(); }
+    }
+
+    async function loadPreferencesByStore() {
+      const storeId = document.getElementById('pref-store').value;
+      const list = document.getElementById('preferences-by-store-list');
+      if (!storeId) { list.innerHTML = ''; return; }
+      const res = await fetch(`/api/stores/${storeId}/preferences`);
+      const data = await res.json();
+      const rows = data.preferences || [];
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">ドライバーマスタにドライバーが登録されていません</p>'; return; }
+      const PREF_LEVELS = ['NG', '1', '2', '3', '4', '5', 'OK'];
+      const prefBadgeClass = v => v === 'NG' ? 'border-red-400 text-red-600' : v === 'OK' ? 'border-emerald-400 text-emerald-600' : v ? 'border-blue-400 text-blue-600' : 'border-slate-200 text-slate-400';
+      list.innerHTML = rows.map(p => `
+        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <p class="font-bold text-sm">${esc(p.driver_name)}</p>
+          </div>
+          <select onchange="setOrClearPreferenceByStore(${p.driver_id}, ${storeId}, ${p.preference_id || 'null'}, this.value)" class="text-xs font-bold px-2 py-1.5 rounded border ${prefBadgeClass(p.preference)}">
+            <option value="" ${!p.preference ? 'selected' : ''}>履歴なし</option>
+            ${PREF_LEVELS.map(v => `<option value="${v}" ${p.preference === v ? 'selected' : ''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      `).join('');
+    }
+
+    async function setOrClearPreferenceByStore(driver_id, store_id, preferenceId, value) {
+      if (!value) { if (preferenceId) await fetch(`/api/driver-store-preferences/${preferenceId}`, { method: 'DELETE' }); loadPreferencesByStore(); return; }
+      await fetch('/api/driver-store-preferences', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_id, store_id, preference: value })
+      });
+      loadPreferencesByStore();
     }
 
     let allPreferencesCache = [];
