@@ -677,8 +677,8 @@
 
     function renderAreaFixedStoreList() {
       const el = document.getElementById('dr-af-store-list');
-      const keyword = document.getElementById('dr-af-store-search').value.trim().toLowerCase();
-      const rows = keyword ? driverFormStoresCache.filter(s => s.name.toLowerCase().includes(keyword)) : driverFormStoresCache;
+      const keyword = normalizeForSearch(document.getElementById('dr-af-store-search').value.trim());
+      const rows = keyword ? driverFormStoresCache.filter(s => normalizeForSearch(s.name).includes(keyword)) : driverFormStoresCache;
       if (rows.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs col-span-full p-1">該当する店舗がありません</p>'; return; }
       el.innerHTML = rows.map(s => `
         <label class="flex items-center gap-1 text-xs truncate" title="${esc(s.name)}">
@@ -714,12 +714,12 @@
 
     function getVisibleDrivers() {
       const sortBy = document.getElementById('dr-sort').value;
-      const keyword = document.getElementById('dr-search').value.trim().toLowerCase();
+      const keyword = normalizeForSearch(document.getElementById('dr-search').value.trim());
 
       let rows = driversCache;
       if (keyword) {
         rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.fixed_store_name, d.notes]
-          .some(v => (v || '').toLowerCase().includes(keyword)));
+          .some(v => normalizeForSearch(v).includes(keyword)));
       }
       return [...rows].sort((a, b) => {
         if (sortBy === 'driver_code') return (a.driver_code || '').localeCompare(b.driver_code || '', 'ja') || a.name.localeCompare(b.name, 'ja');
@@ -939,12 +939,12 @@
     // 現在の検索/並び替え条件を反映した表示対象一覧を返す(表示・全選択・CSV書き出しで共通利用)
     function getVisibleStores() {
       const sortBy = document.getElementById('sm-sort').value;
-      const keyword = document.getElementById('sm-search').value.trim().toLowerCase();
+      const keyword = normalizeForSearch(document.getElementById('sm-search').value.trim());
 
       let rows = storeMasterCache;
       if (keyword) {
         rows = rows.filter(s => [s.name, s.store_code, s.area, s.address, s.manager_name, s.sv_name, s.notes]
-          .some(v => (v || '').toLowerCase().includes(keyword)));
+          .some(v => normalizeForSearch(v).includes(keyword)));
       }
       return [...rows].sort((a, b) => {
         if (sortBy === 'area') return (a.area || '').localeCompare(b.area || '', 'ja') || a.name.localeCompare(b.name, 'ja');
@@ -1306,8 +1306,8 @@
     function renderAvailabilityGrid() {
       const header = document.getElementById('av-grid-header');
       const body = document.getElementById('av-grid-body');
-      const keyword = document.getElementById('av-search').value.trim().toLowerCase();
-      const rows = keyword ? availabilityCache.filter(a => a.driver_name.toLowerCase().includes(keyword)) : availabilityCache;
+      const keyword = normalizeForSearch(document.getElementById('av-search').value.trim());
+      const rows = keyword ? availabilityCache.filter(a => normalizeForSearch(a.driver_name).includes(keyword)) : availabilityCache;
       if (rows.length === 0) {
         header.innerHTML = '';
         body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</td></tr>';
@@ -1332,12 +1332,12 @@
 
     function getVisibleAvailability() {
       const sortBy = document.getElementById('av-sort').value;
-      const keyword = document.getElementById('av-search').value.trim().toLowerCase();
+      const keyword = normalizeForSearch(document.getElementById('av-search').value.trim());
 
       let rows = availabilityCache;
       if (keyword) {
         rows = rows.filter(a => [a.driver_name, a.desired_date, a.desired_area, a.desired_store, a.requests]
-          .some(v => (v || '').toLowerCase().includes(keyword)));
+          .some(v => normalizeForSearch(v).includes(keyword)));
       }
       return [...rows].sort((a, b) => {
         if (sortBy === 'name') return a.driver_name.localeCompare(b.driver_name, 'ja') || a.desired_date.localeCompare(b.desired_date);
@@ -1667,9 +1667,9 @@
 
     function renderAllPreferences() {
       const tbody = document.getElementById('preferences-all-body');
-      const keyword = document.getElementById('pref-all-search').value.trim().toLowerCase();
+      const keyword = normalizeForSearch(document.getElementById('pref-all-search').value.trim());
       const rows = keyword
-        ? allPreferencesCache.filter(p => p.driver_name.toLowerCase().includes(keyword) || p.store_name.toLowerCase().includes(keyword))
+        ? allPreferencesCache.filter(p => normalizeForSearch(p.driver_name).includes(keyword) || normalizeForSearch(p.store_name).includes(keyword))
         : allPreferencesCache;
       if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" class="text-slate-400 text-sm p-4 text-center">${allPreferencesCache.length === 0 ? 'まだ相性が設定されていません' : '該当する行が見つかりません'}</td></tr>`;
@@ -2118,6 +2118,12 @@
       return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // 検索用に文字列を正規化する(大文字小文字を無視し、全角/半角スペース・連続スペースの違いを吸収する。
+    // 「吉川  守人」のようにスペースの数や種類が実データ側でバラついていても検索でヒットするようにするため)
+    function normalizeForSearch(str) {
+      return String(str || '').toLowerCase().replace(/[\s　]+/g, '');
+    }
+
     // "YYYY-MM-DD"の日付文字列に「(月)」のような曜日を付けて返す
     const WEEKDAY_JP = ['日', '月', '火', '水', '木', '金', '土'];
     function withWeekday(dateStr) {
@@ -2188,9 +2194,9 @@
 
     function renderSvSheetTable() {
       const tbody = document.getElementById('sv-sheet-body');
-      const keyword = document.getElementById('sv-sheet-search').value.trim().toLowerCase();
+      const keyword = normalizeForSearch(document.getElementById('sv-sheet-search').value.trim());
       const rows = keyword
-        ? svSheetCache.filter(r => r.driver_name.toLowerCase().includes(keyword) || r.store_name.toLowerCase().includes(keyword))
+        ? svSheetCache.filter(r => normalizeForSearch(r.driver_name).includes(keyword) || normalizeForSearch(r.store_name).includes(keyword))
         : svSheetCache;
       if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-slate-400 text-sm p-4 text-center">${svSheetCache.length === 0 ? '「確定」「完了」のマッチングがまだありません' : '該当する行が見つかりません'}</td></tr>`;
