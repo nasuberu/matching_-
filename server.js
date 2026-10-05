@@ -403,6 +403,14 @@ function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, area
   return { distance, score, preference, experienceCount };
 }
 
+// マッチングの優先順位(階層)。/api/matches/run は、この配列の前の階層に当てはまる候補を
+// 店舗の処理順に関係なく全店舗を通して先に確保してから、残りをスコア順で埋める(2段階処理)。
+// 今後、ここに階層を追加していくことで優先順位のルールを拡張していく想定
+// (例: 「1ヶ月間ずっと同じ店舗だった(固定希望店舗)人を最優先」が現在唯一の階層)
+const PRIORITY_TIERS = [
+  { label: '固定希望店舗', test: (a, store) => a.fixed_store_id === store.store_id },
+];
+
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
 async function loadScoringContext() {
@@ -1543,7 +1551,7 @@ app.post('/api/matches/run', async (req, res) => {
 
   const storeRequests = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date ASC');
   const availabilityRows = await dbAll(`
-    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, fs.name AS fixed_store_name
+    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, d.fixed_store_id, fs.name AS fixed_store_name
     FROM driver_availability a
     JOIN drivers d ON d.id = a.driver_id
     LEFT JOIN stores fs ON fs.id = d.fixed_store_id
@@ -1572,12 +1580,53 @@ app.post('/api/matches/run', async (req, res) => {
 
   const now = new Date().toISOString();
   const assignedDriverIdsByDate = {}; // date -> Set(driver_id) 同日の重複割当を防ぐ
-  let createdCount = 0;
-  let noCandidateCount = 0;
-
   for (const store of storeRequests) {
     assignedDriverIdsByDate[store.request_date] = assignedDriverIdsByDate[store.request_date] || new Set();
+  }
+  let createdCount = 0;
+  let noCandidateCount = 0;
+  const filledCountByRequestId = {}; // store_request.id -> 既に埋まった人数(1階層目で埋めた分)
+
+  async function insertMatch(store, p) {
+    const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
+    await dbRun(
+      `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount]
+    );
+    assignedDriverIdsByDate[store.request_date].add(p.driver_id);
+    createdCount++;
+  }
+
+  // 1階層目: 優先順位の階層(今は「固定希望店舗」のみ)に当てはまる候補を、店舗の処理順に関係なく
+  // 全店舗を通して先に確保する。これをしないと、たまたま先に処理された別の店舗に固定希望の人が
+  // 取られてしまい、本来優先されるべき自分の固定店舗に割り当てられないことがある
+  for (const tier of PRIORITY_TIERS) {
+    for (const store of storeRequests) {
+      const assignedToday = assignedDriverIdsByDate[store.request_date];
+      const alreadyFilled = filledCountByRequestId[store.id] || 0;
+      const needed = (store.required_count || 1) - alreadyFilled;
+      if (needed <= 0) continue;
+
+      const tierCandidates = availability.filter(a =>
+        a.desired_date === store.request_date &&
+        !assignedToday.has(a.driver_id) &&
+        tier.test(a, store) &&
+        preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
+      ).map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
+        .sort((x, y) => y.score - x.score);
+
+      const picked = tierCandidates.slice(0, needed);
+      for (const p of picked) await insertMatch(store, p);
+      filledCountByRequestId[store.id] = alreadyFilled + picked.length;
+    }
+  }
+
+  // 2階層目: 残りの枠を、これまで通りのスコアリング(距離・希望店舗/エリア一致・相性・経験)で埋める
+  for (const store of storeRequests) {
     const assignedToday = assignedDriverIdsByDate[store.request_date];
+    const alreadyFilled = filledCountByRequestId[store.id] || 0;
+    const needed = (store.required_count || 1) - alreadyFilled;
+    if (needed <= 0) continue;
 
     // 同じ日付の希望を持ち、この店舗をNGにしていないドライバーを候補にする
     const normalCandidates = availability.filter(a =>
@@ -1611,19 +1660,10 @@ app.post('/api/matches/run', async (req, res) => {
       .map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
       .sort((x, y) => y.score - x.score);
 
-    const needed = store.required_count || 1;
     const picked = scored.slice(0, needed);
-    if (picked.length === 0) { noCandidateCount++; continue; }
+    if (picked.length === 0 && alreadyFilled === 0) { noCandidateCount++; continue; }
 
-    for (const p of picked) {
-      const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
-      await dbRun(
-        `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount]
-      );
-      assignedToday.add(p.driver_id);
-      createdCount++;
-    }
+    for (const p of picked) await insertMatch(store, p);
   }
 
   res.json({ success: true, created: createdCount, unmatched_requests: noCandidateCount });
