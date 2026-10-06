@@ -833,7 +833,9 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
 
 app.delete('/api/drivers/:id', async (req, res) => {
   await dbRun('DELETE FROM drivers WHERE id = ?', [req.params.id]);
-  await dbRun('DELETE FROM driver_availability WHERE driver_id = ?', [req.params.id]);
+  // 過去の月としてアーカイブ済みの希望シフトは、ドライバーがマスタから削除されても履歴として残す
+  // (archived_month IS NULLの、現在進行中の希望シフトのみ削除する)
+  await dbRun('DELETE FROM driver_availability WHERE driver_id = ? AND archived_month IS NULL', [req.params.id]);
   res.json({ success: true });
 });
 
@@ -2103,17 +2105,19 @@ app.get('/api/archive/months', async (req, res) => {
 // 指定した月にクローズされた店舗依頼・希望シフト・マッチング結果を参照専用で返す
 app.get('/api/archive/:month', async (req, res) => {
   const month = req.params.month;
+  // ドライバーが後から削除されていても、アーカイブされた行自体は消えずに(ドライバー名だけ「削除済み」として)
+  // 見えるように、INNER JOINではなくLEFT JOIN+COALESCEにしている
   const [storeRequests, availability, matches] = await Promise.all([
     dbAll('SELECT * FROM store_requests WHERE archived_month = ? ORDER BY request_date ASC, id ASC', [month]),
     dbAll(`
-      SELECT a.*, d.name AS driver_name FROM driver_availability a
-      JOIN drivers d ON d.id = a.driver_id
+      SELECT a.*, COALESCE(d.name, '(削除済みドライバー)') AS driver_name FROM driver_availability a
+      LEFT JOIN drivers d ON d.id = a.driver_id
       WHERE a.archived_month = ? ORDER BY a.desired_date ASC, a.id ASC
     `, [month]),
     dbAll(`
-      SELECT m.*, d.name AS driver_name, s.store_name
+      SELECT m.*, COALESCE(d.name, '(削除済みドライバー)') AS driver_name, s.store_name
       FROM matches m
-      JOIN drivers d ON d.id = m.driver_id
+      LEFT JOIN drivers d ON d.id = m.driver_id
       JOIN store_requests s ON s.id = m.store_request_id
       WHERE m.archived_month = ? ORDER BY m.match_date ASC, m.id ASC
     `, [month]),
