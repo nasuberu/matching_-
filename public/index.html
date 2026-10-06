@@ -22,6 +22,7 @@
     <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
     <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗相性マスタ</button>
     <button id="btn-nav-history" onclick="switchTab('history')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📜 派遣履歴</button>
+    <button id="btn-nav-help" onclick="switchTab('help')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">❓ 使い方</button>
   </nav>
 
   <main class="p-4 max-w-6xl mx-auto space-y-4">
@@ -512,6 +513,16 @@
       <div id="history-list" class="space-y-2"></div>
     </div>
 
+    <!-- 使い方タブ -->
+    <div id="tab-help" class="hidden space-y-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
+        <h2 class="font-bold text-slate-800">❓ 使い方・よくある質問</h2>
+        <p class="text-xs text-slate-500">困ったときはキーワードで検索してください(例:「固定希望店舗」「候補が見つからない」「エリア固定」「取込み」など)</p>
+        <input id="help-search" oninput="renderHelpTopics()" placeholder="🔍 キーワードで検索" class="p-2 border rounded text-sm w-full">
+      </div>
+      <div id="help-topics-list" class="space-y-4"></div>
+    </div>
+
     <!-- ダッシュボードタブ -->
     <div id="tab-dashboard" class="hidden space-y-4">
       <details class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
@@ -647,7 +658,7 @@
     let driversCache = [];
 
     function switchTab(tab) {
-      ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard'].forEach(t => {
+      ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard', 'help'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
@@ -659,6 +670,7 @@
       if (tab === 'preferences') { loadDriversForPreferenceSelect(); switchPreferenceView(prefView); }
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
       if (tab === 'dashboard') loadDashboard();
+      if (tab === 'help') renderHelpTopics();
     }
 
     // ===== ドライバーマスタ =====
@@ -2599,6 +2611,101 @@
 
     function exportShiftByStore() {
       downloadShiftExcel('/api/export/shift-by-store', 'store_shifts.xlsx');
+    }
+
+    // ===== 使い方・よくある質問 =====
+    const HELP_TOPICS = [
+      { category: '全体の流れ', title: 'このアプリは何をするもの？', body:
+        '店舗からの人員依頼(店舗依頼)と、個人事業主(ドライバー)の希望シフトを突き合わせて、誰をどの店舗に割り当てるかの候補を自動で作るツールです。\n基本の流れ:\n①店舗依頼・希望シフトを登録(手入力 or Excel/CSV取込み)\n②「マッチング結果」タブで自動マッチングを実行\n③候補を確認し、問題なければ「確定」にする\n④実際に稼働したら「完了」にする(派遣履歴に自動で記録される)\n⑤月末に「月次クローズ」でその月をアーカイブし、翌月分の取込みに進む' },
+      { category: '全体の流れ', title: '複数のPCから使いたい', body:
+        'サーバーを起動しているPCのIPアドレスを調べ、同じ社内ネットワークの別PCのブラウザで「http://(IPアドレス):4001」を開けば利用できます。初回はWindowsファイアウォールの許可が必要な場合があります。\nIPアドレスはPCの再起動等で変わることがあるため、安定して使うにはIT部門にDHCP予約(固定化)を依頼するのがおすすめです。\n※複数人が同時に同じデータを編集すると競合する可能性があるため、閲覧と編集で役割を分けるのが安全です。' },
+      { category: '全体の流れ', title: '所定フォルダから取込みたい', body:
+        '「店舗依頼」「希望シフト」タブの取込み欄にある「📂 所定フォルダから選ぶ」を使うと、アプリのフォルダ内の「uploads」フォルダに置いたExcel/CSVファイルを、毎回アップロードし直さずに一覧から選んで取込みできます。複数シートのファイルならシートも選べます。' },
+
+      { category: 'マッチング結果', title: '自動マッチングの実行方法', body:
+        '「マッチング結果」タブの「⚡ 自動マッチングを実行」を押すと、その時点の店舗依頼・希望シフトから候補を作り直します(既存の候補は一旦削除され、確定済み/完了済みのものも含め全部作り直されるので注意)。\n実行後、候補が見つからなかった依頼は画面上部に警告として一覧表示されます。' },
+      { category: 'マッチング結果', title: '候補が見つからない(未マッチ)のはなぜ？', body:
+        '以下のいずれか(複合も含む)が原因です:\n・その日の希望シフト提出者が少ない(ドライバー数不足。これは構造的な問題で、バグではありません)\n・その日に必要な店舗数が多く、1人1日1店舗の制約で取り合いになっている\n・その日に空いている人が全員その店舗をNGにしている\n「🔍 空き状況を調べる」で日付・店舗を指定すれば、個別に手動で確認・調整できます。' },
+      { category: 'マッチング結果', title: '候補・確定・完了・欠勤・変更とは？', body:
+        '・候補: 自動マッチングが作った未確定の提案\n・確定: コーディネーターが確定させた状態(ここでシフト表送付の対象になる)\n・完了: 実際に稼働が終わった状態(派遣履歴に自動記録される)\n・欠勤: 確定/完了後に本人都合で来られなくなった場合\n・変更: 欠勤以外の理由(店舗都合など)で担当を変える場合\n欠勤・変更にすると、その場で「代替を探す」機能が使えます。' },
+      { category: 'マッチング結果', title: '欠勤・交代が出たときの代わりの人の探し方', body:
+        '確定/候補の行にある「🔁 交代させる」ボタンから理由を選んで登録すると、ステータスが「欠勤」または「変更」になります。その行の「🔁 代替を探す」を押すと、その日・その店舗に割り当て可能な人を全ドライバーの中からスコア順に提案します。選ぶとその場で新しい候補が作られます。' },
+      { category: 'マッチング結果', title: '空き状況を単独で調べたい', body:
+        '「🔍 空き状況を調べる(単独検索)」で、既存のマッチングとは無関係に「その日に誰が空いているか」をすぐ調べられます。店舗を指定すると距離・相性・経験を加味したスコア順、指定しなければ全員を氏名順に表示します。' },
+      { category: 'マッチング結果', title: 'シフト表を個人事業主・店舗に送りたい', body:
+        'ダッシュボードの「📨 シフト表の送付」から、「候補を全て確定にする」→「個人事業主向け シフト表」「店舗向け シフト表」のExcelボタンでそれぞれ一括ダウンロードできます(1人/1店舗ごとにシート分け)。\nまた「📋 マッチング結果一覧(SV確認シート形式)」では、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表やExcel(1シート)でも出力できます。' },
+      { category: 'マッチング結果', title: 'マッチングの優先順位を変えたい', body:
+        '「⚙️ マッチングの優先順位の設定」パネルで、どの条件を優先するか選んでチェックを入れ、↑↓で並び替えられます。チェックを入れた項目の候補を上から順に全店舗分先に確保し、残りは通常のスコアリングで埋めます。保存すると次回の自動マッチングから反映されます。' },
+      { category: 'マッチング結果', title: '固定希望店舗・エリア固定とは？', body:
+        '・固定希望店舗: そのドライバーがいつも行く決まった店舗(ドライバーマスタで設定)。希望シフトで店舗未入力の日の初期値として使われ、「マッチングの優先順位」で最優先にすることもできる。1ヶ月間ずっと同じ店舗に割り当てられると自動でも設定される。\n・エリア固定: 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗(想定デポ)の中から、その日の空き状況に応じて優先的に割り当てる仕組み。希望シフト未提出の日だけ適用される。' },
+
+      { category: '店舗依頼', title: '店舗依頼の登録方法', body:
+        '1件ずつ手入力のほか、「Excel/CSVから一括取込み(1行=1件の依頼)」と「週間必要枠表(曜日パターン)から一括取込み」の2種類の取込みに対応しています。\n曜日パターン取込みは、店舗×曜日ごとの時間帯表(週次パターン)を、指定した年月の実際の日付に展開して登録します。同じ店舗・同じ曜日・同じ時間帯の行が複数あれば必要人数として合算します。' },
+      { category: '店舗依頼', title: 'セルに「*2」と書くと？', body:
+        '週間必要枠表の取込みで、時間帯の後ろに「10-22*2」のように「*(数字)」を付けると、その曜日だけ人数分(例の場合は2人分)として数えます。' },
+      { category: '店舗依頼', title: '「要確認」と出た行はどうすればいい？', body:
+        '曜日・時間帯のセルが読み取れず、備考だけが書かれている行です。備考の内容(「2名希望 1名は○○さん希望」等)を見て、必要であれば手動で店舗依頼を登録・ドライバーマスタの固定希望店舗を設定してください。.envにAIのAPIキーを設定していれば、AIによる解釈案も参考表示されます。' },
+
+      { category: '希望シフト', title: '希望シフトの登録方法', body:
+        '「Excel/CSVから一括取込み」「月間シフト表(氏名×日付のワイド形式)から一括取込み」「LINEメッセージから登録」の3種類に対応しています。\nワイド形式は、1行目に日付見出し(「1(火)」等)が並び、1列目が氏名、各セルが勤務時間または「休み」の表です。ドライバー名はドライバーマスタに登録済みの氏名と完全一致する必要があります。' },
+      { category: '希望シフト', title: 'LINEメッセージから登録したい', body:
+        'ドライバーを選び、LINEで届いた文章をそのまま貼り付けて「解析する」を押すと、日付・時間を自動で読み取ってプレビューします。内容を確認・修正してから登録できるので、解析が多少違っていても安心です。「🤖 AIで解析」(APIキー設定時のみ)も選べます。' },
+      { category: '希望シフト', title: '希望店舗/エリアが空欄なのは正常？', body:
+        '氏名×日付のワイド形式の元データには店舗・エリアの列が無いため、取込み時に自動では埋まりません。ただし、ドライバーマスタに「固定希望店舗」が設定されていれば、その店舗・エリアが自動で初期値として補完されます。' },
+
+      { category: '店舗マスタ', title: '店舗マスタの管理', body:
+        '店舗名・店番・エリア・住所(距離計算用)・店長・SV・備考を登録できます。店舗依頼を取込むと、店舗名から自動でここに名寄せ登録されます(「class」接頭辞や「【】」装飾などの表記ゆれは自動で吸収されます)。\n検索・並び替え・チェックボックスでの複数選択一括編集(エリア・店長・SV・備考)にも対応しています。' },
+
+      { category: 'ドライバーマスタ', title: 'ドライバーマスタの管理', body:
+        '氏名・社員コード・会社名・電話番号・車両種別・自宅住所・初回委託日・ステータス・メール・固定希望店舗・保険加入状況・備考を登録できます。検索・並び替え・複数選択一括編集に対応しています。' },
+      { category: 'ドライバーマスタ', title: 'エリア固定の設定方法', body:
+        'ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。候補店舗は検索で絞り込んで選べます。' },
+
+      { category: '店舗相性マスタ', title: '相性の設定方法と見方', body:
+        'NG〜1〜2〜3〜4〜5〜OKの7段階で設定します。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。\n「ドライバー別に見る」(1人の全店舗分)、「店舗別に見る」(1店舗の全ドライバー分)、「全件表示」(設定済み全件を一覧)の3つの見方があります。' },
+
+      { category: '派遣履歴', title: '派遣履歴とは？', body:
+        'マッチング結果タブで「完了にする」を押すと自動でここに記録されます。この実績が、自動マッチングの「経験(その店舗/エリアへの派遣回数)」スコアに使われます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。' },
+
+      { category: 'ダッシュボード', title: 'ダッシュボードで見られるもの', body:
+        '・店舗依頼件数/希望シフト件数/マッチング件数/候補が見つからない依頼数/マッチング率などのKPI\n・店舗別の依頼件数一覧(五十音順、折りたたみ可)\n・店舗相性の統計(評価段階ごとの件数、NG/好きが多い店舗ランキング。グラフをクリックすると内訳が見られます)\n・店舗別/ドライバー別のグリッド表(日付ごとに誰がどこに行くか。セルにマウスを乗せると時間が表示されます)\n・マッチング結果一覧(SV確認シート形式)\n・過去の月を見る(アーカイブ)' },
+      { category: 'ダッシュボード', title: '月次クローズ(翌月への切り替え)', body:
+        '「専用ボタン」で現在の月のデータをアーカイブし、作業画面をクリーンにできます。アーカイブしたデータは「📦 過去の月を見る」からいつでも参照でき、間違えてクローズした場合は「この月を作業画面に戻す」で元に戻せます。' },
+
+      { category: 'トラブルシューティング', title: '検索しても見つからない', body:
+        '氏名・店舗名のスペースの入り方(全角/半角、連続スペース等)が原因で見つからないことがありましたが、現在は検索時にスペース・大文字小文字の違いを無視するよう修正済みです。それでも見つからない場合は、データそのものが未登録の可能性があります。' },
+      { category: 'トラブルシューティング', title: 'ブラウザで画面が開かない(ERR_CONNECTION_REFUSED)', body:
+        'まずサーバー(start.bat)が起動しているか確認してください。VSCodeの「実行とデバッグ」を使っている場合、設定ファイル(.vscode/launch.json)のポート番号がサーバーの実際のポート(4001)と一致しているか確認してください(このツールはブラウザを開くだけで、サーバー自体は別途start.batなどで起動しておく必要があります)。' },
+      { category: 'トラブルシューティング', title: 'AI解析(🤖マーク)が使えない', body:
+        '.envファイルにANTHROPIC_API_KEYを設定していない場合、AI解析系の機能(LINEメッセージのAI解析、備考のAI解釈)は無効になります(必須機能ではなく、設定時のみ使える試験的な追加機能です)。.env.exampleを参考にキーを設定し、サーバーを再起動してください。' },
+    ];
+
+    function renderHelpTopics() {
+      const el = document.getElementById('help-topics-list');
+      const keyword = normalizeForSearch(document.getElementById('help-search').value.trim());
+      const topics = keyword
+        ? HELP_TOPICS.filter(t => normalizeForSearch(t.category + t.title + t.body).includes(keyword))
+        : HELP_TOPICS;
+      if (topics.length === 0) { el.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">該当する項目が見つかりません</p>'; return; }
+
+      const byCategory = new Map();
+      for (const t of topics) {
+        if (!byCategory.has(t.category)) byCategory.set(t.category, []);
+        byCategory.get(t.category).push(t);
+      }
+      el.innerHTML = [...byCategory.entries()].map(([category, items]) => `
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <p class="bg-slate-50 px-4 py-2 font-bold text-sm text-slate-700 border-b border-slate-200">${esc(category)}</p>
+          <div class="divide-y divide-slate-100">
+            ${items.map(t => `
+              <details class="group">
+                <summary class="px-4 py-2.5 cursor-pointer select-none font-bold text-sm text-slate-700 hover:bg-slate-50">${esc(t.title)}</summary>
+                <div class="px-4 pb-3 text-xs text-slate-600" style="white-space:pre-line">${esc(t.body)}</div>
+              </details>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
     }
 
     switchTab('matches');
