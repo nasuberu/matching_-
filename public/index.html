@@ -340,13 +340,14 @@
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
-            <p class="text-xs font-bold text-slate-600">📥 楽シフ等のエクスポート(Excel/CSV)から一括取込み</p>
+            <p class="text-xs font-bold text-slate-600">📥 その他の形式(長形式、1行=1人×1日)から一括取込み</p>
             <a href="/api/templates/driver-availability-long.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード</a>
           </div>
           <details class="text-[10px] text-slate-400">
             <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
             <div class="mt-1 space-y-1">
-              <p>列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望(実際のファイル形式が分かれば調整します)</p>
+              <p class="text-amber-600 font-bold">※ 楽シフのエクスポートは下の「ワイド形式」です。こちらは手入力の表やその他ツール向けの形式です</p>
+              <p>列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望</p>
               <p>※ 同じドライバー・同じ希望日の行は上書き更新されます</p>
               <p class="text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
             </div>
@@ -359,11 +360,11 @@
         </div>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-          <p class="text-xs font-bold text-slate-600">📥 月間シフト表(氏名×日付のワイド形式)から一括取込み</p>
+          <p class="text-xs font-bold text-slate-600">📥 楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み</p>
           <details class="text-[10px] text-slate-400">
             <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
             <div class="mt-1 space-y-1">
-              <p>1行目に「1(火)」のように日付見出しが横に並び、1列目が氏名、各セルが「10:00〜22:00」等の勤務時間または「休み」の形式のExcelを想定しています</p>
+              <p>1行目に「1(火)」のように日付見出しが横に並び、1列目が氏名、各セルが「10:00〜22:00」等の勤務時間または「休み」の形式のExcelを想定しています(楽シフのエクスポートがこの形式です)</p>
               <p>※ 空欄・「休み」のセルは希望シフトを作りません。同じドライバー・同じ日付は上書き更新されます</p>
               <p class="text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
             </div>
@@ -2690,7 +2691,7 @@
         '曜日・時間帯のセルが読み取れず、備考だけが書かれている行です。備考の内容(「2名希望 1名は○○さん希望」等)を見て、必要であれば手動で店舗依頼を登録・ドライバーマスタの固定希望店舗を設定してください。.envにAIのAPIキーを設定していれば、AIによる解釈案も参考表示されます。' },
 
       { category: '希望シフト', title: '希望シフトの登録方法', body:
-        '「Excel/CSVから一括取込み」「月間シフト表(氏名×日付のワイド形式)から一括取込み」「LINEメッセージから登録」の3種類に対応しています。\nワイド形式は、1行目に日付見出し(「1(火)」等)が並び、1列目が氏名、各セルが勤務時間または「休み」の表です。ドライバー名はドライバーマスタに登録済みの氏名と完全一致する必要があります。' },
+        '「その他の形式(長形式)から一括取込み」「楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み」「LINEメッセージから登録」の3種類に対応しています。\n楽シフのエクスポートはワイド形式です(1行目に日付見出し「1(火)」等が並び、1列目が氏名、各セルが勤務時間または「休み」の表)。ドライバー名はドライバーマスタに登録済みの氏名と完全一致する必要があります。' },
       { category: '希望シフト', title: 'LINEメッセージから登録したい', body:
         'ドライバーを選び、LINEで届いた文章をそのまま貼り付けて「解析する」を押すと、日付・時間を自動で読み取ってプレビューします。内容を確認・修正してから登録できるので、解析が多少違っていても安心です。「🤖 AIで解析」(APIキー設定時のみ)も選べます。' },
       { category: '希望シフト', title: '希望店舗/エリアが空欄なのは正常？', body:
