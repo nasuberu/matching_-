@@ -2233,4 +2233,40 @@ app.get('/api/export/sv-sheet.xlsx', async (req, res) => {
   res.send(buffer);
 });
 
+// 店舗依頼(週間必要枠表)の、取込みにそのまま使えるひな形Excelを生成する。
+// 「これ聞取り固定デポ」等の実ファイルで実績のある構造(店舗名+月〜日の曜日列+備考)に合わせてあり、
+// 余計な分析用の列は含めない(あくまで取込みに必要な最小限の列のみ)
+app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
+  const header = ['店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
+  const sampleRows = [
+    ['（記入例）銀座SS', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', ''],
+    ['（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '平日休みがある店舗の例(空欄の曜日は依頼なし)'],
+    ['（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '1日に複数人必要な場合は「*人数」を付ける例(土日は3人)'],
+  ];
+  const rulesSheet = [
+    ['店舗依頼(週間必要枠表)ひな形の使い方'],
+    [],
+    ['① 1行=1つの店舗の、曜日ごとの必要枠パターンです。実際に取込む際は、記入例の行を削除して店舗名を入れ替えてください。'],
+    ['② 月〜日の各列には、その曜日に必要な時間帯を「開始-終了」の形式で入れてください(例: 10:00-22:00)。'],
+    ['③ その曜日に依頼が無い場合は、セルを空欄のままにしてください。'],
+    ['④ 1日に複数人必要な場合は、時間帯の後ろに「*人数」を付けてください(例: 10:00-22:00*2 で2人分)。'],
+    ['⑤ 同じ店舗・同じ曜日・同じ時間帯の行が複数あっても、必要人数として自動的に合算されます。'],
+    ['⑥ 備考欄は自由記述です。社員番号(5〜7桁の数字)を書くと、該当ドライバーの固定希望店舗に自動反映されます。'],
+    ['⑦ 取込み時に「対象年月」を指定すると、その月のうち該当する曜日すべてに展開されて店舗依頼が登録されます。'],
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
+  ws1['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(wb, ws1, '店舗依頼ひな形');
+  const ws2 = XLSX.utils.aoa_to_sheet(rulesSheet);
+  ws2['!cols'] = [{ wch: 80 }];
+  XLSX.utils.book_append_sheet(wb, ws2, '記入ルール');
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="store_requests_template.xlsx"');
+  res.send(buffer);
+});
+
 app.listen(PORT, () => console.log(`マッチングアプリ起動: http://localhost:${PORT}`));
