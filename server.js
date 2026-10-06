@@ -1267,7 +1267,12 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   }
 
   const drivers = await dbAll('SELECT id, driver_code FROM drivers');
-  const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [String(d.driver_code).trim(), d.id]));
+  // 社員番号の先頭0の有無(「540094」と「00540094」等)の表記ゆれを吸収するため、先頭0を除いた形をキーにする
+  const normalizeEmployeeCode = (code) => String(code || '').trim().replace(/^0+(?=\d)/, '');
+  const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [normalizeEmployeeCode(d.driver_code), d.id]));
+  // 備考の社員番号から固定希望店舗を自動設定する際、その店舗が既にNG設定されていれば矛盾するため設定しない
+  const ngPairs = await dbAll(`SELECT driver_id, store_id FROM driver_store_preferences WHERE preference = 'NG'`);
+  const ngPairSet = new Set(ngPairs.map(p => `${p.driver_id}:${p.store_id}`));
 
   // 対象月の日付を曜日ごとにまとめておく(この曜日は月内のこの日付たち、という対応表)
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -1296,10 +1301,17 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     const storeInfo = await getStoreMasterInfo(store_id);
 
     // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する
-    const codeMatch = notesRaw.match(/(\d{5,7})/);
-    if (codeMatch && driverByCode.has(codeMatch[1])) {
-      await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, driverByCode.get(codeMatch[1])]);
-      fixedDriverLinks++;
+    // (ただし、その店舗が店舗相性マスタで既にNGに設定されている場合は矛盾するため設定しない)
+    const codeMatch = notesRaw.match(/(\d{5,8})/);
+    const normalizedCode = codeMatch ? normalizeEmployeeCode(codeMatch[1]) : null;
+    if (normalizedCode && driverByCode.has(normalizedCode)) {
+      const matchedDriverId = driverByCode.get(normalizedCode);
+      if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
+        errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
+      } else {
+        await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
+        fixedDriverLinks++;
+      }
     }
 
     let hasAnySchedule = false;
