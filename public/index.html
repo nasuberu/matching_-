@@ -38,6 +38,16 @@
 
       <div id="unmatched-alert" class="hidden"></div>
 
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">⚙️ マッチングの優先順位の設定</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">チェックを入れた項目が、上から順に優先されます(✅が付いた候補を全店舗分先に確保してから、次の項目・最後は通常のスコア順で残りを埋めます)。並び替えは↑↓ボタンで行います。</p>
+          <div id="tier-settings-list" class="space-y-1.5"></div>
+          <button onclick="savePriorityTierSettings()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs">💾 保存する</button>
+          <span id="tier-settings-saved-msg" class="text-xs text-emerald-600 font-bold hidden">✅ 保存しました(次回の自動マッチングから反映されます)</span>
+        </div>
+      </details>
+
       <details id="avsearch-details" class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🔍 空き状況を調べる(単独検索)</summary>
         <div class="pt-3 space-y-2">
@@ -641,7 +651,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); }
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); }
       if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -1907,6 +1917,66 @@
       if (!data.success) { alert('マッチングに失敗しました: ' + (data.message || '')); return; }
       alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした(下の一覧で確認できます)` : ''}`);
       loadMatches();
+    }
+
+    // ===== マッチングの優先順位(階層)の設定 =====
+    let tierCatalogCache = []; // [{key, label, description}, ...] カタログ全件
+    let tierKeysOrder = [];    // 画面上の表示順(有効なものが先、その後に無効なもの)
+    let enabledTierKeysSet = new Set();
+
+    async function loadPriorityTierSettings() {
+      const res = await fetch('/api/settings/priority-tiers');
+      const data = await res.json();
+      tierCatalogCache = data.catalog || [];
+      enabledTierKeysSet = new Set(data.enabledKeys || []);
+      const catalogKeys = tierCatalogCache.map(t => t.key);
+      tierKeysOrder = [...(data.enabledKeys || []), ...catalogKeys.filter(k => !enabledTierKeysSet.has(k))];
+      renderPriorityTierSettings();
+    }
+
+    function renderPriorityTierSettings() {
+      const el = document.getElementById('tier-settings-list');
+      const byKey = Object.fromEntries(tierCatalogCache.map(t => [t.key, t]));
+      el.innerHTML = tierKeysOrder.map((key, i) => {
+        const t = byKey[key];
+        if (!t) return '';
+        return `
+        <div class="flex items-start gap-2 p-2 rounded border ${enabledTierKeysSet.has(key) ? 'border-blue-200 bg-blue-50' : 'border-slate-200'}">
+          <input type="checkbox" class="mt-1" ${enabledTierKeysSet.has(key) ? 'checked' : ''} onchange="toggleTierEnabled('${key}', this.checked)">
+          <div class="flex-1">
+            <p class="text-xs font-bold text-slate-700">${esc(t.label)}</p>
+            <p class="text-[11px] text-slate-400">${esc(t.description)}</p>
+          </div>
+          <div class="flex flex-col gap-0.5">
+            <button onclick="moveTier(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-xs px-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-30">↑</button>
+            <button onclick="moveTier(${i}, 1)" ${i === tierKeysOrder.length - 1 ? 'disabled' : ''} class="text-xs px-1.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-30">↓</button>
+          </div>
+        </div>
+      `; }).join('');
+      document.getElementById('tier-settings-saved-msg').classList.add('hidden');
+    }
+
+    function toggleTierEnabled(key, checked) {
+      if (checked) enabledTierKeysSet.add(key); else enabledTierKeysSet.delete(key);
+      renderPriorityTierSettings();
+    }
+
+    function moveTier(index, direction) {
+      const target = index + direction;
+      if (target < 0 || target >= tierKeysOrder.length) return;
+      [tierKeysOrder[index], tierKeysOrder[target]] = [tierKeysOrder[target], tierKeysOrder[index]];
+      renderPriorityTierSettings();
+    }
+
+    async function savePriorityTierSettings() {
+      const keys = tierKeysOrder.filter(k => enabledTierKeysSet.has(k));
+      const res = await fetch('/api/settings/priority-tiers', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys })
+      });
+      const data = await res.json();
+      if (!data.success) { alert('保存に失敗しました: ' + (data.message || '')); return; }
+      document.getElementById('tier-settings-saved-msg').classList.remove('hidden');
     }
 
     const ABSENCE_REASONS = ['体調不良', '車両トラブル', '交通機関の乱れ', '私用', 'その他'];

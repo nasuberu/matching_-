@@ -161,6 +161,14 @@ db.serialize(() => {
     )
   `);
 
+  // アプリ全体の設定(key-value)。マッチングの優先順位階層など、画面から変更できる設定をここに保存する
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+
   // 既存テーブルへのカラム追加(運用中のDBを壊さないよう、無ければ追加する形で行う)
   ensureColumn('store_requests', 'store_id', 'INTEGER REFERENCES stores(id)');
   ensureColumn('matches', 'score', 'REAL');
@@ -403,13 +411,73 @@ function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, area
   return { distance, score, preference, experienceCount };
 }
 
-// マッチングの優先順位(階層)。/api/matches/run は、この配列の前の階層に当てはまる候補を
-// 店舗の処理順に関係なく全店舗を通して先に確保してから、残りをスコア順で埋める(2段階処理)。
-// 今後、ここに階層を追加していくことで優先順位のルールを拡張していく想定
-// (例: 「1ヶ月間ずっと同じ店舗だった(固定希望店舗)人を最優先」が現在唯一の階層)
-const PRIORITY_TIERS = [
-  { label: '固定希望店舗', test: (a, store) => a.fixed_store_id === store.store_id },
-];
+// マッチングの優先順位(階層)のカタログ。/api/matches/run は、画面(マッチング設定)で有効化・
+// 並び替えされた階層の順に、店舗の処理順に関係なく全店舗を通して先に確保してから、
+// 残りをスコア順で埋める(2段階処理)。test(a, store, ctx)がtrueを返す候補がその階層の対象。
+// ここに新しい階層を追加すれば、画面側で有効化・並び替えできるようになる
+const TIER_CATALOG = {
+  fixed_store: {
+    label: '固定希望店舗',
+    description: '1ヶ月間ずっと同じ店舗に割り当てられた等でドライバーマスタの「固定希望店舗」に設定されている店舗を最優先する',
+    test: (a, store) => a.fixed_store_id === store.store_id
+  },
+  desired_store_match: {
+    label: '希望シフトで指定した店舗',
+    description: 'その日の希望シフトで本人が明示的に指定した店舗(固定希望店舗からの自動補完ではなく、本人が入力したもの)を優先する',
+    test: (a, store) => !!a.desired_store_explicit && a.desired_store_explicit === store.store_name
+  },
+  desired_area_match: {
+    label: '希望エリアが一致',
+    description: 'その日の希望シフトで指定した希望エリアと、店舗のエリアが一致する場合を優先する',
+    test: (a, store) => !!a.desired_area && !!store.area && a.desired_area === store.area
+  },
+  area_fixed: {
+    label: 'エリア固定の候補店舗',
+    description: 'エリア固定が有効なドライバーについて、その候補店舗(想定デポ)リストに含まれる店舗を優先する',
+    test: (a, store, ctx) => (ctx.areaFixedStoreIdsByDriverId.get(a.driver_id) || []).includes(store.store_id)
+  },
+  preference_ok: {
+    label: '店舗相性が「OK」',
+    description: '店舗相性マスタで「OK」に設定されている店舗を優先する',
+    test: (a, store, ctx) => ctx.preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) === 'OK'
+  },
+  preference_high: {
+    label: '店舗相性が高評価(4・5・OK)',
+    description: '店舗相性マスタで4・5・OKのいずれかに設定されている店舗を優先する',
+    test: (a, store, ctx) => ['4', '5', 'OK'].includes(ctx.preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`))
+  },
+  experience_store: {
+    label: 'その店舗への派遣経験あり',
+    description: '派遣履歴にその店舗への実績が1回以上ある場合を優先する(店舗の勝手を知っている)',
+    test: (a, store, ctx) => (ctx.storeVisitCount.get(`${a.driver_id}:${store.store_id}`) || 0) > 0
+  },
+  experience_area: {
+    label: 'そのエリアへの派遣経験あり',
+    description: '派遣履歴にその店舗のエリアへの実績が1回以上ある場合を優先する(配達エリアの土地勘がある)',
+    test: (a, store, ctx) => (ctx.areaVisitCount.get(`${a.driver_id}:${store.area}`) || 0) > 0
+  },
+  near_distance: {
+    label: '自宅から近い(10km以内)',
+    description: '自宅住所から店舗までの距離が10km以内の場合を優先する(※ドライバーの自宅住所が登録されていないと機能しません)',
+    test: (a, store) => a.home_lat != null && a.home_lng != null && store.lat != null && store.lng != null &&
+      haversineKm(a.home_lat, a.home_lng, store.lat, store.lng) <= 10
+  },
+};
+const DEFAULT_ENABLED_TIER_KEYS = ['fixed_store']; // 画面でまだ設定したことが無い場合の初期値(今までの挙動を維持する)
+
+// app_settingsに保存されている、有効化・並び替え済みの優先順位階層のキー配列を返す
+// (カタログに無いキーが混ざっていた場合は無視する。保存が無ければ初期値を返す)
+async function getEnabledTierKeys() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['priority_tiers']);
+  if (!row) return DEFAULT_ENABLED_TIER_KEYS;
+  try {
+    const keys = JSON.parse(row.value);
+    const filtered = Array.isArray(keys) ? keys.filter(k => TIER_CATALOG[k]) : null;
+    return (filtered && filtered.length > 0) ? filtered : DEFAULT_ENABLED_TIER_KEYS;
+  } catch (e) {
+    return DEFAULT_ENABLED_TIER_KEYS;
+  }
+}
 
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
@@ -1558,7 +1626,9 @@ app.post('/api/matches/run', async (req, res) => {
     WHERE a.archived_month IS NULL
   `);
   // 希望シフトで店舗が未入力の場合は、ドライバーマスタの「固定希望店舗」を初期値として使う
-  const availability = availabilityRows.map(a => ({ ...a, desired_store: a.desired_store || a.fixed_store_name || '' }));
+  // desired_store_explicit: 固定希望店舗からの自動補完が入る前の、本人がその日に実際に入力した希望店舗
+  // (「希望シフトで指定した店舗」の優先階層で、固定希望店舗と区別するために使う)
+  const availability = availabilityRows.map(a => ({ ...a, desired_store_explicit: a.desired_store || '', desired_store: a.desired_store || a.fixed_store_name || '' }));
   // 実際に希望シフトを提出した(driver_id, date)の組を把握しておく(エリア固定の自動補完で、
   // 本人が別の希望を出している日を上書きしないようにするため)
   const explicitAvailabilitySet = new Set(availability.map(a => `${a.driver_id}|${a.desired_date}`));
@@ -1577,6 +1647,9 @@ app.post('/api/matches/run', async (req, res) => {
   }).filter(d => d.storeIds.length > 0);
 
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
+  const areaFixedStoreIdsByDriverId = new Map(areaFixedDrivers.map(d => [d.id, d.storeIds]));
+  const tierCtx = { preferenceByDriverStore, storeVisitCount, areaVisitCount, areaFixedStoreIdsByDriverId };
+  const enabledTierKeys = await getEnabledTierKeys();
 
   const now = new Date().toISOString();
   const assignedDriverIdsByDate = {}; // date -> Set(driver_id) 同日の重複割当を防ぐ
@@ -1585,7 +1658,7 @@ app.post('/api/matches/run', async (req, res) => {
   }
   let createdCount = 0;
   let noCandidateCount = 0;
-  const filledCountByRequestId = {}; // store_request.id -> 既に埋まった人数(1階層目で埋めた分)
+  const filledCountByRequestId = {}; // store_request.id -> 既に埋まった人数(優先階層で埋めた分)
 
   async function insertMatch(store, p) {
     const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
@@ -1597,10 +1670,12 @@ app.post('/api/matches/run', async (req, res) => {
     createdCount++;
   }
 
-  // 1階層目: 優先順位の階層(今は「固定希望店舗」のみ)に当てはまる候補を、店舗の処理順に関係なく
-  // 全店舗を通して先に確保する。これをしないと、たまたま先に処理された別の店舗に固定希望の人が
-  // 取られてしまい、本来優先されるべき自分の固定店舗に割り当てられないことがある
-  for (const tier of PRIORITY_TIERS) {
+  // 優先階層: 画面(マッチング設定)で有効化・並び替えされた順に、各階層に当てはまる候補を、店舗の処理順に
+  // 関係なく全店舗を通して先に確保する。これをしないと、たまたま先に処理された別の店舗に本来優先される
+  // べき人が取られてしまうことがある
+  for (const tierKey of enabledTierKeys) {
+    const tier = TIER_CATALOG[tierKey];
+    if (!tier) continue;
     for (const store of storeRequests) {
       const assignedToday = assignedDriverIdsByDate[store.request_date];
       const alreadyFilled = filledCountByRequestId[store.id] || 0;
@@ -1610,7 +1685,7 @@ app.post('/api/matches/run', async (req, res) => {
       const tierCandidates = availability.filter(a =>
         a.desired_date === store.request_date &&
         !assignedToday.has(a.driver_id) &&
-        tier.test(a, store) &&
+        tier.test(a, store, tierCtx) &&
         preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
       ).map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
         .sort((x, y) => y.score - x.score);
@@ -1667,6 +1742,26 @@ app.post('/api/matches/run', async (req, res) => {
   }
 
   res.json({ success: true, created: createdCount, unmatched_requests: noCandidateCount });
+});
+
+// マッチングの優先順位階層の設定(カタログ全件+現在有効化・並び替え済みのキー配列)を返す
+app.get('/api/settings/priority-tiers', async (req, res) => {
+  const enabledKeys = await getEnabledTierKeys();
+  const catalog = Object.entries(TIER_CATALOG).map(([key, t]) => ({ key, label: t.label, description: t.description }));
+  res.json({ success: true, catalog, enabledKeys });
+});
+
+// 優先順位階層の設定を保存する(有効化したキーを、優先したい順に並べた配列で受け取る)
+app.post('/api/settings/priority-tiers', async (req, res) => {
+  const { keys } = req.body;
+  if (!Array.isArray(keys)) return res.status(400).json({ success: false, message: 'keys(配列)は必須です' });
+  const invalid = keys.filter(k => !TIER_CATALOG[k]);
+  if (invalid.length > 0) return res.status(400).json({ success: false, message: `不明な階層キーです: ${invalid.join(', ')}` });
+  const value = JSON.stringify(keys);
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['priority_tiers']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'priority_tiers']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['priority_tiers', value]);
+  res.json({ success: true });
 });
 
 app.post('/api/matches/:id/confirm', async (req, res) => {
