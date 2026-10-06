@@ -169,6 +169,19 @@ db.serialize(() => {
     )
   `);
 
+  // 固定希望店舗が変更されるたびに記録しておく(手動設定か、どの自動反映によるものかを追跡できるようにする)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fixed_store_change_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      driver_id INTEGER NOT NULL,
+      old_store_id INTEGER,
+      new_store_id INTEGER,
+      source TEXT NOT NULL,
+      created_at TEXT,
+      FOREIGN KEY (driver_id) REFERENCES drivers(id)
+    )
+  `);
+
   // 既存テーブルへのカラム追加(運用中のDBを壊さないよう、無ければ追加する形で行う)
   ensureColumn('store_requests', 'store_id', 'INTEGER REFERENCES stores(id)');
   ensureColumn('matches', 'score', 'REAL');
@@ -308,6 +321,14 @@ async function getStoreMasterInfo(store_id) {
   return dbGet('SELECT area, address, lat, lng FROM stores WHERE id = ?', [store_id]);
 }
 
+// 固定希望店舗の変更を記録する(手動設定か、どの自動反映によるものかを後から追跡できるようにする)
+async function logFixedStoreChange(driver_id, old_store_id, new_store_id, source) {
+  await dbRun(
+    'INSERT INTO fixed_store_change_log (driver_id, old_store_id, new_store_id, source, created_at) VALUES (?, ?, ?, ?, ?)',
+    [driver_id, old_store_id || null, new_store_id || null, source, new Date().toISOString()]
+  );
+}
+
 // 「確定」「完了」のマッチングを見て、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、
 // そのドライバーマスタの「固定希望店舗」に自動反映する(2日以上、かつ全ての確定/完了マッチングが
 // 同じ店舗の場合のみ対象。既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定。
@@ -335,6 +356,7 @@ async function applyAutoFixedStoreFromMatches() {
     const onlyStoreId = [...entry.storeIds][0];
     if (entry.currentFixedStoreId === onlyStoreId) continue; // 既に同じ設定なら何もしない
     await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [onlyStoreId, driver_id]);
+    await logFixedStoreChange(driver_id, entry.currentFixedStoreId, onlyStoreId, 'auto_pattern');
     updated++;
   }
   return updated;
@@ -697,7 +719,7 @@ app.post('/api/drivers', async (req, res) => {
           area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids } = req.body;
   if (!name) return res.status(400).json({ success: false, message: '氏名は必須です' });
 
-  const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids FROM drivers WHERE id = ?', [id]) : null;
+  const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, fixed_store_id FROM drivers WHERE id = ?', [id]) : null;
 
   // 住所が変わった場合のみ再ジオコーディングする(毎回叩くと無駄なため)
   let lat = null, lng = null;
@@ -718,9 +740,13 @@ app.post('/api/drivers', async (req, res) => {
 
   const now = new Date().toISOString();
   if (id) {
+    const newFixedStoreId = fixed_store_id || null;
+    if (existing && existing.fixed_store_id !== newFixedStoreId) {
+      await logFixedStoreChange(id, existing.fixed_store_id, newFixedStoreId, 'manual');
+    }
     await dbRun(
       `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=?, area_fixed_enabled=?, area_fixed_pattern=?, area_fixed_store_ids=? WHERE id=?`,
-      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
+      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', newFixedStoreId, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
     );
     return res.json({ success: true, id });
   }
@@ -728,7 +754,22 @@ app.post('/api/drivers', async (req, res) => {
     `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, now]
   );
+  if (fixed_store_id) await logFixedStoreChange(result.lastID, null, fixed_store_id, 'manual');
   res.json({ success: true, id: result.lastID });
+});
+
+// 固定希望店舗の変更履歴を返す(手動設定か、どの自動反映によるものかを確認できるようにする)
+app.get('/api/logs/fixed-store-changes', async (req, res) => {
+  const rows = await dbAll(`
+    SELECT l.*, d.name AS driver_name, os.name AS old_store_name, ns.name AS new_store_name
+    FROM fixed_store_change_log l
+    JOIN drivers d ON d.id = l.driver_id
+    LEFT JOIN stores os ON os.id = l.old_store_id
+    LEFT JOIN stores ns ON ns.id = l.new_store_id
+    ORDER BY l.id DESC
+    LIMIT 200
+  `);
+  res.json({ success: true, logs: rows });
 });
 
 // ドライバーマスタをCSV/Excelでまとめて取込む(初期データ投入用。社員コードが一致すればそれで、無ければ氏名で既存ドライバーと照合し上書き更新する)
@@ -1266,10 +1307,11 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
   }
 
-  const drivers = await dbAll('SELECT id, driver_code FROM drivers');
+  const drivers = await dbAll('SELECT id, driver_code, fixed_store_id FROM drivers');
   // 社員番号の先頭0の有無(「540094」と「00540094」等)の表記ゆれを吸収するため、先頭0を除いた形をキーにする
   const normalizeEmployeeCode = (code) => String(code || '').trim().replace(/^0+(?=\d)/, '');
   const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [normalizeEmployeeCode(d.driver_code), d.id]));
+  const currentFixedStoreById = new Map(drivers.map(d => [d.id, d.fixed_store_id]));
   // 備考の社員番号から固定希望店舗を自動設定する際、その店舗が既にNG設定されていれば矛盾するため設定しない
   const ngPairs = await dbAll(`SELECT driver_id, store_id FROM driver_store_preferences WHERE preference = 'NG'`);
   const ngPairSet = new Set(ngPairs.map(p => `${p.driver_id}:${p.store_id}`));
@@ -1309,7 +1351,12 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
         errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
       } else {
+        const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
         await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
+        if (oldFixedStoreId !== store_id) {
+          await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
+          currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
+        }
         fixedDriverLinks++;
       }
     }

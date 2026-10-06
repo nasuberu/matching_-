@@ -626,6 +626,19 @@
         </div>
       </details>
 
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📝 固定希望店舗の変更履歴</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">固定希望店舗がいつ・どう変わったか、手動設定か自動反映かを含めて確認できます(新しい順、最大200件)。</p>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">ドライバー</th><th class="p-1.5">変更前</th><th class="p-1.5">変更後</th><th class="p-1.5">種別</th></tr></thead>
+              <tbody id="fixed-store-log-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
         <div class="flex gap-1.5 items-center">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
@@ -2266,6 +2279,30 @@
       switchDashboardView(dashboardView);
       loadArchiveMonthList();
       loadSvSheetTable();
+      loadFixedStoreChangeLog();
+    }
+
+    // ===== 固定希望店舗の変更履歴 =====
+    const FIXED_STORE_LOG_SOURCE_LABEL = {
+      manual: '手動設定',
+      auto_pattern: '自動(1ヶ月同じ店舗)',
+      auto_remarks: '自動(備考の社員番号)'
+    };
+    async function loadFixedStoreChangeLog() {
+      const res = await fetch('/api/logs/fixed-store-changes');
+      const data = await res.json();
+      const tbody = document.getElementById('fixed-store-log-body');
+      const logs = data.logs || [];
+      if (logs.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="text-slate-400 text-sm p-4 text-center">まだ変更履歴がありません</td></tr>'; return; }
+      tbody.innerHTML = logs.map(l => `
+        <tr class="border-b border-slate-100">
+          <td class="p-1.5 whitespace-nowrap">${esc((l.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td class="p-1.5 font-bold whitespace-nowrap">${esc(l.driver_name)}</td>
+          <td class="p-1.5 text-slate-400 whitespace-nowrap">${esc(l.old_store_name || '(なし)')}</td>
+          <td class="p-1.5 font-bold whitespace-nowrap">${esc(l.new_store_name || '(なし)')}</td>
+          <td class="p-1.5 whitespace-nowrap"><span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${l.source === 'manual' ? 'bg-slate-100 text-slate-600' : 'bg-blue-100 text-blue-700'}">${esc(FIXED_STORE_LOG_SOURCE_LABEL[l.source] || l.source)}</span></td>
+        </tr>
+      `).join('');
     }
 
     // ===== マッチング結果一覧(SV確認シート形式: 日付/社員番号/名前/シフト/出勤場所/勤務時間) =====
