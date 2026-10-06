@@ -2314,7 +2314,7 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
     ['③ その曜日に依頼が無い場合は、セルを空欄のままにしてください。'],
     ['④ 1日に複数人必要な場合は、時間帯の後ろに「*人数」を付けてください(例: 10:00-22:00*2 で2人分)。'],
     ['⑤ 同じ店舗・同じ曜日・同じ時間帯の行が複数あっても、必要人数として自動的に合算されます。'],
-    ['⑥ 備考欄は自由記述です。社員番号(5〜7桁の数字)を書くと、該当ドライバーの固定希望店舗に自動反映されます。'],
+    ['⑥ 備考欄は自由記述です。社員番号(5〜8桁の数字)を書くと、該当ドライバーの固定希望店舗に自動反映されます(ただしその店舗がNG設定の場合は反映されません)。'],
     ['⑦ 取込み時に「対象年月」を指定すると、その月のうち該当する曜日すべてに展開されて店舗依頼が登録されます。'],
   ];
 
@@ -2329,6 +2329,42 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="store_requests_template.xlsx"');
+  res.send(buffer);
+});
+
+// 希望シフト(長形式、1行=1人×1日)の、取込みにそのまま使えるひな形Excelを生成する。
+// 楽シフ等の実際のCSV列名がまだ分かっていないため、現時点の想定列名(AVAILABILITY_ALIASESの主要なもの)で
+// 用意している。実際の楽シフCSVのヘッダー行が分かり次第、列名を合わせて調整する想定
+app.get('/api/templates/driver-availability-long.xlsx', (req, res) => {
+  const header = ['ドライバー名', '希望日', '希望エリア', '希望店舗', '開始時刻', '終了時刻', '備考'];
+  const sampleRows = [
+    ['（記入例）山田太郎', '2026-11-01', '', '銀座SS', '10:00', '22:00', ''],
+    ['（記入例）山田太郎', '2026-11-02', '', '', '10:00', '20:00', '希望店舗が空欄でも、固定希望店舗が設定されていればそれが使われます'],
+    ['（記入例）山田太郎', '2026-11-04', '渋谷区', '', '12:00', '22:00', '店舗名が分からない場合は希望エリアだけでもOK'],
+  ];
+  const rulesSheet = [
+    ['希望シフト(長形式)ひな形の使い方'],
+    [],
+    ['① 1行=1人のドライバーの、1日分の希望シフトです。実際に取込む際は、記入例の行を削除してドライバー名を入れ替えてください。'],
+    ['② ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致している必要があります(先に登録してください)。'],
+    ['③ 休み(その日は稼働しない)の場合は、その日の行自体を入れないでください(空のセルではなく、行ごと無しにする形式です)。'],
+    ['④ 希望エリア・希望店舗は分かる範囲で構いません。両方空欄でも、ドライバーマスタの「固定希望店舗」が設定されていれば自動的に使われます。'],
+    ['⑤ 同じドライバー・同じ希望日の行が複数あると、後に読み込んだ方で上書きされます。'],
+    [],
+    ['※ このひな形は現時点の想定列名です。楽シフ等のエクスポート形式が分かれば、実際の列名に合わせて調整できます。'],
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
+  ws1['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, ws1, '希望シフトひな形');
+  const ws2 = XLSX.utils.aoa_to_sheet(rulesSheet);
+  ws2['!cols'] = [{ wch: 80 }];
+  XLSX.utils.book_append_sheet(wb, ws2, '記入ルール');
+
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="driver_availability_template.xlsx"');
   res.send(buffer);
 });
 
