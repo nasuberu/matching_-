@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const XLSX = require('xlsx');
+const ExcelJS = require('exceljs'); // 罫線等のセル装飾が必要なひな形生成に使う(xlsxパッケージは装飾の書き出しに非対応のため)
 const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -2385,17 +2386,55 @@ app.get('/api/export/sv-sheet.xlsx', async (req, res) => {
   res.send(buffer);
 });
 
+// ひな形(記入用)シートを1枚追加する。見出し行は太字+背景色+罫線、記入例の行は斜体のグレー文字+罫線にして
+// 「後で消す行」だと一目で分かるようにする(xlsxパッケージは罫線等の装飾書き出しに対応していないためexceljsを使う)
+const THIN_BORDER = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+function addTemplateDataSheet(workbook, sheetName, header, sampleRows, colWidths) {
+  const ws = workbook.addWorksheet(sheetName);
+  ws.columns = colWidths.map(w => ({ width: w }));
+
+  const headerRow = ws.addRow(header);
+  headerRow.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+    cell.border = THIN_BORDER;
+    cell.alignment = { vertical: 'middle', wrapText: true };
+  });
+
+  for (const r of sampleRows) {
+    const row = ws.addRow(r);
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.border = THIN_BORDER;
+      cell.font = { italic: true, color: { argb: 'FF9CA3AF' } }; // 記入例は薄いグレーの斜体にして目立たせる
+      cell.alignment = { vertical: 'middle', wrapText: true };
+    });
+  }
+  ws.views = [{ state: 'frozen', ySplit: 1 }]; // 見出し行を固定して、スクロールしても見えるようにする
+  return ws;
+}
+
+// 記入ルール(文章だけの説明)シートを追加する。罫線は付けず、タイトル行だけ太字・少し大きめにする
+function addRulesTextSheet(workbook, sheetName, lines) {
+  const ws = workbook.addWorksheet(sheetName);
+  ws.columns = [{ width: 95 }];
+  lines.forEach((line, i) => {
+    const row = ws.addRow(line);
+    if (i === 0) row.getCell(1).font = { bold: true, size: 13 };
+  });
+  return ws;
+}
+
 // 店舗依頼(週間必要枠表)の、取込みにそのまま使えるひな形Excelを生成する。
 // 「これ聞取り固定デポ」等の実ファイルで実績のある構造(店舗名+月〜日の曜日列+備考)に合わせてあり、
 // 余計な分析用の列は含めない(あくまで取込みに必要な最小限の列のみ)
-app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
+app.get('/api/templates/store-requests-weekly.xlsx', async (req, res) => {
   const header = ['店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
   const sampleRows = [
     ['（記入例）銀座SS', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', ''],
     ['（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '火・木・日はお休み(人がいらない曜日)の例。セルは空っぽのままでOK'],
     ['（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '1日に2人以上ほしい時の書き方。土日は3人ほしいので「*3」'],
   ];
-  const rulesSheet = [
+  const rulesSheetText = [
     ['【店舗依頼】の書き方(むずかしく考えなくて大丈夫です)'],
     [],
     ['1行で、1つの店舗の「いつ・何時から何時まで・何人」をあらわします。'],
@@ -2407,11 +2446,13 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
     ['③ その曜日は人がいらない(休み)なら、何も書かずに空っぽのままにする'],
     ['④ 1日に2人以上ほしいときは、時間の右側に「*(ほしい人数)」を付け足す'],
     ['　　　書き方の例 → 10:00-22:00*2 (2人ほしいという意味。何も付けなければ1人の意味になります)'],
-    ['⑤ 備考は自由に書いてOK。何も書かなくても構いません'],
+    ['⑤ 同じ店舗で、時間帯が違う人がほしい時は、行をもう1行足して時間帯を変えて書く'],
+    ['　　　書き方の例 → 1行目「10:00-18:00」、2行目(同じ店舗名)「18:00-22:00」'],
+    ['⑥ 備考は自由に書いてOK。何も書かなくても構いません'],
     [],
     ['よくある質問'],
-    ['Q. 同じお店が2行あってもいい？'],
-    ['A. 大丈夫です。合算されて必要人数として扱われます。'],
+    ['Q. 同じお店・同じ曜日・同じ時間帯の行が2行あってもいい？'],
+    ['A. 大丈夫です。合算されて必要人数として扱われます(時間帯が違う場合は別々の依頼として扱われます)。'],
   ];
 
   const areaFixedHeader = ['氏名', '月', '火', '水', '木', '金', '土', '日', '想定デポ(候補店舗)', '備考'];
@@ -2419,7 +2460,7 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
     ['（記入例）坂本健', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '', '銀座SS、西新橋SS、新川店、築地店', '日曜日はお休みの例'],
     ['（記入例）梅村聡史', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '下目黒店、学芸大学前店、西小山店、東五反田店', '毎日稼働の例'],
   ];
-  const areaFixedRules = [
+  const areaFixedRulesText = [
     ['【エリア固定】の書き方(むずかしく考えなくて大丈夫です)'],
     [],
     ['「エリア固定」とは、1つのお店に決めるのではなく、何店舗か候補を決めておいて、その中からその日空いているお店に入ってもらう、という人のことです。'],
@@ -2434,36 +2475,28 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
     ['⑤ 備考は自由に書いてOK。何も書かなくても構いません'],
   ];
 
-  const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
-  ws1['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 40 }];
-  XLSX.utils.book_append_sheet(wb, ws1, '店舗依頼ひな形');
+  const wb = new ExcelJS.Workbook();
+  addTemplateDataSheet(wb, '店舗依頼ひな形', header, sampleRows, [22, 15, 15, 15, 15, 15, 15, 15, 42]);
+  addTemplateDataSheet(wb, 'エリア固定ひな形', areaFixedHeader, areaFixedSampleRows, [16, 15, 15, 15, 15, 15, 15, 15, 42, 22]);
+  addRulesTextSheet(wb, '記入ルール', [...rulesSheetText, [], [], ...areaFixedRulesText]);
 
-  const ws2 = XLSX.utils.aoa_to_sheet([areaFixedHeader, ...areaFixedSampleRows]);
-  ws2['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 20 }];
-  XLSX.utils.book_append_sheet(wb, ws2, 'エリア固定ひな形');
-
-  const ws3 = XLSX.utils.aoa_to_sheet([...rulesSheet, [], [], ...areaFixedRules]);
-  ws3['!cols'] = [{ wch: 90 }];
-  XLSX.utils.book_append_sheet(wb, ws3, '記入ルール');
-
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buffer = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="monthly_request_template.xlsx"');
-  res.send(buffer);
+  res.send(Buffer.from(buffer));
 });
 
 // 希望シフト(長形式、1行=1人×1日)の、取込みにそのまま使えるひな形Excelを生成する。
 // 楽シフ等の実際のCSV列名がまだ分かっていないため、現時点の想定列名(AVAILABILITY_ALIASESの主要なもの)で
 // 用意している。実際の楽シフCSVのヘッダー行が分かり次第、列名を合わせて調整する想定
-app.get('/api/templates/driver-availability-long.xlsx', (req, res) => {
+app.get('/api/templates/driver-availability-long.xlsx', async (req, res) => {
   const header = ['ドライバー名', '希望日', '希望エリア', '希望店舗', '開始時刻', '終了時刻', '備考'];
   const sampleRows = [
     ['（記入例）山田太郎', '2026-11-01', '', '銀座SS', '10:00', '22:00', ''],
     ['（記入例）山田太郎', '2026-11-02', '', '', '10:00', '20:00', '希望店舗が空欄でも、固定希望店舗が設定されていればそれが使われます'],
     ['（記入例）山田太郎', '2026-11-04', '渋谷区', '', '12:00', '22:00', '店舗名が分からない場合は希望エリアだけでもOK'],
   ];
-  const rulesSheet = [
+  const rulesSheetText = [
     ['希望シフト(長形式)ひな形の使い方'],
     [],
     ['① 1行=1人のドライバーの、1日分の希望シフトです。実際に取込む際は、記入例の行を削除してドライバー名を入れ替えてください。'],
@@ -2475,18 +2508,14 @@ app.get('/api/templates/driver-availability-long.xlsx', (req, res) => {
     ['※ 楽シフのエクスポートは、この長形式ではなく「氏名×日付」のワイド形式です(そちらは別の取込み機能で対応済みです)。こちらは手入力やその他ツール向けの形式です。'],
   ];
 
-  const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
-  ws1['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 40 }];
-  XLSX.utils.book_append_sheet(wb, ws1, '希望シフトひな形');
-  const ws2 = XLSX.utils.aoa_to_sheet(rulesSheet);
-  ws2['!cols'] = [{ wch: 80 }];
-  XLSX.utils.book_append_sheet(wb, ws2, '記入ルール');
+  const wb = new ExcelJS.Workbook();
+  addTemplateDataSheet(wb, '希望シフトひな形', header, sampleRows, [16, 12, 12, 16, 10, 10, 42]);
+  addRulesTextSheet(wb, '記入ルール', rulesSheetText);
 
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buffer = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="driver_availability_template.xlsx"');
-  res.send(buffer);
+  res.send(Buffer.from(buffer));
 });
 
 app.listen(PORT, () => console.log(`マッチングアプリ起動: http://localhost:${PORT}`));
