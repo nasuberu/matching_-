@@ -286,12 +286,19 @@ async function geocodeAddress(address) {
   }
 }
 
-// 店舗名の表記ゆれ(「class」接頭辞、「【Tax-Free】」等の装飾)を取り除いて正規化する
+// 全角の英数字(Ａ-Ｚ、ａ-ｚ、０-９)を半角に変換する(「新宿１丁目店」と「新宿1丁目店」のような表記ゆれを吸収するため)
+function foldWidth(str) {
+  return String(str || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+}
+
+// 店舗名の表記ゆれ(「class」接頭辞、「【Tax-Free】」等の装飾、全角/半角の違い)を取り除いて正規化する
 function normalizeStoreName(store_name) {
-  return (store_name || '')
-    .replace(/^class/i, '')
-    .replace(/【[^】]*】/g, '')
-    .trim();
+  return foldWidth(
+    (store_name || '')
+      .replace(/^class/i, '')
+      .replace(/【[^】]*】/g, '')
+      .trim()
+  );
 }
 
 // 店舗名(自由入力)を店舗マスタに名寄せする。店番(拠点コード)が分かればまずそれで照合し
