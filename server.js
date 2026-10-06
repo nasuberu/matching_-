@@ -1005,6 +1005,95 @@ app.post('/api/incoming-files/sheet-names', (req, res) => {
   }
 });
 
+// エリア固定(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗の中から優先的に
+// 割り当てる人)の表を取込む。列は「氏名」「月」〜「日」「想定デポ(候補店舗)」「備考」の見出しで探す
+// (見出しさえあれば、前に他のメモ行があっても大丈夫)。想定デポは「、」「・」「,」のいずれでも区切れる
+app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, res) => {
+  const source = getImportSource(req);
+  if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
+
+  let rows;
+  try {
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+
+  // 「SV」は実際の元ファイルで氏名列に使われていた旧表記(SV=エリアマネージャーの意味ではなく、
+  // ここでは対象ドライバーの氏名列のラベルとして使われていた)。互換性のため引き続き受け付ける
+  const NAME_COLUMN_LABELS = ['氏名', 'ドライバー名', '名前', 'SV'];
+  let headerRowIndex = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    if (rows[i].some(cell => NAME_COLUMN_LABELS.includes(String(cell ?? '').trim()))) { headerRowIndex = i; break; }
+  }
+  if (headerRowIndex === -1) {
+    return res.status(400).json({ success: false, message: '見出し行(「氏名」等の列)が見つかりませんでした' });
+  }
+  const header = rows[headerRowIndex].map(h => String(h ?? '').trim());
+  const colOf = (labels) => header.findIndex(h => labels.includes(h));
+  const colName = colOf(NAME_COLUMN_LABELS);
+  const colNotes = colOf(['備考']);
+  const colDepo = colOf(['想定デポ(候補店舗)', '想定デポ', '候補店舗']);
+  const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
+  const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const weekdayCols = WEEKDAY_LABELS.map(l => colOf([l]));
+  if (weekdayCols.some(c => c === -1)) {
+    return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
+  }
+
+  const drivers = await dbAll('SELECT id, name, area_fixed_enabled, fixed_store_id FROM drivers');
+  const driverByName = new Map(drivers.map(d => [d.name.trim(), d]));
+
+  let imported = 0;
+  const errors = [];
+  for (let r = headerRowIndex + 1; r < rows.length; r++) {
+    const row = rows[r];
+    const name = String(row[colName] ?? '').trim();
+    if (!name) continue;
+
+    const pattern = {};
+    let hasAnyPattern = false;
+    for (let w = 0; w < WEEKDAY_LABELS.length; w++) {
+      const cell = String(row[weekdayCols[w]] ?? '').trim();
+      if (!cell) continue;
+      const timeRange = parseTimeRangeText(cell);
+      if (!timeRange) continue;
+      pattern[WEEKDAY_KEYS[w]] = `${timeRange.start}-${timeRange.end}`;
+      hasAnyPattern = true;
+    }
+
+    const depoRaw = colDepo !== -1 ? String(row[colDepo] ?? '').trim() : '';
+    const depoNames = depoRaw.split(/[、・,，]/).map(s => s.trim()).filter(Boolean);
+
+    if (!hasAnyPattern && depoNames.length === 0) continue; // 名前だけの空行はスキップ(候補者リストの未記入分)
+
+    const driver = driverByName.get(name);
+    if (!driver) { errors.push(`${r + 1}行目「${name}」: ドライバーマスタに見つかりません(先に登録してください)`); continue; }
+
+    const storeIds = [];
+    const unresolvedStoreNames = [];
+    for (const depoName of depoNames) {
+      const store_id = await resolveStoreId({ store_name: depoName });
+      if (store_id) storeIds.push(store_id); else unresolvedStoreNames.push(depoName);
+    }
+    if (unresolvedStoreNames.length > 0) {
+      errors.push(`${r + 1}行目「${name}」: 想定デポの店舗名が認識できませんでした: ${unresolvedStoreNames.join('、')}`);
+    }
+    if (storeIds.length === 0) {
+      errors.push(`${r + 1}行目「${name}」: 候補店舗が1件も認識できなかったため、エリア固定を設定しませんでした`);
+      continue;
+    }
+
+    await dbRun(
+      'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ? WHERE id = ?',
+      [JSON.stringify(pattern), JSON.stringify(storeIds), driver.id]
+    );
+    imported++;
+  }
+
+  res.json({ success: true, imported, errors });
+});
+
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
 // セル=勤務時間「10:00〜22:00」or「休み」or 空欄)で取込む。年月はファイルに含まれないためフォームで指定してもらう。
 // 空欄・「休み」のセルは希望シフトを作らない(その日は稼働しない扱い)
@@ -2303,32 +2392,64 @@ app.get('/api/templates/store-requests-weekly.xlsx', (req, res) => {
   const header = ['店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
   const sampleRows = [
     ['（記入例）銀座SS', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', ''],
-    ['（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '平日休みがある店舗の例(空欄の曜日は依頼なし)'],
-    ['（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '1日に複数人必要な場合は「*人数」を付ける例(土日は3人)'],
+    ['（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '火・木・日はお休み(人がいらない曜日)の例。セルは空っぽのままでOK'],
+    ['（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '1日に2人以上ほしい時の書き方。土日は3人ほしいので「*3」'],
   ];
   const rulesSheet = [
-    ['店舗依頼(週間必要枠表)ひな形の使い方'],
+    ['【店舗依頼】の書き方(むずかしく考えなくて大丈夫です)'],
     [],
-    ['① 1行=1つの店舗の、曜日ごとの必要枠パターンです。実際に取込む際は、記入例の行を削除して店舗名を入れ替えてください。'],
-    ['② 月〜日の各列には、その曜日に必要な時間帯を「開始-終了」の形式で入れてください(例: 10:00-22:00)。'],
-    ['③ その曜日に依頼が無い場合は、セルを空欄のままにしてください。'],
-    ['④ 1日に複数人必要な場合は、時間帯の後ろに「*人数」を付けてください(例: 10:00-22:00*2 で2人分)。'],
-    ['⑤ 同じ店舗・同じ曜日・同じ時間帯の行が複数あっても、必要人数として自動的に合算されます。'],
-    ['⑥ 備考欄は自由記述です。社員番号(5〜8桁の数字)を書くと、該当ドライバーの固定希望店舗に自動反映されます(ただしその店舗がNG設定の場合は反映されません)。'],
-    ['⑦ 取込み時に「対象年月」を指定すると、その月のうち該当する曜日すべてに展開されて店舗依頼が登録されます。'],
+    ['1行で、1つの店舗の「いつ・何時から何時まで・何人」をあらわします。'],
+    ['使うときは、2〜4行目の(記入例)はぜんぶ消してから、自分のお店の分を書いてください。'],
+    [],
+    ['① 「店舗名」の列に、お店の名前を書く'],
+    ['② 月〜日の列に、その曜日に人がほしい時間を「開始時刻-終了時刻」で書く'],
+    ['　　　書き方の例 → 10:00-22:00 (10時から22時までの意味)'],
+    ['③ その曜日は人がいらない(休み)なら、何も書かずに空っぽのままにする'],
+    ['④ 1日に2人以上ほしいときは、時間の右側に「*(ほしい人数)」を付け足す'],
+    ['　　　書き方の例 → 10:00-22:00*2 (2人ほしいという意味。何も付けなければ1人の意味になります)'],
+    ['⑤ 備考は自由に書いてOK。何も書かなくても構いません'],
+    [],
+    ['よくある質問'],
+    ['Q. 同じお店が2行あってもいい？'],
+    ['A. 大丈夫です。合算されて必要人数として扱われます。'],
+  ];
+
+  const areaFixedHeader = ['氏名', '月', '火', '水', '木', '金', '土', '日', '想定デポ(候補店舗)', '備考'];
+  const areaFixedSampleRows = [
+    ['（記入例）坂本健', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '', '銀座SS、西新橋SS、新川店、築地店', '日曜日はお休みの例'],
+    ['（記入例）梅村聡史', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '下目黒店、学芸大学前店、西小山店、東五反田店', '毎日稼働の例'],
+  ];
+  const areaFixedRules = [
+    ['【エリア固定】の書き方(むずかしく考えなくて大丈夫です)'],
+    [],
+    ['「エリア固定」とは、1つのお店に決めるのではなく、何店舗か候補を決めておいて、その中からその日空いているお店に入ってもらう、という人のことです。'],
+    ['使うときは、2〜3行目の(記入例)はぜんぶ消してから、対象の人の分を書いてください。'],
+    [],
+    ['① 「氏名」の列に、個人事業主さんの名前を書く(ドライバーマスタに登録済みの名前と、一字一句同じにしてください)'],
+    ['② 月〜日の列に、その曜日に動ける時間を「開始時刻-終了時刻」で書く(店舗依頼シートと同じ書き方です)'],
+    ['③ その曜日は休みなら、何も書かずに空っぽのままにする'],
+    ['④ 「想定デポ(候補店舗)」の列に、候補になるお店の名前を「、」(読点)で区切って書く'],
+    ['　　　書き方の例 → 銀座SS、西新橋SS、新川店、築地店'],
+    ['　　　「・」や「,」で区切っても大丈夫です。どちらでも読み取れます。'],
+    ['⑤ 備考は自由に書いてOK。何も書かなくても構いません'],
   ];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
-  ws1['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 30 }];
+  ws1['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 40 }];
   XLSX.utils.book_append_sheet(wb, ws1, '店舗依頼ひな形');
-  const ws2 = XLSX.utils.aoa_to_sheet(rulesSheet);
-  ws2['!cols'] = [{ wch: 80 }];
-  XLSX.utils.book_append_sheet(wb, ws2, '記入ルール');
+
+  const ws2 = XLSX.utils.aoa_to_sheet([areaFixedHeader, ...areaFixedSampleRows]);
+  ws2['!cols'] = [{ wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'エリア固定ひな形');
+
+  const ws3 = XLSX.utils.aoa_to_sheet([...rulesSheet, [], [], ...areaFixedRules]);
+  ws3['!cols'] = [{ wch: 90 }];
+  XLSX.utils.book_append_sheet(wb, ws3, '記入ルール');
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename="store_requests_template.xlsx"');
+  res.setHeader('Content-Disposition', 'attachment; filename="monthly_request_template.xlsx"');
   res.send(buffer);
 });
 
