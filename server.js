@@ -294,24 +294,32 @@ function normalizeStoreName(store_name) {
     .trim();
 }
 
-// 店舗名(自由入力)を店舗マスタに名寄せする。既存店舗が見つかればそのidを返し、
-// 住所/緯度経度が未設定であれば補完する。見つからなければ新規に登録する
-async function resolveStoreId({ store_name, area, address, lat, lng }) {
+// 店舗名(自由入力)を店舗マスタに名寄せする。店番(拠点コード)が分かればまずそれで照合し
+// (表記ゆれが起きやすい店舗名より確実なため)、無ければ店舗名で照合する。
+// 既存店舗が見つかれば、住所/店番等の未設定項目を補完してそのidを返す。見つからなければ新規に登録する
+async function resolveStoreId({ store_name, area, address, lat, lng, store_code }) {
   // 取込み元によって店舗名に「class」接頭辞や「【Tax-Free】」表記が付いたり付かなかったりするため、
   // 正規化してから既存の店舗マスタと照合する(そうしないと同じ店舗が表記違いで重複登録されてしまう)
   const name = normalizeStoreName(store_name);
-  if (!name) return null;
+  const code = store_code ? String(store_code).trim() : '';
+  if (!name && !code) return null;
   const now = new Date().toISOString();
-  const existing = await dbGet('SELECT * FROM stores WHERE name = ?', [name]);
+
+  let existing = code ? await dbGet('SELECT * FROM stores WHERE store_code = ?', [code]) : null;
+  if (!existing && name) existing = await dbGet('SELECT * FROM stores WHERE name = ?', [name]);
   if (existing) {
-    if (!existing.address && address) {
-      await dbRun('UPDATE stores SET area = COALESCE(NULLIF(area, \'\'), ?), address = ?, lat = ?, lng = ? WHERE id = ?', [area || '', address, lat, lng, existing.id]);
+    if ((!existing.address && address) || (!existing.store_code && code)) {
+      await dbRun(
+        'UPDATE stores SET area = COALESCE(NULLIF(area, \'\'), ?), address = COALESCE(NULLIF(address, \'\'), ?), lat = COALESCE(lat, ?), lng = COALESCE(lng, ?), store_code = COALESCE(NULLIF(store_code, \'\'), ?) WHERE id = ?',
+        [area || '', address || '', lat, lng, code || null, existing.id]
+      );
     }
     return existing.id;
   }
+  if (!name) return null; // 店番だけでは店舗名が分からず新規登録できない
   const result = await dbRun(
-    'INSERT INTO stores (name, area, address, lat, lng, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [name, area || '', address || '', lat, lng, '', now]
+    'INSERT INTO stores (name, area, address, lat, lng, notes, store_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [name, area || '', address || '', lat, lng, '', code || null, now]
   );
   return result.lastID;
 }
@@ -1389,6 +1397,8 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   const header = rows[headerRowIndex].map(h => String(h ?? '').trim());
   const colOf = (label) => header.indexOf(label);
   const colStoreName = colOf('店舗名');
+  // 店番(拠点コード)は任意項目。店舗名より表記ゆれが起きにくいため、あれば優先的に店舗の照合に使う
+  const colStoreCode = ['店番', '店舗コード', '店舗CD', '拠点コード'].map(colOf).find(c => c !== -1) ?? -1;
   const colFlag = colOf('フラグ');
   const colNotes = colOf('備考');
   const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
@@ -1429,8 +1439,9 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     const flag = colFlag !== -1 ? String(row[colFlag] ?? '').trim() : '';
     const notesRaw = colNotes !== -1 ? String(row[colNotes] ?? '').trim() : '';
     const note = flag ? `(${flag}) ${notesRaw}`.trim() : notesRaw;
+    const store_code = colStoreCode !== -1 ? String(row[colStoreCode] ?? '').trim() : '';
 
-    const store_id = await resolveStoreId({ store_name });
+    const store_id = await resolveStoreId({ store_name, store_code });
     // 店舗マスタに住所が登録されていれば、それを店舗依頼側にも使う(距離計算ができるように)
     const storeInfo = await getStoreMasterInfo(store_id);
 
@@ -2428,11 +2439,11 @@ function addRulesTextSheet(workbook, sheetName, lines) {
 // 「これ聞取り固定デポ」等の実ファイルで実績のある構造(店舗名+月〜日の曜日列+備考)に合わせてあり、
 // 余計な分析用の列は含めない(あくまで取込みに必要な最小限の列のみ)
 app.get('/api/templates/store-requests-weekly.xlsx', async (req, res) => {
-  const header = ['店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
+  const header = ['店番', '店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
   const sampleRows = [
-    ['（記入例）銀座SS', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', ''],
-    ['（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '火・木・日はお休み(人がいらない曜日)の例。セルは空っぽのままでOK'],
-    ['（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '1日に2人以上ほしい時の書き方。土日は3人ほしいので「*3」'],
+    ['235', '（記入例）銀座SS', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', ''],
+    ['721', '（記入例）築地店', '10:00-22:00', '', '10:00-22:00', '', '10:00-22:00', '10:00-22:00', '', '火・木・日はお休み(人がいらない曜日)の例。セルは空っぽのままでOK'],
+    ['', '（記入例）東雲店', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*2', '10:00-22:00*3', '10:00-22:00*3', '店番が分からない時は空欄でOK。1日に2人以上ほしい時は「*3」のように書く'],
   ];
   const rulesSheetText = [
     ['【店舗依頼】の書き方(むずかしく考えなくて大丈夫です)'],
@@ -2440,17 +2451,20 @@ app.get('/api/templates/store-requests-weekly.xlsx', async (req, res) => {
     ['1行で、1つの店舗の「いつ・何時から何時まで・何人」をあらわします。'],
     ['使うときは、2〜4行目の(記入例)はぜんぶ消してから、自分のお店の分を書いてください。'],
     [],
-    ['① 「店舗名」の列に、お店の名前を書く'],
-    ['② 月〜日の列に、その曜日に人がほしい時間を「開始時刻-終了時刻」で書く'],
+    ['① 「店番」の列に、お店の番号(拠点コード)を書く。わからなければ空欄でもOK'],
+    ['② 「店舗名」の列に、お店の名前を書く'],
+    ['③ 月〜日の列に、その曜日に人がほしい時間を「開始時刻-終了時刻」で書く'],
     ['　　　書き方の例 → 10:00-22:00 (10時から22時までの意味)'],
-    ['③ その曜日は人がいらない(休み)なら、何も書かずに空っぽのままにする'],
-    ['④ 1日に2人以上ほしいときは、時間の右側に「*(ほしい人数)」を付け足す'],
+    ['④ その曜日は人がいらない(休み)なら、何も書かずに空っぽのままにする'],
+    ['⑤ 1日に2人以上ほしいときは、時間の右側に「*(ほしい人数)」を付け足す'],
     ['　　　書き方の例 → 10:00-22:00*2 (2人ほしいという意味。何も付けなければ1人の意味になります)'],
-    ['⑤ 同じ店舗で、時間帯が違う人がほしい時は、行をもう1行足して時間帯を変えて書く'],
+    ['⑥ 同じ店舗で、時間帯が違う人がほしい時は、行をもう1行足して時間帯を変えて書く'],
     ['　　　書き方の例 → 1行目「10:00-18:00」、2行目(同じ店舗名)「18:00-22:00」'],
-    ['⑥ 備考は自由に書いてOK。何も書かなくても構いません'],
+    ['⑦ 備考は自由に書いてOK。何も書かなくても構いません'],
     [],
     ['よくある質問'],
+    ['Q. 店番ってなに？なぜあった方がいいの？'],
+    ['A. お店ごとに割り振られている番号です。店舗名は表記ゆれ(スペースの有無など)で別のお店として扱われてしまうことがありますが、店番があれば間違いなく同じお店だと分かります。無くても取込みはできます。'],
     ['Q. 同じお店・同じ曜日・同じ時間帯の行が2行あってもいい？'],
     ['A. 大丈夫です。合算されて必要人数として扱われます(時間帯が違う場合は別々の依頼として扱われます)。'],
   ];
@@ -2476,7 +2490,7 @@ app.get('/api/templates/store-requests-weekly.xlsx', async (req, res) => {
   ];
 
   const wb = new ExcelJS.Workbook();
-  addTemplateDataSheet(wb, '店舗依頼ひな形', header, sampleRows, [22, 15, 15, 15, 15, 15, 15, 15, 42]);
+  addTemplateDataSheet(wb, '店舗依頼ひな形', header, sampleRows, [10, 22, 15, 15, 15, 15, 15, 15, 15, 42]);
   addTemplateDataSheet(wb, 'エリア固定ひな形', areaFixedHeader, areaFixedSampleRows, [16, 15, 15, 15, 15, 15, 15, 15, 42, 22]);
   addRulesTextSheet(wb, '記入ルール', [...rulesSheetText, [], [], ...areaFixedRulesText]);
 
