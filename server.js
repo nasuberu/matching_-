@@ -310,14 +310,16 @@ async function getStoreMasterInfo(store_id) {
 
 // 「確定」「完了」のマッチングを見て、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、
 // そのドライバーマスタの「固定希望店舗」に自動反映する(2日以上、かつ全ての確定/完了マッチングが
-// 同じ店舗の場合のみ対象。既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定
+// 同じ店舗の場合のみ対象。既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定。
+// エリア固定が有効なドライバーは対象外(たまたま数日同じ店舗が続いただけで固定希望店舗が設定されてしまうと、
+// 本来は複数の候補店舗を柔軟に回る設計のエリア固定が、1店舗に固定される優先階層に上書きされてしまうため)
 async function applyAutoFixedStoreFromMatches() {
   const rows = await dbAll(`
     SELECT m.driver_id, s.store_id, d.fixed_store_id
     FROM matches m
     JOIN store_requests s ON s.id = m.store_request_id
     JOIN drivers d ON d.id = m.driver_id
-    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了') AND d.area_fixed_enabled = 0
   `);
   const byDriver = new Map(); // driver_id -> { storeIds: Set, count, currentFixedStoreId }
   for (const r of rows) {
