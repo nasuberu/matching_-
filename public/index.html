@@ -2378,7 +2378,11 @@
       const data = await res.json();
       if (!data.success) { alert('確定に失敗しました: ' + (data.message || '')); return; }
       selectedMatchIds.clear();
-      loadMatches();
+      // 確定した分がそのまま見えるよう、絞り込みを「確定」に切り替える(切り替えないと「候補」の
+      // フィルタのままだと確定した分が表示から消えて「何も無くなった」ように見えてしまうため)
+      document.getElementById('match-filter-status').value = '確定';
+      await loadMatches();
+      alert(`${data.confirmed}件を確定しました`);
     }
 
     async function bulkUndoCompleteSelected() {
@@ -2391,7 +2395,11 @@
       const data = await res.json();
       if (!data.success) { alert('取り消しに失敗しました: ' + (data.message || '')); return; }
       selectedMatchIds.clear();
-      loadMatches();
+      // 取り消した分は「確定」に戻るので、絞り込みも「確定」に切り替える(「完了」フィルタのままだと
+      // 対象が表示から消えて「何も無くなった」ように見えてしまうため)
+      document.getElementById('match-filter-status').value = '確定';
+      await loadMatches();
+      alert(`${data.undone}件の「完了」を取り消し、「確定」に戻しました`);
     }
 
     function renderAbsenceForm(id) {
