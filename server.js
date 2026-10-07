@@ -2064,6 +2064,18 @@ app.post('/api/matches/:id/confirm', async (req, res) => {
   res.json({ success: true, autoFixedStoreUpdated });
 });
 
+// 複数の「候補」をまとめて「確定」にする(画面の一括確定機能用)。
+// status='候補'のものだけを対象にする(古い選択状態のまま送られてきても、既に確定/完了済みのものを
+// 誤って巻き戻すことがないように)
+app.post('/api/matches/bulk-confirm', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids(配列)は必須です' });
+  const placeholders = ids.map(() => '?').join(',');
+  const result = await dbRun(`UPDATE matches SET status = '確定' WHERE id IN (${placeholders}) AND status = '候補'`, ids);
+  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, confirmed: result.changes, autoFixedStoreUpdated });
+});
+
 // 確定済みのマッチングを「完了」にし、派遣履歴に記録する(次回以降のマッチングで店舗/エリアの知見として使われる)
 app.post('/api/matches/:id/complete', async (req, res) => {
   const match = await dbGet(`

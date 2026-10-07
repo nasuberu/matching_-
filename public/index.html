@@ -62,6 +62,31 @@
         </div>
       </details>
 
+      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2 items-center">
+        <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
+          <option value="候補">候補(確認待ち)</option>
+          <option value="確定">確定</option>
+          <option value="完了">完了</option>
+          <option value="欠勤">欠勤</option>
+          <option value="変更">変更</option>
+          <option value="">すべて</option>
+        </select>
+        <input type="date" id="match-filter-date-from" onchange="renderMatchesList()" class="p-2 border rounded text-sm" title="この日から">
+        <span class="text-xs text-slate-400">〜</span>
+        <input type="date" id="match-filter-date-to" onchange="renderMatchesList()" class="p-2 border rounded text-sm" title="この日まで">
+        <input id="match-filter-search" oninput="renderMatchesList()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-2 border rounded text-sm flex-1 min-w-[160px]">
+        <button onclick="resetMatchFilters()" class="text-xs text-slate-500 px-2 py-1">条件クリア</button>
+        <button onclick="expandAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて開く</button>
+        <button onclick="collapseAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて畳む</button>
+        <button onclick="selectAllFilteredCandidates()" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg font-bold">表示中の候補をすべて選択</button>
+      </div>
+
+      <div id="match-bulk-bar" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center gap-2 flex-wrap sticky top-[52px] z-20 shadow">
+        <span id="match-bulk-count" class="text-xs font-bold text-amber-800"></span>
+        <button onclick="bulkConfirmSelected()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold">✅ 選択した候補をまとめて確定</button>
+        <button onclick="clearMatchSelection()" class="text-xs text-amber-800 px-2 py-1">選択解除</button>
+      </div>
+
       <div id="matches-list" class="space-y-2"></div>
     </div>
 
@@ -2122,6 +2147,8 @@
     let openAbsenceMatchId = null;   // 欠勤理由の入力パネルを開いているmatch id
     let openSubstituteMatchId = null; // 代替候補パネルを開いているmatch id
     const substitutesByMatchId = {}; // match id -> 取得済みの代替候補配列
+    let selectedMatchIds = new Set();   // 一括確定のためにチェックを入れているmatch id
+    let collapsedDateGroups = new Set(); // 畳んでいる日付グループ(match_date文字列)
 
     async function loadMatches() {
       const res = await fetch('/api/matches');
@@ -2190,26 +2217,89 @@
       }
     }
 
+    // フィルタ条件(ステータス・日付範囲・検索語)に合うマッチングだけを返す
+    function getFilteredMatches() {
+      const statusEl = document.getElementById('match-filter-status');
+      const status = statusEl ? statusEl.value : '候補';
+      const dateFrom = document.getElementById('match-filter-date-from')?.value || '';
+      const dateTo = document.getElementById('match-filter-date-to')?.value || '';
+      const search = normalizeForSearch(document.getElementById('match-filter-search')?.value || '');
+      return matchesCache.filter(m => {
+        if (status && m.status !== status) return false;
+        if (dateFrom && m.match_date < dateFrom) return false;
+        if (dateTo && m.match_date > dateTo) return false;
+        if (search && !normalizeForSearch(`${m.store_name} ${m.driver_name}`).includes(search)) return false;
+        return true;
+      });
+    }
+
+    function resetMatchFilters() {
+      document.getElementById('match-filter-status').value = '候補';
+      document.getElementById('match-filter-date-from').value = '';
+      document.getElementById('match-filter-date-to').value = '';
+      document.getElementById('match-filter-search').value = '';
+      renderMatchesList();
+    }
+
     function renderMatchesList() {
       const list = document.getElementById('matches-list');
-      const rows = matchesCache;
-      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>'; return; }
-      list.innerHTML = rows.map(m => `
-        <div class="bg-white p-3 rounded-lg border ${m.is_far_warning ? 'border-amber-400' : 'border-slate-200'}">
-          <div class="flex justify-between items-center">
-            <div>
-              <p class="font-bold text-sm">
-                🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
-                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '変更' ? 'bg-orange-100 text-orange-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
-                ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
-                ${m.preference_flag ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 相性${esc(m.preference_flag)}</span>` : ''}
-                ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
-              </p>
-              <p class="text-xs text-slate-500">📅 ${esc(m.match_date)} ${esc(m.time_start || '')}〜${esc(m.time_end || '')} ／ 📞 ${esc(m.driver_phone || '-')}</p>
-              <p class="text-[11px] text-slate-400">🏠 ${esc(m.home_address || '-')} → 🏬 ${esc(m.store_address || '-')} ${m.distance_km != null ? `(約${m.distance_km.toFixed(1)}km)` : '(距離不明)'}</p>
-              ${(m.status === '欠勤' || m.status === '変更') && m.absence_reason ? `<p class="text-[11px] ${m.status === '欠勤' ? 'text-red-600' : 'text-orange-600'} font-bold">${esc(m.status)}理由: ${esc(m.absence_reason)}</p>` : ''}
+      if (matchesCache.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>'; renderMatchBulkBar(); return; }
+
+      const filtered = getFilteredMatches().sort((a, b) => a.match_date.localeCompare(b.match_date) || a.store_name.localeCompare(b.store_name));
+      renderMatchBulkBar();
+      if (filtered.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">条件に合うマッチングがありません</p>'; return; }
+
+      // 日付ごとにグループ化して表示する(件数が多くても見やすいように)
+      const groups = new Map();
+      for (const m of filtered) {
+        if (!groups.has(m.match_date)) groups.set(m.match_date, []);
+        groups.get(m.match_date).push(m);
+      }
+
+      list.innerHTML = [...groups.entries()].map(([date, rows]) => {
+        const collapsed = collapsedDateGroups.has(date);
+        const candidateIds = rows.filter(r => r.status === '候補').map(r => r.id);
+        const allSelected = candidateIds.length > 0 && candidateIds.every(id => selectedMatchIds.has(id));
+        return `
+          <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <div class="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="toggleDateGroup('${date}')">
+              <p class="font-bold text-sm text-slate-700">📅 ${withWeekday(date)} <span class="text-xs text-slate-400 font-normal">(${rows.length}件)</span></p>
+              <div class="flex items-center gap-2" onclick="event.stopPropagation()">
+                ${candidateIds.length > 0 ? `
+                  <label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleDateGroupSelection('${date}', this.checked)">
+                    この日の候補${candidateIds.length}件
+                  </label>
+                ` : ''}
+                <span class="text-slate-400 text-xs">${collapsed ? '▶' : '▼'}</span>
+              </div>
             </div>
-            <div class="flex gap-1.5">
+            ${collapsed ? '' : `<div class="p-2 space-y-2">${rows.map(m => renderMatchCard(m)).join('')}</div>`}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderMatchCard(m) {
+      return `
+        <div class="p-3 rounded-lg border ${m.is_far_warning ? 'border-amber-400' : 'border-slate-200'} ${selectedMatchIds.has(m.id) ? 'bg-emerald-50' : ''}">
+          <div class="flex justify-between items-start gap-2">
+            <div class="flex items-start gap-2">
+              ${m.status === '候補' ? `<input type="checkbox" class="mt-1" ${selectedMatchIds.has(m.id) ? 'checked' : ''} onchange="toggleMatchSelection(${m.id}, this.checked)">` : '<span class="inline-block w-[13px]"></span>'}
+              <div>
+                <p class="font-bold text-sm">
+                  🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
+                  <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '変更' ? 'bg-orange-100 text-orange-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
+                  ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
+                  ${m.preference_flag ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 相性${esc(m.preference_flag)}</span>` : ''}
+                  ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
+                </p>
+                <p class="text-xs text-slate-500">${esc(m.time_start || '')}〜${esc(m.time_end || '')} ／ 📞 ${esc(m.driver_phone || '-')}</p>
+                <p class="text-[11px] text-slate-400">🏠 ${esc(m.home_address || '-')} → 🏬 ${esc(m.store_address || '-')} ${m.distance_km != null ? `(約${m.distance_km.toFixed(1)}km)` : '(距離不明)'}</p>
+                ${(m.status === '欠勤' || m.status === '変更') && m.absence_reason ? `<p class="text-[11px] ${m.status === '欠勤' ? 'text-red-600' : 'text-orange-600'} font-bold">${esc(m.status)}理由: ${esc(m.absence_reason)}</p>` : ''}
+              </div>
+            </div>
+            <div class="flex gap-1.5 shrink-0">
               ${m.status === '候補' ? `<button onclick="confirmMatch(${m.id})" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded font-bold">確定</button>` : ''}
               ${m.status === '確定' ? `<button onclick="completeMatch(${m.id})" class="text-xs bg-slate-700 hover:bg-slate-800 text-white px-2.5 py-1 rounded font-bold">完了にする</button>` : ''}
               ${m.status === '完了' ? `<button onclick="undoComplete(${m.id})" class="text-xs bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-1 rounded font-bold hover:bg-slate-200">↩️ 完了を取り消す</button>` : ''}
@@ -2221,7 +2311,69 @@
           ${openAbsenceMatchId === m.id ? renderAbsenceForm(m.id) : ''}
           ${openSubstituteMatchId === m.id ? renderSubstitutesPanel(m.id) : ''}
         </div>
-      `).join('');
+      `;
+    }
+
+    function renderMatchBulkBar() {
+      const bar = document.getElementById('match-bulk-bar');
+      if (!bar) return;
+      const count = selectedMatchIds.size;
+      document.getElementById('match-bulk-count').textContent = `${count}件選択中`;
+      bar.classList.toggle('hidden', count === 0);
+    }
+
+    function toggleMatchSelection(id, checked) {
+      if (checked) selectedMatchIds.add(id); else selectedMatchIds.delete(id);
+      renderMatchesList();
+    }
+
+    function toggleDateGroup(date) {
+      if (collapsedDateGroups.has(date)) collapsedDateGroups.delete(date); else collapsedDateGroups.add(date);
+      renderMatchesList();
+    }
+
+    function toggleDateGroupSelection(date, checked) {
+      for (const m of matchesCache) {
+        if (m.match_date === date && m.status === '候補') {
+          if (checked) selectedMatchIds.add(m.id); else selectedMatchIds.delete(m.id);
+        }
+      }
+      renderMatchesList();
+    }
+
+    function clearMatchSelection() {
+      selectedMatchIds.clear();
+      renderMatchesList();
+    }
+
+    function selectAllFilteredCandidates() {
+      for (const m of getFilteredMatches()) {
+        if (m.status === '候補') selectedMatchIds.add(m.id);
+      }
+      renderMatchesList();
+    }
+
+    function expandAllDateGroups() {
+      collapsedDateGroups.clear();
+      renderMatchesList();
+    }
+
+    function collapseAllDateGroups() {
+      collapsedDateGroups = new Set(matchesCache.map(m => m.match_date));
+      renderMatchesList();
+    }
+
+    async function bulkConfirmSelected() {
+      const ids = [...selectedMatchIds];
+      if (ids.length === 0) return;
+      if (!confirm(`選択した${ids.length}件を確定します。よろしいですか？`)) return;
+      const res = await fetch('/api/matches/bulk-confirm', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+      });
+      const data = await res.json();
+      if (!data.success) { alert('確定に失敗しました: ' + (data.message || '')); return; }
+      selectedMatchIds.clear();
+      loadMatches();
     }
 
     function renderAbsenceForm(id) {
