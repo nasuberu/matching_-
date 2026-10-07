@@ -663,6 +663,19 @@
         </div>
       </details>
 
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📥 取込み履歴(取り消しもここから)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">「週間必要枠表(店舗依頼)」「希望シフト」「エリア固定」の一括取込みを、新しい順に最大50件表示します。間違えて取り込んだ・テストで入れた・入れ直したい場合は「取り消す」でまとめて削除できます(確定/完了のマッチングが既にある分は取り消せません)。</p>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">種類</th><th class="p-1.5">ファイル名</th><th class="p-1.5">補足</th><th class="p-1.5 text-right">取込み件数</th><th class="p-1.5 text-right">現在も有効</th><th class="p-1.5">状態</th><th class="p-1.5"></th></tr></thead>
+              <tbody id="import-batch-log-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
         <div class="flex gap-1.5 items-center">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
@@ -2324,6 +2337,7 @@
       loadArchiveMonthList();
       loadSvSheetTable();
       loadFixedStoreChangeLog();
+      loadImportBatchLog();
     }
 
     // ===== 固定希望店舗の変更履歴 =====
@@ -2347,6 +2361,41 @@
           <td class="p-1.5 whitespace-nowrap"><span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${l.source === 'manual' ? 'bg-slate-100 text-slate-600' : 'bg-blue-100 text-blue-700'}">${esc(FIXED_STORE_LOG_SOURCE_LABEL[l.source] || l.source)}</span></td>
         </tr>
       `).join('');
+    }
+
+    // ===== 取込み履歴(一括取込みのまとめ取り消し) =====
+    const IMPORT_BATCH_TYPE_LABEL = {
+      store_requests_weekly: '週間必要枠表(店舗依頼)',
+      store_requests: '店舗依頼',
+      driver_availability: '希望シフト',
+      area_fixed: 'エリア固定'
+    };
+    async function loadImportBatchLog() {
+      const res = await fetch('/api/import-batches');
+      const data = await res.json();
+      const tbody = document.getElementById('import-batch-log-body');
+      const batches = data.batches || [];
+      if (batches.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-slate-400 text-sm p-4 text-center">まだ取込み履歴がありません</td></tr>'; return; }
+      tbody.innerHTML = batches.map(b => `
+        <tr class="border-b border-slate-100">
+          <td class="p-1.5 whitespace-nowrap">${esc((b.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td class="p-1.5 font-bold whitespace-nowrap">${esc(IMPORT_BATCH_TYPE_LABEL[b.type] || b.type)}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(b.filename || '-')}</td>
+          <td class="p-1.5 text-slate-500 whitespace-nowrap">${esc(b.label || '-')}</td>
+          <td class="p-1.5 text-right whitespace-nowrap">${b.row_count ?? 0}件</td>
+          <td class="p-1.5 text-right whitespace-nowrap">${b.currentRowCount ?? '-'}件</td>
+          <td class="p-1.5 whitespace-nowrap">${b.undone_at ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">取消し済み</span>' : '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">有効</span>'}</td>
+          <td class="p-1.5 whitespace-nowrap">${b.undone_at ? '' : `<button onclick="undoImportBatch(${b.id})" class="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-2 py-1 rounded font-bold">取り消す</button>`}</td>
+        </tr>
+      `).join('');
+    }
+    async function undoImportBatch(id) {
+      if (!confirm('この取込みで作成/更新されたデータをまとめて取り消します。よろしいですか？(確定/完了のマッチングが既にある分は取り消せません)')) return;
+      const res = await fetch(`/api/import-batches/${id}/undo`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert('取り消せませんでした: ' + data.message); return; }
+      alert('取り消しました');
+      loadImportBatchLog();
     }
 
     // ===== マッチング結果一覧(SV確認シート形式: 日付/社員番号/名前/シフト/出勤場所/勤務時間) =====

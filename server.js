@@ -183,6 +183,20 @@ db.serialize(() => {
     )
   `);
 
+  // 一括取込み(店舗依頼/希望シフト/エリア固定)を1回につき1件記録し、間違えた/テストで入れた取込みを
+  // まとめて取り消せるようにする(行ごとにimport_batch_idの印をつけ、このバッチ単位で取り消す)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS import_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      filename TEXT,
+      label TEXT,
+      row_count INTEGER DEFAULT 0,
+      created_at TEXT,
+      undone_at TEXT
+    )
+  `);
+
   // 既存テーブルへのカラム追加(運用中のDBを壊さないよう、無ければ追加する形で行う)
   ensureColumn('store_requests', 'store_id', 'INTEGER REFERENCES stores(id)');
   ensureColumn('matches', 'score', 'REAL');
@@ -209,6 +223,10 @@ db.serialize(() => {
   ensureColumn('store_requests', 'archived_month', 'TEXT');     // 月次クローズで「YYYY-MM」を入れ、作業画面から隠す(データは消さない)
   ensureColumn('driver_availability', 'archived_month', 'TEXT');
   ensureColumn('matches', 'archived_month', 'TEXT');
+  // 取込みの取消し機能用: 行がどの取込みバッチで作成/更新されたかの印(無ければ手入力/旧データ)
+  ensureColumn('store_requests', 'import_batch_id', 'INTEGER');
+  ensureColumn('driver_availability', 'import_batch_id', 'INTEGER');
+  ensureColumn('drivers', 'area_fixed_batch_id', 'INTEGER');
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
 });
 
@@ -343,6 +361,21 @@ async function logFixedStoreChange(driver_id, old_store_id, new_store_id, source
     'INSERT INTO fixed_store_change_log (driver_id, old_store_id, new_store_id, source, created_at) VALUES (?, ?, ?, ?, ?)',
     [driver_id, old_store_id || null, new_store_id || null, source, new Date().toISOString()]
   );
+}
+
+// 一括取込みの開始時に呼び、取込み履歴(import_batches)に1件記録してそのidを返す。
+// 取込み処理中は、作成/更新した行にこのidを印として付けておき(import_batch_id列)、
+// 後から「この取込みを取り消す」際にまとめて特定できるようにする
+async function createImportBatch(type, filename, label) {
+  const result = await dbRun(
+    'INSERT INTO import_batches (type, filename, label, row_count, created_at) VALUES (?, ?, ?, 0, ?)',
+    [type, filename || '', label || '', new Date().toISOString()]
+  );
+  return result.lastID;
+}
+// 取込み処理の最後に呼び、実際に取り込んだ件数を記録する(履歴画面での表示用)
+async function finalizeImportBatch(batchId, rowCount) {
+  await dbRun('UPDATE import_batches SET row_count = ? WHERE id = ?', [rowCount, batchId]);
 }
 
 // 「確定」「完了」のマッチングを見て、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、
@@ -788,6 +821,75 @@ app.get('/api/logs/fixed-store-changes', async (req, res) => {
   res.json({ success: true, logs: rows });
 });
 
+// 一括取込みの履歴一覧(新しい順、最大50件)。取り消し済みかどうか(undone_at)、現時点でまだ
+// このバッチの印が付いたまま残っている行数(currentRowCount。手動削除や月次アーカイブで減ることがある)を返す
+app.get('/api/import-batches', async (req, res) => {
+  const batches = await dbAll(`SELECT * FROM import_batches ORDER BY id DESC LIMIT 50`);
+  for (const b of batches) {
+    if (b.type === 'store_requests_weekly' || b.type === 'store_requests') {
+      b.currentRowCount = (await dbGet('SELECT COUNT(*) AS c FROM store_requests WHERE import_batch_id = ? AND archived_month IS NULL', [b.id])).c;
+    } else if (b.type === 'driver_availability') {
+      b.currentRowCount = (await dbGet('SELECT COUNT(*) AS c FROM driver_availability WHERE import_batch_id = ? AND archived_month IS NULL', [b.id])).c;
+    } else if (b.type === 'area_fixed') {
+      b.currentRowCount = (await dbGet('SELECT COUNT(*) AS c FROM drivers WHERE area_fixed_batch_id = ?', [b.id])).c;
+    } else {
+      b.currentRowCount = null;
+    }
+  }
+  res.json({ success: true, batches });
+});
+
+// 1回分の取込みをまとめて取り消す。対象行は import_batch_id(店舗依頼/希望シフト)または
+// area_fixed_batch_id(エリア固定)でこのバッチの印が付いているものに限る(後から別の取込みで
+// 上書きされた行は印が最新の取込みに付け替わっているため、対象にならず誤って巻き込まない)
+app.post('/api/import-batches/:id/undo', async (req, res) => {
+  const batch = await dbGet('SELECT * FROM import_batches WHERE id = ?', [req.params.id]);
+  if (!batch) return res.status(404).json({ success: false, message: '取込み履歴が見つかりません' });
+  if (batch.undone_at) return res.status(400).json({ success: false, message: 'この取込みは既に取り消し済みです' });
+  const now = new Date().toISOString();
+
+  if (batch.type === 'store_requests_weekly' || batch.type === 'store_requests') {
+    const targets = await dbAll('SELECT id FROM store_requests WHERE import_batch_id = ? AND archived_month IS NULL', [batch.id]);
+    const targetIds = targets.map(t => t.id);
+    if (targetIds.length === 0) {
+      await dbRun('UPDATE import_batches SET undone_at = ? WHERE id = ?', [now, batch.id]);
+      return res.json({ success: true, deletedStoreRequests: 0, deletedMatches: 0 });
+    }
+    const placeholders = targetIds.map(() => '?').join(',');
+    const confirmedCount = await dbGet(
+      `SELECT COUNT(*) AS c FROM matches WHERE store_request_id IN (${placeholders}) AND status IN ('確定','完了') AND archived_month IS NULL`,
+      targetIds
+    );
+    if (confirmedCount.c > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `この取込みで作った店舗依頼に、既に「確定」または「完了」のマッチングが${confirmedCount.c}件あるため取り消せません。先にそのマッチングを取り消す(候補に戻す/削除する)などで確認してから、もう一度お試しください。`
+      });
+    }
+    const deletedMatches = await dbRun(`DELETE FROM matches WHERE store_request_id IN (${placeholders}) AND status = '候補'`, targetIds);
+    await dbRun(`DELETE FROM store_requests WHERE id IN (${placeholders})`, targetIds);
+    await dbRun('UPDATE import_batches SET undone_at = ? WHERE id = ?', [now, batch.id]);
+    return res.json({ success: true, deletedStoreRequests: targetIds.length, deletedMatches: deletedMatches.changes || 0 });
+  }
+
+  if (batch.type === 'driver_availability') {
+    const result = await dbRun('DELETE FROM driver_availability WHERE import_batch_id = ? AND archived_month IS NULL', [batch.id]);
+    await dbRun('UPDATE import_batches SET undone_at = ? WHERE id = ?', [now, batch.id]);
+    return res.json({ success: true, deletedAvailability: result.changes || 0 });
+  }
+
+  if (batch.type === 'area_fixed') {
+    const result = await dbRun(
+      `UPDATE drivers SET area_fixed_enabled = 0, area_fixed_pattern = NULL, area_fixed_store_ids = NULL, area_fixed_batch_id = NULL WHERE area_fixed_batch_id = ?`,
+      [batch.id]
+    );
+    await dbRun('UPDATE import_batches SET undone_at = ? WHERE id = ?', [now, batch.id]);
+    return res.json({ success: true, clearedDrivers: result.changes || 0 });
+  }
+
+  return res.status(400).json({ success: false, message: '未対応の取込み種類です' });
+});
+
 // ドライバーマスタをCSV/Excelでまとめて取込む(初期データ投入用。社員コードが一致すればそれで、無ければ氏名で既存ドライバーと照合し上書き更新する)
 app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
@@ -908,6 +1010,7 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
+  const importBatchId = await createImportBatch('driver_availability', req.file.originalname, '長形式');
 
   const drivers = await dbAll(`
     SELECT d.id, d.name, fs.name AS fixed_store_name, fs.area AS fixed_store_area
@@ -946,19 +1049,20 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
     );
     if (existing) {
       await dbRun(
-        `UPDATE driver_availability SET desired_area=?, desired_store=?, time_start=?, time_end=?, requests=? WHERE id=?`,
-        [desired_area, desired_store, time_start, time_end, requests, existing.id]
+        `UPDATE driver_availability SET desired_area=?, desired_store=?, time_start=?, time_end=?, requests=?, import_batch_id=? WHERE id=?`,
+        [desired_area, desired_store, time_start, time_end, requests, importBatchId, existing.id]
       );
     } else {
       await dbRun(
-        `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, now]
+        `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, now, importBatchId]
       );
     }
     imported++;
   }
+  await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, total: rows.length, errors });
+  res.json({ success: true, imported, total: rows.length, errors, importBatchId });
 });
 
 // アップロードされたExcelファイルのシート名一覧を返す(CSVは単一シート扱いで空配列)。
@@ -1027,6 +1131,7 @@ app.post('/api/incoming-files/sheet-names', (req, res) => {
 app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, res) => {
   const source = getImportSource(req);
   if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
+  const importBatchId = await createImportBatch('area_fixed', source.filename, '');
 
   let rows;
   try {
@@ -1101,13 +1206,14 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
     }
 
     await dbRun(
-      'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ? WHERE id = ?',
-      [JSON.stringify(pattern), JSON.stringify(storeIds), driver.id]
+      'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ?, area_fixed_batch_id = ? WHERE id = ?',
+      [JSON.stringify(pattern), JSON.stringify(storeIds), importBatchId, driver.id]
     );
     imported++;
   }
+  await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, errors });
+  res.json({ success: true, imported, errors, importBatchId });
 });
 
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
@@ -1121,6 +1227,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
   if (!year || !month || month < 1 || month > 12) {
     return res.status(400).json({ success: false, message: '対象年月を指定してください' });
   }
+  const importBatchId = await createImportBatch('driver_availability', source.filename, `${year}年${month}月(ワイド形式)`);
 
   let rows;
   try {
@@ -1184,20 +1291,21 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
         const desired_store = existing.desired_store || fallbackStore;
         const desired_area = existing.desired_area || fallbackArea;
         await dbRun(
-          'UPDATE driver_availability SET time_start=?, time_end=?, desired_store=?, desired_area=? WHERE id=?',
-          [time_start, time_end, desired_store, desired_area, existing.id]
+          'UPDATE driver_availability SET time_start=?, time_end=?, desired_store=?, desired_area=?, import_batch_id=? WHERE id=?',
+          [time_start, time_end, desired_store, desired_area, importBatchId, existing.id]
         );
       } else {
         await dbRun(
-          `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [driver_id, desired_date, fallbackArea, fallbackStore, time_start, time_end, '', now]
+          `INSERT INTO driver_availability (driver_id, desired_date, desired_area, desired_store, time_start, time_end, requests, created_at, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [driver_id, desired_date, fallbackArea, fallbackStore, time_start, time_end, '', now, importBatchId]
         );
       }
       imported++;
     }
   }
+  await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, errors });
+  res.json({ success: true, imported, errors, importBatchId });
 });
 
 // LINEなどで届く自由文の希望シフトメッセージをAI(Claude)で解析する(試験的機能)。
@@ -1385,6 +1493,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   if (!year || !month || month < 1 || month > 12) {
     return res.status(400).json({ success: false, message: '対象年月を指定してください' });
   }
+  const importBatchId = await createImportBatch('store_requests_weekly', source.filename, `${year}年${month}月`);
 
   let rows;
   try {
@@ -1519,20 +1628,21 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       );
       if (existing) {
         await dbRun(
-          `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=? WHERE id=?`,
-          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, entry.time_end, entry.count, requests, existing.id]
+          `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=?, import_batch_id=? WHERE id=?`,
+          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, entry.time_end, entry.count, requests, importBatchId, existing.id]
         );
       } else {
         await dbRun(
-          `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId]
+          `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId, importBatchId]
         );
       }
       imported++;
     }
   }
+  await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, fixedDriverLinks, errors });
+  res.json({ success: true, imported, fixedDriverLinks, errors, importBatchId });
 });
 
 // ===== 店舗マスタ =====
