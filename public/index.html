@@ -197,6 +197,28 @@
           <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
 
+        <details class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <summary class="cursor-pointer select-none text-xs font-bold text-slate-600">📥 エリア固定の一括取込み</summary>
+          <div class="pt-2 space-y-2">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <span class="text-[10px] text-slate-400">📄 ひな形は上の「週間必要枠表」と共通です</span>
+              <a href="/api/templates/store-requests-weekly.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード</a>
+            </div>
+            <p class="text-[10px] text-slate-400">「氏名」「月」〜「日」「想定デポ(候補店舗)」の見出しを含む表を想定しています。氏名はドライバーマスタに登録済みの氏名と完全一致している必要があります(先に登録してください)。想定デポは「、」「・」「,」のいずれで区切っても読み取れます。</p>
+            <div class="flex gap-2 items-center flex-wrap">
+              <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
+              <select id="dr-areafixed-folder-file" onchange="onIncomingFileSelected('dr-areafixed')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
+              <button onclick="loadIncomingFiles('dr-areafixed-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
+            </div>
+            <div class="flex gap-2 items-center flex-wrap">
+              <input id="dr-areafixed-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('dr-areafixed')">
+              <select id="dr-areafixed-sheet" class="p-1.5 border rounded text-xs hidden"></select>
+              <button onclick="importAreaFixed()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+            </div>
+            <div id="dr-areafixed-import-result" class="text-xs"></div>
+          </div>
+        </details>
+
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input id="sr-store-name" placeholder="店舗名 *" class="p-2 border rounded text-sm">
@@ -227,25 +249,6 @@
             <button onclick="importDriverMaster()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
           </div>
           <div id="dr-import-result" class="text-xs"></div>
-        </div>
-
-        <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <p class="text-xs font-bold text-slate-600">📥 エリア固定の一括取込み</p>
-            <span class="text-[10px] text-slate-400">📄 ひな形は「店舗依頼」タブからダウンロードできます(共通のひな形です)</span>
-          </div>
-          <p class="text-[10px] text-slate-400">「氏名」「月」〜「日」「想定デポ(候補店舗)」の見出しを含む表を想定しています。氏名はドライバーマスタに登録済みの氏名と完全一致している必要があります(先に登録してください)。想定デポは「、」「・」「,」のいずれで区切っても読み取れます。</p>
-          <div class="flex gap-2 items-center flex-wrap">
-            <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
-            <select id="dr-areafixed-folder-file" onchange="onIncomingFileSelected('dr-areafixed')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
-            <button onclick="loadIncomingFiles('dr-areafixed-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
-          </div>
-          <div class="flex gap-2 items-center flex-wrap">
-            <input id="dr-areafixed-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('dr-areafixed')">
-            <select id="dr-areafixed-sheet" class="p-1.5 border rounded text-xs hidden"></select>
-            <button onclick="importAreaFixed()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
-          </div>
-          <div id="dr-areafixed-import-result" class="text-xs"></div>
         </div>
 
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
@@ -759,10 +762,10 @@
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
       if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); }
-      if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); }
+      if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); loadIncomingFiles('dr-areafixed-folder-file'); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
       if (tab === 'storemaster') loadStoreMaster();
-      if (tab === 'driver') { loadDrivers(); loadIncomingFiles('dr-areafixed-folder-file'); }
+      if (tab === 'driver') { loadDrivers(); }
       if (tab === 'preferences') { loadDriversForPreferenceSelect(); switchPreferenceView(prefView); }
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
       if (tab === 'dashboard') loadDashboard();
