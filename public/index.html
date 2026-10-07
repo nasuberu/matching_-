@@ -67,8 +67,9 @@
 
     <!-- 店舗マスタタブ -->
     <div id="tab-storemaster" class="hidden space-y-4">
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-        <h2 class="font-bold text-slate-800">🏪 店舗を登録</h2>
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🏪 店舗を登録</summary>
+        <div class="space-y-3 pt-3">
         <p class="text-[11px] text-slate-400">※ 店舗依頼を登録すると、店舗名から自動でここに名寄せ登録されます。相性(NG〜1〜5〜OK)や派遣履歴はこの店舗マスタ単位で管理します。</p>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
@@ -95,7 +96,8 @@
           <button id="sm-submit-btn" onclick="saveStoreMaster()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
           <button id="sm-cancel-btn" onclick="cancelStoreMasterEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
         </div>
-      </div>
+        </div>
+      </details>
 
       <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
         <label class="text-xs font-bold text-slate-600">並び替え:</label>
@@ -144,8 +146,9 @@
 
     <!-- 店舗依頼タブ -->
     <div id="tab-store" class="hidden space-y-4">
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-        <h2 class="font-bold text-slate-800">🏬 店舗依頼を登録</h2>
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🏬 店舗依頼を登録</summary>
+        <div class="space-y-3 pt-3">
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み(1行=1件の依頼)</p>
@@ -231,14 +234,16 @@
           <input id="sr-requests" placeholder="要望(自由記述)" class="p-2 border rounded text-sm md:col-span-3">
         </div>
         <button onclick="saveStoreRequest()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
-      </div>
+        </div>
+      </details>
       <div id="store-list" class="space-y-2"></div>
     </div>
 
     <!-- ドライバーマスタタブ -->
     <div id="tab-driver" class="hidden space-y-4">
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-        <h2 class="font-bold text-slate-800">🚚 ドライバーを登録</h2>
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🚚 ドライバーを登録</summary>
+        <div class="space-y-3 pt-3">
         <p class="text-[11px] text-slate-400">※ 自宅住所を登録すると、マッチング時に依頼店舗までの距離を自動で計算します(国土地理院の住所検索を使用)。</p>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
@@ -302,7 +307,8 @@
           <button id="dr-submit-btn" onclick="saveDriver()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
           <button id="dr-cancel-btn" onclick="cancelDriverEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
         </div>
-      </div>
+        </div>
+      </details>
 
       <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
         <label class="text-xs font-bold text-slate-600">並び替え:</label>
