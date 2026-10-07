@@ -2108,6 +2108,22 @@ app.post('/api/matches/:id/undo-complete', async (req, res) => {
   res.json({ success: true });
 });
 
+// 複数の「完了」をまとめて「確定」に戻す(画面の一括取り消し機能用)。status='完了'のものだけを対象にする
+app.post('/api/matches/bulk-undo-complete', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids(配列)は必須です' });
+  const targets = await dbAll(
+    `SELECT id FROM matches WHERE id IN (${ids.map(() => '?').join(',')}) AND status = '完了'`,
+    ids
+  );
+  const targetIds = targets.map(t => t.id);
+  if (targetIds.length === 0) return res.json({ success: true, undone: 0 });
+  const placeholders = targetIds.map(() => '?').join(',');
+  await dbRun(`UPDATE matches SET status = '確定' WHERE id IN (${placeholders})`, targetIds);
+  await dbRun(`DELETE FROM dispatch_history WHERE match_id IN (${placeholders})`, targetIds);
+  res.json({ success: true, undone: targetIds.length });
+});
+
 // 欠勤にする(削除はせず、理由付きで履歴として残す。実際には稼働していないので派遣履歴には記録しない)
 app.post('/api/matches/:id/absence', async (req, res) => {
   const { reason } = req.body;

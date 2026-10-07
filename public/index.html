@@ -78,12 +78,13 @@
         <button onclick="resetMatchFilters()" class="text-xs text-slate-500 px-2 py-1">条件クリア</button>
         <button onclick="expandAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて開く</button>
         <button onclick="collapseAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて畳む</button>
-        <button onclick="selectAllFilteredCandidates()" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg font-bold">表示中の候補をすべて選択</button>
+        <button onclick="selectAllFilteredCandidates()" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg font-bold">表示中の対象をすべて選択</button>
       </div>
 
       <div id="match-bulk-bar" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center gap-2 flex-wrap sticky top-[52px] z-20 shadow">
         <span id="match-bulk-count" class="text-xs font-bold text-amber-800"></span>
-        <button onclick="bulkConfirmSelected()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold">✅ 選択した候補をまとめて確定</button>
+        <button id="match-bulk-confirm-btn" onclick="bulkConfirmSelected()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold">✅ 選択した候補をまとめて確定</button>
+        <button id="match-bulk-undo-complete-btn" onclick="bulkUndoCompleteSelected()" class="text-xs bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg font-bold">↩️ 選択した完了をまとめて取り消す</button>
         <button onclick="clearMatchSelection()" class="text-xs text-amber-800 px-2 py-1">選択解除</button>
       </div>
 
@@ -2258,17 +2259,17 @@
 
       list.innerHTML = [...groups.entries()].map(([date, rows]) => {
         const collapsed = collapsedDateGroups.has(date);
-        const candidateIds = rows.filter(r => r.status === '候補').map(r => r.id);
-        const allSelected = candidateIds.length > 0 && candidateIds.every(id => selectedMatchIds.has(id));
+        const selectableIds = rows.filter(r => r.status === '候補' || r.status === '完了').map(r => r.id);
+        const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedMatchIds.has(id));
         return `
           <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div class="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="toggleDateGroup('${date}')">
               <p class="font-bold text-sm text-slate-700">📅 ${withWeekday(date)} <span class="text-xs text-slate-400 font-normal">(${rows.length}件)</span></p>
               <div class="flex items-center gap-2" onclick="event.stopPropagation()">
-                ${candidateIds.length > 0 ? `
+                ${selectableIds.length > 0 ? `
                   <label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleDateGroupSelection('${date}', this.checked)">
-                    この日の候補${candidateIds.length}件
+                    この日の対象${selectableIds.length}件
                   </label>
                 ` : ''}
                 <span class="text-slate-400 text-xs">${collapsed ? '▶' : '▼'}</span>
@@ -2285,7 +2286,7 @@
         <div class="p-3 rounded-lg border ${m.is_far_warning ? 'border-amber-400' : 'border-slate-200'} ${selectedMatchIds.has(m.id) ? 'bg-emerald-50' : ''}">
           <div class="flex justify-between items-start gap-2">
             <div class="flex items-start gap-2">
-              ${m.status === '候補' ? `<input type="checkbox" class="mt-1" ${selectedMatchIds.has(m.id) ? 'checked' : ''} onchange="toggleMatchSelection(${m.id}, this.checked)">` : '<span class="inline-block w-[13px]"></span>'}
+              ${(m.status === '候補' || m.status === '完了') ? `<input type="checkbox" class="mt-1" ${selectedMatchIds.has(m.id) ? 'checked' : ''} onchange="toggleMatchSelection(${m.id}, this.checked)">` : '<span class="inline-block w-[13px]"></span>'}
               <div>
                 <p class="font-bold text-sm">
                   🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
@@ -2320,6 +2321,10 @@
       const count = selectedMatchIds.size;
       document.getElementById('match-bulk-count').textContent = `${count}件選択中`;
       bar.classList.toggle('hidden', count === 0);
+      if (count === 0) return;
+      const selectedRows = matchesCache.filter(m => selectedMatchIds.has(m.id));
+      document.getElementById('match-bulk-confirm-btn').classList.toggle('hidden', !selectedRows.some(m => m.status === '候補'));
+      document.getElementById('match-bulk-undo-complete-btn').classList.toggle('hidden', !selectedRows.some(m => m.status === '完了'));
     }
 
     function toggleMatchSelection(id, checked) {
@@ -2334,7 +2339,7 @@
 
     function toggleDateGroupSelection(date, checked) {
       for (const m of matchesCache) {
-        if (m.match_date === date && m.status === '候補') {
+        if (m.match_date === date && (m.status === '候補' || m.status === '完了')) {
           if (checked) selectedMatchIds.add(m.id); else selectedMatchIds.delete(m.id);
         }
       }
@@ -2348,7 +2353,7 @@
 
     function selectAllFilteredCandidates() {
       for (const m of getFilteredMatches()) {
-        if (m.status === '候補') selectedMatchIds.add(m.id);
+        if (m.status === '候補' || m.status === '完了') selectedMatchIds.add(m.id);
       }
       renderMatchesList();
     }
@@ -2364,7 +2369,7 @@
     }
 
     async function bulkConfirmSelected() {
-      const ids = [...selectedMatchIds];
+      const ids = matchesCache.filter(m => selectedMatchIds.has(m.id) && m.status === '候補').map(m => m.id);
       if (ids.length === 0) return;
       if (!confirm(`選択した${ids.length}件を確定します。よろしいですか？`)) return;
       const res = await fetch('/api/matches/bulk-confirm', {
@@ -2372,6 +2377,19 @@
       });
       const data = await res.json();
       if (!data.success) { alert('確定に失敗しました: ' + (data.message || '')); return; }
+      selectedMatchIds.clear();
+      loadMatches();
+    }
+
+    async function bulkUndoCompleteSelected() {
+      const ids = matchesCache.filter(m => selectedMatchIds.has(m.id) && m.status === '完了').map(m => m.id);
+      if (ids.length === 0) return;
+      if (!confirm(`選択した${ids.length}件の「完了」を取り消して「確定」に戻します。派遣履歴に自動記録された分もあわせて削除されます。よろしいですか？`)) return;
+      const res = await fetch('/api/matches/bulk-undo-complete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+      });
+      const data = await res.json();
+      if (!data.success) { alert('取り消しに失敗しました: ' + (data.message || '')); return; }
       selectedMatchIds.clear();
       loadMatches();
     }
