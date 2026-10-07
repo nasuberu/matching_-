@@ -1895,8 +1895,10 @@ app.get('/api/matches', async (req, res) => {
 // 距離がDIST_WARNING_KMを超える場合はマッチング自体は作るが「遠い」警告フラグを立てる(除外はしない)。
 // 既に他のマッチングで同日確定しているドライバーは対象から外す(ダブルブッキング防止)。
 app.post('/api/matches/run', async (req, res) => {
-  // 一旦候補を作り直す(確定済みの運用に育ったら「候補のみ削除」に変更する想定)。アーカイブ済み(過去に月次クローズしたもの)は対象外にする
-  await dbRun('DELETE FROM matches WHERE archived_month IS NULL');
+  // 「候補」だけを作り直す。「確定」「完了」は既に実際の運用(シフト確定・派遣実績)で使われているため、
+  // 再実行しても絶対に消さない(以前はここで全件消していたため、実行するたびに確定済みの予定が
+  // 白紙に戻ってしまう重大な不具合があった。アーカイブ済み(過去に月次クローズしたもの)は対象外)
+  await dbRun(`DELETE FROM matches WHERE archived_month IS NULL AND status = '候補'`);
 
   const storeRequests = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date ASC');
   const availabilityRows = await dbAll(`
@@ -1940,6 +1942,17 @@ app.post('/api/matches/run', async (req, res) => {
   let createdCount = 0;
   let noCandidateCount = 0;
   const filledCountByRequestId = {}; // store_request.id -> 既に埋まった人数(優先階層で埋めた分)
+
+  // 既に「確定」「完了」になっているマッチングは消さずそのまま活かすため、その分を
+  // 「埋まった人数」「その日は既に割当済みのドライバー」として先に計上しておく
+  // (そうしないと必要人数を超えて候補を追加したり、同じドライバーを同日に二重登録してしまう)
+  const existingMatches = await dbAll(`
+    SELECT store_request_id, driver_id, match_date FROM matches WHERE archived_month IS NULL AND status IN ('確定', '完了')
+  `);
+  for (const em of existingMatches) {
+    (assignedDriverIdsByDate[em.match_date] = assignedDriverIdsByDate[em.match_date] || new Set()).add(em.driver_id);
+    filledCountByRequestId[em.store_request_id] = (filledCountByRequestId[em.store_request_id] || 0) + 1;
+  }
 
   async function insertMatch(store, p) {
     const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
@@ -2541,6 +2554,29 @@ function addTemplateDataSheet(workbook, sheetName, header, sampleRows, colWidths
   return ws;
 }
 
+// 練習用サンプルデータのシートを追加する(addTemplateDataSheetと違い、データ行を「消してください」の
+// 記入例ではなく、そのまま取込んで使う本物のサンプル行として扱うため、薄いグレーの斜体にはしない)
+function addFilledSampleSheet(workbook, sheetName, header, dataRows, colWidths) {
+  const ws = workbook.addWorksheet(sheetName);
+  ws.columns = colWidths.map(w => ({ width: w }));
+  const headerRow = ws.addRow(header);
+  headerRow.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+    cell.border = THIN_BORDER;
+    cell.alignment = { vertical: 'middle', wrapText: true };
+  });
+  for (const r of dataRows) {
+    const row = ws.addRow(r);
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.border = THIN_BORDER;
+      cell.alignment = { vertical: 'middle', wrapText: true };
+    });
+  }
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  return ws;
+}
+
 // 記入ルール(文章だけの説明)シートを追加する。罫線は付けず、タイトル行だけ太字・少し大きめにする
 function addRulesTextSheet(workbook, sheetName, lines) {
   const ws = workbook.addWorksheet(sheetName);
@@ -2646,6 +2682,88 @@ app.get('/api/templates/driver-availability-long.xlsx', async (req, res) => {
   const buffer = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="driver_availability_template.xlsx"');
+  res.send(Buffer.from(buffer));
+});
+
+// ===== 使い方を練習するためのサンプルデータ(担当者への説明・操作練習用) =====
+// 店舗名・氏名はすべて「（サンプル）」を付けて、本物のデータと見分けやすくしてある。
+// 取込みの練習後は、ドライバーマスタ/店舗マスタから削除するか、店舗依頼・希望シフトは
+// 「📥 取込み履歴」からまとめて取り消せば元の状態に戻せる
+
+// ①サンプルのドライバー3名(ドライバーマスタの一括取込みの練習用)
+app.get('/api/samples/drivers.xlsx', async (req, res) => {
+  const header = ['社員コード', '氏名', '会社名', 'お住まい住所', '初回委託日', 'ステータス', 'メールアドレス', '固定希望店舗', '保険加入状況', '電話番号', '車両種別', '備考'];
+  const rows = [
+    ['99001', '（サンプル）山田太郎', '', '', '2026-04-01', '稼働中', '', '', '加入済み', '090-0000-0001', '軽貨物（バン）', '練習用のサンプルデータです。練習が終わったら削除してOKです'],
+    ['99002', '（サンプル）佐藤花子', '', '', '2026-04-01', '稼働中', '', '', '加入済み', '090-0000-0002', '軽貨物（バン）', '練習用のサンプルデータです。練習が終わったら削除してOKです'],
+    ['99003', '（サンプル）鈴木次郎', '', '', '2026-04-01', '稼働中', '', '', '加入済み', '090-0000-0003', '軽貨物（バン）', '練習用のサンプルデータです。練習が終わったら削除してOKです'],
+  ];
+  const rulesText = [
+    ['（サンプル）ドライバーマスタ練習用データ'],
+    [],
+    ['このファイルを「ドライバーマスタ」タブの「Excel/CSVから一括取込み」にそのままアップロードしてみてください。'],
+    ['氏名の先頭に「（サンプル）」を付けてあるので、一覧の中でもすぐ見分けられます。'],
+    ['練習が終わったら、この3名はドライバーマスタの画面から削除してください(削除すると、この後取り込む希望シフトも一緒に消えます)。'],
+  ];
+  const wb = new ExcelJS.Workbook();
+  addFilledSampleSheet(wb, 'サンプルドライバー', header, rows, [10, 20, 14, 10, 14, 10, 18, 14, 14, 16, 16, 36]);
+  addRulesTextSheet(wb, '説明', rulesText);
+  const buffer = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="sample_drivers.xlsx"');
+  res.send(Buffer.from(buffer));
+});
+
+// ②サンプルの店舗依頼3店舗分(週間必要枠表の一括取込みの練習用。番号は実在の店番と被らないよう9900番台にしてある)
+app.get('/api/samples/store-requests.xlsx', async (req, res) => {
+  const header = ['店番', '店舗名', '月', '火', '水', '木', '金', '土', '日', '備考'];
+  const rows = [
+    ['9901', '（サンプル）すずらん通り店', '10:00-19:00', '10:00-19:00', '10:00-19:00', '10:00-19:00', '10:00-19:00', '', '', '練習用のサンプルデータです'],
+    ['9902', '（サンプル）ひまわり公園前店', '9:00-18:00', '9:00-18:00', '', '9:00-18:00', '9:00-18:00', '9:00-18:00*2', '', '土曜日は2人ほしい例(*2)'],
+    ['9903', '（サンプル）みどり橋店', '13:00-21:00', '', '13:00-21:00', '', '13:00-21:00', '', '13:00-21:00', ''],
+  ];
+  const rulesText = [
+    ['（サンプル）店舗依頼(週間必要枠表)練習用データ'],
+    [],
+    ['このファイルを「店舗依頼」タブの「週間必要枠表(曜日パターン)から一括取込み」にそのままアップロードしてみてください。'],
+    ['取込み時に年月を指定する欄がありますが、何月にしても練習には問題ありません(例:来月を指定してみてください)。'],
+    ['店舗名の先頭に「（サンプル）」を付けてあるので、一覧の中でもすぐ見分けられます。'],
+    ['練習が終わったら、ダッシュボードの「📥 取込み履歴」からこの取込みを選んで「取り消す」を押せば、作成された店舗依頼がまとめて削除されます。'],
+    ['(店舗マスタに残る「（サンプル）◯◯店」自体を消したい場合は、店舗マスタの画面から個別に削除してください)'],
+  ];
+  const wb = new ExcelJS.Workbook();
+  addFilledSampleSheet(wb, 'サンプル店舗依頼', header, rows, [10, 22, 15, 15, 15, 15, 15, 15, 15, 30]);
+  addRulesTextSheet(wb, '説明', rulesText);
+  const buffer = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="sample_store_requests.xlsx"');
+  res.send(Buffer.from(buffer));
+});
+
+// ③サンプルの希望シフト(氏名×日付のワイド形式、楽シフのエクスポートと同じ形)。
+// ①のサンプルドライバー3名と氏名が一致しているので、①→③の順に取込むとエラーなく練習できる
+app.get('/api/samples/driver-availability-wide.xlsx', async (req, res) => {
+  const header = ['氏名', '1(月)', '2(火)', '3(水)', '4(木)', '5(金)', '6(土)', '7(日)', '8(月)', '9(火)', '10(水)', '11(木)', '12(金)', '13(土)', '14(日)'];
+  const rows = [
+    ['（サンプル）山田太郎', '10:00-19:00', '10:00-19:00', '休み', '10:00-19:00', '10:00-19:00', '', '', '10:00-19:00', '10:00-19:00', '休み', '10:00-19:00', '10:00-19:00', '', ''],
+    ['（サンプル）佐藤花子', '9:00-18:00', '休み', '9:00-18:00', '9:00-18:00', '9:00-18:00', '9:00-18:00', '', '9:00-18:00', '休み', '9:00-18:00', '9:00-18:00', '9:00-18:00', '9:00-18:00', ''],
+    ['（サンプル）鈴木次郎', '', '13:00-21:00', '13:00-21:00', '', '13:00-21:00', '13:00-21:00', '13:00-21:00', '', '13:00-21:00', '13:00-21:00', '', '13:00-21:00', '13:00-21:00', '13:00-21:00'],
+  ];
+  const rulesText = [
+    ['（サンプル）希望シフト(ワイド形式/楽シフと同じ形式)練習用データ'],
+    [],
+    ['先に「①サンプルドライバー」を取り込んでから、このファイルを「ドライバーマスタ」タブの「楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み」にアップロードしてください。'],
+    ['氏名が①のサンプルドライバーと完全に一致しているので、先に①を取り込んでいればそのまま登録できます。'],
+    ['取込み時に年月を指定する欄がありますが、何月にしても練習には問題ありません(「1(月)」などの曜日表記は見た目だけのものです)。'],
+    ['「休み」と書いてある日・空欄の日は、その日は稼働しない扱いになります。'],
+    ['練習が終わったら、①のサンプルドライバーをドライバーマスタから削除すれば、この希望シフトも一緒に消えます。'],
+  ];
+  const wb = new ExcelJS.Workbook();
+  addFilledSampleSheet(wb, 'サンプル希望シフト', header, rows, [18, ...Array(14).fill(11)]);
+  addRulesTextSheet(wb, '説明', rulesText);
+  const buffer = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="sample_driver_availability_wide.xlsx"');
   res.send(Buffer.from(buffer));
 });
 

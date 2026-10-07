@@ -547,6 +547,49 @@
         <p class="text-xs text-slate-500">困ったときはキーワードで検索してください(例:「固定希望店舗」「候補が見つからない」「エリア固定」「取込み」など)</p>
         <input id="help-search" oninput="renderHelpTopics()" placeholder="🔍 キーワードで検索" class="p-2 border rounded text-sm w-full">
       </div>
+
+      <div class="bg-amber-50 p-4 rounded-xl shadow-sm border border-amber-200 space-y-3">
+        <h2 class="font-bold text-slate-800">🎓 練習用サンプルデータ</h2>
+        <p class="text-xs text-slate-600">担当者に使い方を説明するときは、本物のデータの前にこのサンプルで練習するのがおすすめです。店舗名・氏名はすべて「（サンプル）」を付けてあるので、一覧の中でもすぐ見分けられます。</p>
+        <ol class="text-xs text-slate-600 list-decimal list-inside space-y-1">
+          <li>① サンプルドライバーを「ドライバーマスタ」タブの一括取込みで登録する</li>
+          <li>② サンプル店舗依頼を「店舗依頼」タブの週間必要枠表の一括取込みで登録する</li>
+          <li>③ サンプル希望シフトを「ドライバーマスタ」タブの楽シフ形式の一括取込みで登録する(①を先に済ませておくこと)</li>
+          <li>④ 「マッチング結果」タブで自動マッチングを実行し、結果を見てみる</li>
+          <li>⑤ 練習が終わったら、①のサンプルドライバーを削除する(②③のデータも連動して消えます)。②の取込みだけ先に消したい場合はダッシュボードの「📥 取込み履歴」から取り消せます</li>
+        </ol>
+        <div class="flex gap-2 flex-wrap">
+          <a href="/api/samples/drivers.xlsx" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">① サンプルドライバーをダウンロード</a>
+          <a href="/api/samples/store-requests.xlsx" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">② サンプル店舗依頼をダウンロード</a>
+          <a href="/api/samples/driver-availability-wide.xlsx" class="text-xs bg-white border border-amber-300 hover:bg-amber-100 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">③ サンプル希望シフトをダウンロード</a>
+        </div>
+        <details class="text-xs text-slate-600">
+          <summary class="cursor-pointer select-none font-bold text-slate-700">④ LINEなどで届く自由文シフトのサンプル文言(コピーして「希望シフト」タブの「LINE文言から登録」に貼り付けてみてください)</summary>
+          <div class="mt-2 space-y-2">
+            <div class="bg-white border border-slate-200 rounded p-2">
+              <p class="text-[10px] text-slate-400 mb-1">例1: 日付+時間を並べたシンプルな書き方</p>
+              <pre class="whitespace-pre-wrap text-[11px] font-mono select-all">10/15 10-18
+10/16 10-18
+10/17 休み
+10/18 10-18</pre>
+            </div>
+            <div class="bg-white border border-slate-200 rounded p-2">
+              <p class="text-[10px] text-slate-400 mb-1">例2: 日にちだけ(月が1回出てきたらその月が続く)書き方</p>
+              <pre class="whitespace-pre-wrap text-[11px] font-mono select-all">11月
+3日 9-17
+5日 9-17
+7日 休み
+10日 9-17</pre>
+            </div>
+            <div class="bg-white border border-slate-200 rounded p-2">
+              <p class="text-[10px] text-slate-400 mb-1">例3: 少しくだけた自然文(正規表現では読み取りにくいので、🤖AI解析ボタンを試す例として)</p>
+              <pre class="whitespace-pre-wrap text-[11px] font-mono select-all">来月の10/20(月)から10/24(金)まで、毎日10時〜19時で入れます。
+10/25,26は用事があるのでお休みします。</pre>
+            </div>
+          </div>
+        </details>
+      </div>
+
       <div id="help-topics-list" class="space-y-4"></div>
     </div>
 
