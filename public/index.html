@@ -69,6 +69,10 @@
       </details>
 
       <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2 items-center">
+        <div class="flex gap-1.5 items-center">
+          <button id="match-view-table-btn" onclick="switchMatchesViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📊 表で見る</button>
+          <button id="match-view-list-btn" onclick="switchMatchesViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📋 リストで見る</button>
+        </div>
         <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
           <option value="候補">候補(確認待ち)</option>
           <option value="確定">確定</option>
@@ -82,9 +86,19 @@
         <input type="date" id="match-filter-date-to" onchange="renderMatchesList()" class="p-2 border rounded text-sm" title="この日まで">
         <input id="match-filter-search" oninput="renderMatchesList()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-2 border rounded text-sm flex-1 min-w-[160px]">
         <button onclick="resetMatchFilters()" class="text-xs text-slate-500 px-2 py-1">条件クリア</button>
-        <button onclick="expandAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて開く</button>
-        <button onclick="collapseAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて畳む</button>
-        <button onclick="selectAllFilteredCandidates()" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg font-bold">表示中の対象をすべて選択</button>
+        <span id="match-list-only-controls" class="contents">
+          <button onclick="expandAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて開く</button>
+          <button onclick="collapseAllDateGroups()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-bold">すべて畳む</button>
+          <button onclick="selectAllFilteredCandidates()" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg font-bold">表示中の対象をすべて選択</button>
+        </span>
+      </div>
+
+      <div id="match-table-legend" class="hidden flex gap-3 items-center flex-wrap text-[11px] text-slate-500 bg-white p-2.5 rounded-xl border border-slate-200">
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white border border-slate-200 border-l-[3px] border-l-emerald-500"></span>確定</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-700"></span>完了</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
       </div>
 
       <div id="match-bulk-bar" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center gap-2 flex-wrap sticky top-[52px] z-20 shadow">
@@ -95,6 +109,12 @@
       </div>
 
       <div id="matches-list" class="space-y-2"></div>
+      <div id="matches-table-wrap" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="text-sm border-collapse">
+          <thead><tr id="matches-table-header"></tr></thead>
+          <tbody id="matches-table-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 店舗マスタタブ -->
@@ -2168,6 +2188,14 @@
     const substitutesByMatchId = {}; // match id -> 取得済みの代替候補配列
     let selectedMatchIds = new Set();   // 一括確定のためにチェックを入れているmatch id
     let collapsedDateGroups = new Set(); // 畳んでいる日付グループ(match_date文字列)
+    let matchesViewMode = 'table'; // 'table'(店舗×日付の表)か'list'(確定・削除等の操作ができる一覧)
+
+    function switchMatchesViewMode(mode) {
+      matchesViewMode = mode;
+      document.getElementById('match-view-table-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'table' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('match-view-list-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'list' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      renderMatchesList();
+    }
 
     async function loadMatches() {
       const res = await fetch('/api/matches');
@@ -2261,12 +2289,30 @@
     }
 
     function renderMatchesList() {
-      const list = document.getElementById('matches-list');
-      if (matchesCache.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>'; renderMatchBulkBar(); return; }
+      const listEl = document.getElementById('matches-list');
+      const tableWrap = document.getElementById('matches-table-wrap');
+      const legend = document.getElementById('match-table-legend');
+      const listOnlyControls = document.getElementById('match-list-only-controls');
+      const isTable = matchesViewMode === 'table';
+      listEl.classList.toggle('hidden', isTable);
+      tableWrap.classList.toggle('hidden', !isTable);
+      legend.classList.toggle('hidden', !isTable);
+      listOnlyControls.classList.toggle('hidden', isTable);
+      document.getElementById('match-bulk-bar').classList.toggle('hidden', isTable); // 表モードでは選択の概念が無いため常に隠す
+
+      if (matchesCache.length === 0) {
+        const msg = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>';
+        if (isTable) tableWrap.classList.add('hidden'); // テーブル用のmsgは別途出すのでテーブル枠は隠す
+        listEl.classList.remove('hidden');
+        listEl.innerHTML = msg;
+        return;
+      }
 
       const filtered = getFilteredMatches().sort((a, b) => a.match_date.localeCompare(b.match_date) || a.store_name.localeCompare(b.store_name));
+      if (isTable) { renderMatchesTable(filtered); return; }
+
       renderMatchBulkBar();
-      if (filtered.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">条件に合うマッチングがありません</p>'; return; }
+      if (filtered.length === 0) { listEl.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">条件に合うマッチングがありません</p>'; return; }
 
       // 日付ごとにグループ化して表示する(件数が多くても見やすいように)
       const groups = new Map();
@@ -2275,7 +2321,7 @@
         groups.get(m.match_date).push(m);
       }
 
-      list.innerHTML = [...groups.entries()].map(([date, rows]) => {
+      listEl.innerHTML = [...groups.entries()].map(([date, rows]) => {
         const collapsed = collapsedDateGroups.has(date);
         const selectableIds = rows.filter(r => r.status === '候補' || r.status === '完了').map(r => r.id);
         const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedMatchIds.has(id));
@@ -2296,6 +2342,40 @@
             ${collapsed ? '' : `<div class="p-2 space-y-2">${rows.map(m => renderMatchCard(m)).join('')}</div>`}
           </div>
         `;
+      }).join('');
+    }
+
+    // マッチング結果を「行=店舗、列=日付」の表で表示する(ダッシュボードの店舗別グリッドと同じ見た目)。
+    // 現在の絞り込み(ステータス・日付範囲・検索語)を反映した範囲だけを表にする
+    function renderMatchesTable(filtered) {
+      const header = document.getElementById('matches-table-header');
+      const body = document.getElementById('matches-table-body');
+      if (filtered.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">条件に合うマッチングがありません</td></tr>';
+        return;
+      }
+      const dates = [...new Set(filtered.map(m => m.match_date))].sort();
+      const storeNames = [...new Set(filtered.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
+        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
+
+      body.innerHTML = storeNames.map(storeName => {
+        const cells = dates.map(d => {
+          const entries = filtered.filter(m => m.store_name === storeName && m.match_date === d);
+          if (entries.length === 0) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>`;
+          const content = entries.map(m => {
+            const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
+            return `
+              <span class="relative group block mb-0.5">
+                <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(m.driver_name)}</span>
+                <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
+              </span>`;
+          }).join('');
+          return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
+        }).join('');
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(storeName)}</td>${cells}</tr>`;
       }).join('');
     }
 
