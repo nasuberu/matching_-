@@ -38,6 +38,27 @@ const SCORE_EXPERIENCE_MAX_VISITS = 5;   // 店舗経験ボーナスの上限回
 const SCORE_AREA_EXPERIENCE_PER_VISIT = 2; // 同エリアでの過去派遣1回あたりのボーナス(配達エリアの知見)
 const SCORE_AREA_EXPERIENCE_MAX_VISITS = 5; // エリア経験ボーナスの上限回数
 
+// ベーシック認証(最低限の保護)。.envにAUTH_USER/AUTH_PASSが設定されている時だけ有効にする
+// (このPC上の開発用インスタンスは未設定のままにして、今まで通り認証無しで使える)
+const AUTH_USER = process.env.AUTH_USER;
+const AUTH_PASS = process.env.AUTH_PASS;
+if (AUTH_USER && AUTH_PASS) {
+  app.use((req, res, next) => {
+    const header = req.headers.authorization || '';
+    const [scheme, encoded] = header.split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      const sep = decoded.indexOf(':');
+      if (sep !== -1 && decoded.slice(0, sep) === AUTH_USER && decoded.slice(sep + 1) === AUTH_PASS) {
+        return next();
+      }
+    }
+    res.set('WWW-Authenticate', 'Basic realm="matching-app"');
+    res.status(401).send('認証が必要です(IDとパスワードを入力してください)');
+  });
+  console.log('🔒 ベーシック認証が有効です');
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
