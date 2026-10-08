@@ -560,6 +560,15 @@ async function getRestrictMatchingToFixedStore() {
   return row ? row.value === '1' : false;
 }
 
+// 「今日の日付」をアプリ内だけ任意の日付として扱えるようにする設定(PC本体の時刻は変更しない)。
+// 月末の運用(来月分の取込み・マッチング確認)を本番の月末を待たずに練習・確認したい時に使う想定。
+// 現時点ではマッチングや自動完了の判定自体は「今日」を使っていないため、主に画面の日付欄の初期値や
+// 「今日は◯月◯日として扱っています」という表示に使われる
+async function getMockToday() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['mock_today']);
+  return row && row.value ? row.value : null; // 'YYYY-MM-DD' または未設定ならnull(本当の今日を使う)
+}
+
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
 async function loadScoringContext() {
@@ -2085,6 +2094,25 @@ app.post('/api/settings/restrict-matching-to-fixed-store', async (req, res) => {
   const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['restrict_matching_to_fixed_store']);
   if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'restrict_matching_to_fixed_store']);
   else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['restrict_matching_to_fixed_store', value]);
+  res.json({ success: true });
+});
+
+// アプリ内だけの「今日」設定の取得/保存(PC本体の時刻はそのまま)。date が空文字/未指定なら解除(本当の今日に戻す)
+app.get('/api/settings/mock-today', async (req, res) => {
+  const mockToday = await getMockToday();
+  const now = new Date();
+  const realToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  res.json({ success: true, mockToday, realToday, today: mockToday || realToday });
+});
+app.post('/api/settings/mock-today', async (req, res) => {
+  const { date } = req.body;
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, message: 'date は YYYY-MM-DD 形式で指定してください' });
+  }
+  const value = date || '';
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['mock_today']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'mock_today']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['mock_today', value]);
   res.json({ success: true });
 });
 

@@ -663,6 +663,19 @@
 
     <!-- ダッシュボードタブ -->
     <div id="tab-dashboard" class="hidden space-y-4">
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🗓️ 今日の日付(練習用)<span id="mock-today-badge" class="hidden ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">練習日付を使用中</span></summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">PC本体の時刻は変えずに、このアプリの中だけ「今日」を別の日付として扱います。月末の作業(来月分の取込み・マッチング確認)を本番の月末を待たずに練習したい時に使ってください。画面の日付欄の初期値などに使われます(現時点では自動マッチング自体の判定には使っていません)。</p>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input type="date" id="mock-today-input" class="p-2 border rounded text-sm">
+            <button onclick="saveMockToday()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-sm">この日付にする</button>
+            <button onclick="clearMockToday()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold">本当の今日に戻す</button>
+          </div>
+          <p id="mock-today-status" class="text-xs text-slate-500"></p>
+        </div>
+      </details>
+
       <details class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🗓️ 月次クローズ(月を締めて次の月の準備をする)</summary>
         <div class="pt-3 space-y-2">
@@ -2832,6 +2845,39 @@
       loadSvSheetTable();
       loadFixedStoreChangeLog();
       loadImportBatchLog();
+      loadMockToday();
+    }
+
+    // ===== 今日の日付(練習用、アプリ内だけの「今日」) =====
+    async function loadMockToday() {
+      const res = await fetch('/api/settings/mock-today');
+      const data = await res.json();
+      document.getElementById('mock-today-input').value = data.mockToday || data.realToday;
+      const badge = document.getElementById('mock-today-badge');
+      const status = document.getElementById('mock-today-status');
+      if (data.mockToday) {
+        badge.classList.remove('hidden');
+        status.textContent = `現在、アプリ内の「今日」は ${data.mockToday} として扱われています(本当の今日は ${data.realToday})`;
+      } else {
+        badge.classList.add('hidden');
+        status.textContent = `練習日付は設定されていません(本当の今日 ${data.realToday} のまま使っています)`;
+      }
+    }
+
+    async function saveMockToday() {
+      const date = document.getElementById('mock-today-input').value;
+      if (!date) { alert('日付を選んでください'); return; }
+      await fetch('/api/settings/mock-today', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date })
+      });
+      loadMockToday();
+    }
+
+    async function clearMockToday() {
+      await fetch('/api/settings/mock-today', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: '' })
+      });
+      loadMockToday();
     }
 
     // ===== 固定希望店舗の変更履歴 =====
