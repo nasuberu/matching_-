@@ -552,6 +552,14 @@ async function getEnabledTierKeys() {
   }
 }
 
+// 自動マッチングの対象を「固定希望店舗が設定されているドライバーのみ」に絞る設定(画面からON/OFFできる)。
+// 担当者と相談の上、それ以外のドライバーは手作業で割り当てる運用に切り替えられるようにするため。
+// 初期値はOFF(従来通り全員を対象にする)
+async function getRestrictMatchingToFixedStore() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['restrict_matching_to_fixed_store']);
+  return row ? row.value === '1' : false;
+}
+
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
 async function loadScoringContext() {
@@ -1911,14 +1919,23 @@ app.post('/api/matches/run', async (req, res) => {
   // 希望シフトで店舗が未入力の場合は、ドライバーマスタの「固定希望店舗」を初期値として使う
   // desired_store_explicit: 固定希望店舗からの自動補完が入る前の、本人がその日に実際に入力した希望店舗
   // (「希望シフトで指定した店舗」の優先階層で、固定希望店舗と区別するために使う)
-  const availability = availabilityRows.map(a => ({ ...a, desired_store_explicit: a.desired_store || '', desired_store: a.desired_store || a.fixed_store_name || '' }));
+  let availability = availabilityRows.map(a => ({ ...a, desired_store_explicit: a.desired_store || '', desired_store: a.desired_store || a.fixed_store_name || '' }));
+
+  // 設定がONの場合、自動マッチングの対象を「固定希望店舗が設定されているドライバー」だけに絞る
+  // (それ以外のドライバーは候補を作らず、手作業での割当に委ねる運用)
+  const restrictToFixedStore = await getRestrictMatchingToFixedStore();
+  if (restrictToFixedStore) {
+    availability = availability.filter(a => a.fixed_store_id != null);
+  }
+
   // 実際に希望シフトを提出した(driver_id, date)の組を把握しておく(エリア固定の自動補完で、
   // 本人が別の希望を出している日を上書きしないようにするため)
   const explicitAvailabilitySet = new Set(availability.map(a => `${a.driver_id}|${a.desired_date}`));
 
   // エリア固定ドライバー(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群の中から
   // 優先的に割り当てる人)を読み込んでおく。希望シフト未提出の日だけ、このパターンから仮の候補を作る
-  const areaFixedRows = await dbAll(`
+  // (「固定希望店舗のある人だけ」の設定がONの時は、エリア固定は対象に含めない)
+  const areaFixedRows = restrictToFixedStore ? [] : await dbAll(`
     SELECT id, name, home_lat, home_lng, area_fixed_pattern, area_fixed_store_ids
     FROM drivers WHERE area_fixed_enabled = 1
   `);
@@ -2055,6 +2072,19 @@ app.post('/api/settings/priority-tiers', async (req, res) => {
   const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['priority_tiers']);
   if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'priority_tiers']);
   else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['priority_tiers', value]);
+  res.json({ success: true });
+});
+
+// 自動マッチングを「固定希望店舗が設定されているドライバーのみ」に絞る設定の取得/保存
+app.get('/api/settings/restrict-matching-to-fixed-store', async (req, res) => {
+  res.json({ success: true, enabled: await getRestrictMatchingToFixedStore() });
+});
+app.post('/api/settings/restrict-matching-to-fixed-store', async (req, res) => {
+  const { enabled } = req.body;
+  const value = enabled ? '1' : '0';
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['restrict_matching_to_fixed_store']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'restrict_matching_to_fixed_store']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['restrict_matching_to_fixed_store', value]);
   res.json({ success: true });
 });
 

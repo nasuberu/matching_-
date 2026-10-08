@@ -29,12 +29,18 @@
 
     <!-- マッチング結果タブ -->
     <div id="tab-matches" class="space-y-4">
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h2 class="font-bold text-slate-800">自動マッチング</h2>
-          <p class="text-xs text-slate-500">店舗依頼とドライバーの希望シフトから、自動で候補を作成します(自宅からの距離が30kmを超える場合は⚠️で警告表示します)</p>
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 class="font-bold text-slate-800">自動マッチング</h2>
+            <p class="text-xs text-slate-500">店舗依頼とドライバーの希望シフトから、自動で候補を作成します(自宅からの距離が30kmを超える場合は⚠️で警告表示します)</p>
+          </div>
+          <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
         </div>
-        <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
+        <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 cursor-pointer">
+          <input type="checkbox" id="restrict-fixed-store-checkbox" onchange="saveRestrictMatchingToFixedStore(this.checked)">
+          固定希望店舗が設定されているドライバーだけを自動マッチングの対象にする(エリア固定・それ以外のドライバーは手作業で割り当てる)
+        </label>
       </div>
 
       <div id="unmatched-alert" class="hidden"></div>
@@ -793,7 +799,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); }
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); }
       if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); loadIncomingFiles('dr-areafixed-folder-file'); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -2080,6 +2086,18 @@
       if (!data.success) { alert('マッチングに失敗しました: ' + (data.message || '')); return; }
       alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした(下の一覧で確認できます)` : ''}`);
       loadMatches();
+    }
+
+    async function loadRestrictMatchingToFixedStore() {
+      const res = await fetch('/api/settings/restrict-matching-to-fixed-store');
+      const data = await res.json();
+      document.getElementById('restrict-fixed-store-checkbox').checked = !!data.enabled;
+    }
+
+    async function saveRestrictMatchingToFixedStore(checked) {
+      await fetch('/api/settings/restrict-matching-to-fixed-store', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: checked })
+      });
     }
 
     // ===== マッチングの優先順位(階層)の設定 =====
