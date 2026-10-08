@@ -73,14 +73,20 @@
           <button id="match-view-table-btn" onclick="switchMatchesViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📊 表で見る</button>
           <button id="match-view-list-btn" onclick="switchMatchesViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📋 リストで見る</button>
         </div>
-        <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
-          <option value="候補">候補(確認待ち)</option>
-          <option value="確定">確定</option>
-          <option value="完了">完了</option>
-          <option value="欠勤">欠勤</option>
-          <option value="変更">変更</option>
-          <option value="">すべて</option>
-        </select>
+        <div id="match-table-row-mode-controls" class="flex gap-1.5 items-center">
+          <button id="match-table-row-store-btn" onclick="switchMatchesTableRowMode('store')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">店舗別</button>
+          <button id="match-table-row-driver-btn" onclick="switchMatchesTableRowMode('driver')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">ドライバー別</button>
+        </div>
+        <span id="match-status-filter-wrap">
+          <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
+            <option value="候補">候補(確認待ち)</option>
+            <option value="確定">確定</option>
+            <option value="完了">完了</option>
+            <option value="欠勤">欠勤</option>
+            <option value="変更">変更</option>
+            <option value="">すべて</option>
+          </select>
+        </span>
         <input type="date" id="match-filter-date-from" onchange="renderMatchesList()" class="p-2 border rounded text-sm" title="この日から">
         <span class="text-xs text-slate-400">〜</span>
         <input type="date" id="match-filter-date-to" onchange="renderMatchesList()" class="p-2 border rounded text-sm" title="この日まで">
@@ -99,6 +105,7 @@
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-50 border border-dashed border-amber-300"></span>未定(依頼/希望の時間のみ)</span>
       </div>
 
       <div id="match-bulk-bar" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center gap-2 flex-wrap sticky top-[52px] z-20 shadow">
@@ -2189,6 +2196,9 @@
     let selectedMatchIds = new Set();   // 一括確定のためにチェックを入れているmatch id
     let collapsedDateGroups = new Set(); // 畳んでいる日付グループ(match_date文字列)
     let matchesViewMode = 'table'; // 'table'(店舗×日付の表)か'list'(確定・削除等の操作ができる一覧)
+    let matchesTableRowMode = 'store'; // 表モードの時、行を'store'(店舗別)にするか'driver'(ドライバー別)にするか
+    let matchesStoreRequestsCache = []; // 表モードで「空欄に依頼時間を出す」ために使う店舗依頼一覧
+    let matchesAvailabilityCache = [];  // 表モード(ドライバー別)で「空欄に希望時間を出す」ために使う希望シフト一覧
 
     function switchMatchesViewMode(mode) {
       matchesViewMode = mode;
@@ -2197,10 +2207,21 @@
       renderMatchesList();
     }
 
+    function switchMatchesTableRowMode(mode) {
+      matchesTableRowMode = mode;
+      document.getElementById('match-table-row-store-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'store' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('match-table-row-driver-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      renderMatchesList();
+    }
+
     async function loadMatches() {
-      const res = await fetch('/api/matches');
+      const [res, srRes, avRes] = await Promise.all([
+        fetch('/api/matches'), fetch('/api/store-requests'), fetch('/api/driver-availability')
+      ]);
       const data = await res.json();
       matchesCache = data.matches || [];
+      matchesStoreRequestsCache = (await srRes.json()).requests || [];
+      matchesAvailabilityCache = (await avRes.json()).availability || [];
       renderMatchesList();
       loadUnmatchedAlert();
     }
@@ -2264,7 +2285,7 @@
       }
     }
 
-    // フィルタ条件(ステータス・日付範囲・検索語)に合うマッチングだけを返す
+    // フィルタ条件(ステータス・日付範囲・検索語)に合うマッチングだけを返す(リスト表示用)
     function getFilteredMatches() {
       const statusEl = document.getElementById('match-filter-status');
       const status = statusEl ? statusEl.value : '候補';
@@ -2276,6 +2297,45 @@
         if (dateFrom && m.match_date < dateFrom) return false;
         if (dateTo && m.match_date > dateTo) return false;
         if (search && !normalizeForSearch(`${m.store_name} ${m.driver_name}`).includes(search)) return false;
+        return true;
+      });
+    }
+
+    // 表モード用: ステータスは問わず(色分けで表現するため)、日付範囲・検索語だけで絞り込む。
+    // ダッシュボードの全体俯瞰グリッドと同じ考え方で、表モードは常に全ステータスの実態を映す
+    function getFilteredMatchesForTable() {
+      const dateFrom = document.getElementById('match-filter-date-from')?.value || '';
+      const dateTo = document.getElementById('match-filter-date-to')?.value || '';
+      const search = normalizeForSearch(document.getElementById('match-filter-search')?.value || '');
+      return matchesCache.filter(m => {
+        if (dateFrom && m.match_date < dateFrom) return false;
+        if (dateTo && m.match_date > dateTo) return false;
+        if (search && !normalizeForSearch(`${m.store_name} ${m.driver_name}`).includes(search)) return false;
+        return true;
+      });
+    }
+
+    // 表モード用に、店舗依頼・希望シフトも同じ日付範囲・検索語で絞り込む(空欄セルに時間を出すため)
+    function getFilteredStoreRequestsForTable() {
+      const dateFrom = document.getElementById('match-filter-date-from')?.value || '';
+      const dateTo = document.getElementById('match-filter-date-to')?.value || '';
+      const search = normalizeForSearch(document.getElementById('match-filter-search')?.value || '');
+      return matchesStoreRequestsCache.filter(r => {
+        if (dateFrom && r.request_date < dateFrom) return false;
+        if (dateTo && r.request_date > dateTo) return false;
+        if (search && !normalizeForSearch(r.store_name).includes(search)) return false;
+        return true;
+      });
+    }
+
+    function getFilteredAvailabilityForTable() {
+      const dateFrom = document.getElementById('match-filter-date-from')?.value || '';
+      const dateTo = document.getElementById('match-filter-date-to')?.value || '';
+      const search = normalizeForSearch(document.getElementById('match-filter-search')?.value || '');
+      return matchesAvailabilityCache.filter(a => {
+        if (dateFrom && a.desired_date < dateFrom) return false;
+        if (dateTo && a.desired_date > dateTo) return false;
+        if (search && !normalizeForSearch(a.driver_name).includes(search)) return false;
         return true;
       });
     }
@@ -2293,11 +2353,15 @@
       const tableWrap = document.getElementById('matches-table-wrap');
       const legend = document.getElementById('match-table-legend');
       const listOnlyControls = document.getElementById('match-list-only-controls');
+      const statusFilterWrap = document.getElementById('match-status-filter-wrap');
+      const rowModeControls = document.getElementById('match-table-row-mode-controls');
       const isTable = matchesViewMode === 'table';
       listEl.classList.toggle('hidden', isTable);
       tableWrap.classList.toggle('hidden', !isTable);
       legend.classList.toggle('hidden', !isTable);
       listOnlyControls.classList.toggle('hidden', isTable);
+      rowModeControls.classList.toggle('hidden', !isTable);
+      statusFilterWrap.classList.toggle('hidden', isTable); // 表モードは色分けで全ステータスを表すため、ステータス絞り込みは使わない
       document.getElementById('match-bulk-bar').classList.toggle('hidden', isTable); // 表モードでは選択の概念が無いため常に隠す
 
       if (matchesCache.length === 0) {
@@ -2308,9 +2372,9 @@
         return;
       }
 
-      const filtered = getFilteredMatches().sort((a, b) => a.match_date.localeCompare(b.match_date) || a.store_name.localeCompare(b.store_name));
-      if (isTable) { renderMatchesTable(filtered); return; }
+      if (isTable) { renderMatchesTable(); return; }
 
+      const filtered = getFilteredMatches().sort((a, b) => a.match_date.localeCompare(b.match_date) || a.store_name.localeCompare(b.store_name));
       renderMatchBulkBar();
       if (filtered.length === 0) { listEl.innerHTML = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">条件に合うマッチングがありません</p>'; return; }
 
@@ -2345,37 +2409,139 @@
       }).join('');
     }
 
-    // マッチング結果を「行=店舗、列=日付」の表で表示する(ダッシュボードの店舗別グリッドと同じ見た目)。
-    // 現在の絞り込み(ステータス・日付範囲・検索語)を反映した範囲だけを表にする
-    function renderMatchesTable(filtered) {
+    // マッチング結果を表(店舗別 or ドライバー別)で表示する。現在の日付範囲・検索語を反映する
+    // (ステータス絞り込みは使わず、常に全ステータスを対象にして色分けで表す。ダッシュボードの考え方と同じ)
+    function renderMatchesTable() {
+      const matches = getFilteredMatchesForTable();
+      if (matchesTableRowMode === 'driver') {
+        renderMatchesDriverTable(matches, getFilteredAvailabilityForTable());
+      } else {
+        renderMatchesStoreTable(matches, getFilteredStoreRequestsForTable());
+      }
+    }
+
+    function matchCellHtml(m, label) {
+      const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
+      return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">
+        <span class="relative group block mb-0.5">
+          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(label)}</span>
+          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
+        </span>
+      </td>`;
+    }
+
+    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel) {
+      const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
+      return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">
+        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700">${label}</span>
+      </td>`;
+    }
+
+    const emptyCellHtml = '<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>';
+
+    // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
+    // 店舗依頼の時間を薄く表示する(「-」ではなく、何時から何時まで何人ほしいかが一目で分かるように)
+    function renderMatchesStoreTable(matches, storeRequests) {
       const header = document.getElementById('matches-table-header');
       const body = document.getElementById('matches-table-body');
-      if (filtered.length === 0) {
+      // 行は「実際にマッチングが1件以上ある店舗」に限る(依頼はあるが候補すら無い店舗は
+      // 「⚠️ 候補が見つからない店舗依頼」の方で確認する設計のため、表が際限なく広がらないようにする)
+      const storeNames = [...new Set(matches.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      if (storeNames.length === 0) {
         header.innerHTML = '';
         body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">条件に合うマッチングがありません</td></tr>';
         return;
       }
-      const dates = [...new Set(filtered.map(m => m.match_date))].sort();
-      const storeNames = [...new Set(filtered.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      const dates = [...new Set([...matches.map(m => m.match_date), ...storeRequests.map(r => r.request_date)])].sort();
+
+      const requestsByStoreDate = new Map(); // "店舗名|日付" -> 店舗依頼の行配列(時間帯違いが複数あり得る)
+      for (const r of storeRequests) {
+        const key = `${r.store_name}|${r.request_date}`;
+        if (!requestsByStoreDate.has(key)) requestsByStoreDate.set(key, []);
+        requestsByStoreDate.get(key).push(r);
+      }
+      const matchesByRequestId = new Map(); // store_request_id -> マッチ配列(必要人数分、複数あり得る)
+      for (const m of matches) {
+        if (!matchesByRequestId.has(m.store_request_id)) matchesByRequestId.set(m.store_request_id, []);
+        matchesByRequestId.get(m.store_request_id).push(m);
+      }
+
+      // 店舗・日付ごとに「必要枠(時間帯+埋まっているならそのマッチ)」のリストを作り、店舗ごとの最大枠数を行数にする
+      const slotsByStoreDate = new Map();
+      const maxSlotsByStore = new Map();
+      for (const storeName of storeNames) {
+        let maxSlots = 1;
+        for (const d of dates) {
+          const key = `${storeName}|${d}`;
+          const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
+          let slots = [];
+          for (const r of reqs) {
+            const ms = matchesByRequestId.get(r.id) || [];
+            const count = Math.max(r.required_count || 1, ms.length);
+            for (let i = 0; i < count; i++) slots.push({ time_start: r.time_start, time_end: r.time_end, match: ms[i] || null });
+          }
+          if (reqs.length === 0) {
+            // 店舗依頼データが絞り込みで見えない・未登録などの場合でも、マッチ自体は出す
+            slots = matches.filter(m => m.store_name === storeName && m.match_date === d).map(m => ({ time_start: m.time_start, time_end: m.time_end, match: m }));
+          }
+          slotsByStoreDate.set(key, slots);
+          maxSlots = Math.max(maxSlots, slots.length);
+        }
+        maxSlotsByStore.set(storeName, maxSlots);
+      }
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
         dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
 
-      body.innerHTML = storeNames.map(storeName => {
-        const cells = dates.map(d => {
-          const entries = filtered.filter(m => m.store_name === storeName && m.match_date === d);
-          if (entries.length === 0) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>`;
-          const content = entries.map(m => {
-            const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
-            return `
-              <span class="relative group block mb-0.5">
-                <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(m.driver_name)}</span>
-                <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
-              </span>`;
+      const rowsHtml = [];
+      for (const storeName of storeNames) {
+        const maxSlots = maxSlotsByStore.get(storeName);
+        for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
+          const rowLabel = maxSlots > 1 ? `${storeName}(${slotIndex + 1}人目)` : storeName;
+          const cells = dates.map(d => {
+            const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
+            if (!slot) return emptyCellHtml;
+            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name);
+            return placeholderCellHtml(slot.time_start, slot.time_end, '未定');
           }).join('');
-          return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
+        }
+      }
+      body.innerHTML = rowsHtml.join('');
+    }
+
+    // 行=ドライバー、列=日付。空欄には、その日に希望シフトは出しているがマッチしていない場合に
+    // その希望時間を薄く表示する(1人が同じ日に2件マッチすることは無い前提なので、行分けは不要)
+    function renderMatchesDriverTable(matches, availability) {
+      const header = document.getElementById('matches-table-header');
+      const body = document.getElementById('matches-table-body');
+      const driverIds = [...new Set(matches.map(m => m.driver_id))];
+      if (driverIds.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">条件に合うマッチングがありません</td></tr>';
+        return;
+      }
+      const driverNameById = new Map(matches.map(m => [m.driver_id, m.driver_name]));
+      const driverIdsSorted = driverIds.sort((a, b) => driverNameById.get(a).localeCompare(driverNameById.get(b), 'ja'));
+      const dates = [...new Set([...matches.map(m => m.match_date), ...availability.map(a => a.desired_date)])].sort();
+
+      const matchByDriverDate = new Map(); // "driver_id|date" -> match(1人1日最大1件の前提)
+      for (const m of matches) matchByDriverDate.set(`${m.driver_id}|${m.match_date}`, m);
+      const availByDriverDate = new Map();
+      for (const a of availability) availByDriverDate.set(`${a.driver_id}|${a.desired_date}`, a);
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky left-0 z-10 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
+        dates.map(d => `<th class="p-2 text-xs text-slate-500 border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
+
+      body.innerHTML = driverIdsSorted.map(driverId => {
+        const cells = dates.map(d => {
+          const m = matchByDriverDate.get(`${driverId}|${d}`);
+          if (m) return matchCellHtml(m, m.store_name);
+          const avail = availByDriverDate.get(`${driverId}|${d}`);
+          if (avail) return placeholderCellHtml(avail.time_start, avail.time_end, '希望あり');
+          return emptyCellHtml;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(storeName)}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;
       }).join('');
     }
 
