@@ -10,7 +10,10 @@
 
   <header class="bg-slate-900 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40 shadow">
     <h1 class="font-bold text-base">🤝 軽車両ドライバー × 店舗 マッチング</h1>
-    <span class="text-[11px] text-slate-400">Ver1(試作)</span>
+    <div class="flex items-center gap-2">
+      <span id="header-today-display" class="text-[11px] text-slate-300"></span>
+      <span class="text-[11px] text-slate-400">Ver1(試作)</span>
+    </div>
   </header>
 
   <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-30">
@@ -2852,15 +2855,31 @@
     async function loadMockToday() {
       const res = await fetch('/api/settings/mock-today');
       const data = await res.json();
-      document.getElementById('mock-today-input').value = data.mockToday || data.realToday;
+      updateHeaderTodayDisplay(data);
+
+      // ダッシュボードタブの設定パネルがまだ無い(他のタブを開いている)場合もあるので、存在チェックしてから更新する
+      const input = document.getElementById('mock-today-input');
       const badge = document.getElementById('mock-today-badge');
       const status = document.getElementById('mock-today-status');
+      if (!input || !badge || !status) return;
+      input.value = data.mockToday || data.realToday;
       if (data.mockToday) {
         badge.classList.remove('hidden');
         status.textContent = `現在、アプリ内の「今日」は ${data.mockToday} として扱われています(本当の今日は ${data.realToday})`;
       } else {
         badge.classList.add('hidden');
         status.textContent = `練習日付は設定されていません(本当の今日 ${data.realToday} のまま使っています)`;
+      }
+    }
+
+    // ページ上部のヘッダーに、常に「今日」(練習日付が設定されていればそちら)を表示する
+    function updateHeaderTodayDisplay(data) {
+      const el = document.getElementById('header-today-display');
+      if (!el) return;
+      if (data.mockToday) {
+        el.innerHTML = `📅 ${esc(withWeekday(data.mockToday))} <span class="text-amber-400 font-bold">(練習日付・本当は${esc(data.realToday)})</span>`;
+      } else {
+        el.textContent = `📅 ${withWeekday(data.today)}`;
       }
     }
 
@@ -3382,6 +3401,7 @@
     }
 
     switchTab('matches');
+    loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
   </script>
 </body>
 </html>
