@@ -194,7 +194,7 @@
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
           <thead class="sticky top-0 z-10 bg-white">
-            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+            <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
               <th class="p-2.5 bg-white"><input type="checkbox" id="sm-select-all" onchange="toggleSelectAllStores(this.checked)"></th>
               <th class="p-2.5 bg-white">店番</th>
               <th class="p-2.5 bg-white">店舗名</th>
@@ -402,7 +402,7 @@
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
           <thead class="sticky top-0 z-10 bg-white">
-            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+            <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
               <th class="p-2.5 bg-white"><input type="checkbox" id="dr-select-all" onchange="toggleSelectAllDrivers(this.checked)"></th>
               <th class="p-2.5 bg-white">社員コード</th>
               <th class="p-2.5 bg-white">氏名</th>
@@ -511,7 +511,7 @@
       <div id="av-list-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
           <thead class="sticky top-0 z-10 bg-white">
-            <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
+            <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
               <th class="p-2.5 bg-white">社員コード</th>
               <th class="p-2.5 bg-white">ドライバー名</th>
               <th class="p-2.5 bg-white">希望日</th>
@@ -934,7 +934,7 @@
         tbody.innerHTML = `<tr><td colspan="14" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
       } else {
         tbody.innerHTML = rows.map(d => `
-          <tr class="border-b border-slate-100 last:border-0 align-top">
+          <tr class="border-b divide-x divide-slate-100 border-slate-100 last:border-0 align-top">
             <td class="p-2.5"><input type="checkbox" ${selectedDriverIds.has(d.id) ? 'checked' : ''} onchange="toggleDriverSelect(${d.id}, this.checked)"></td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.driver_code || '-')}</td>
             <td class="p-2.5 font-bold">${esc(d.name)}</td>
@@ -1181,7 +1181,7 @@
         tbody.innerHTML = `<tr><td colspan="9" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する店舗が見つかりません' : 'まだ登録されていません(店舗依頼を登録すると自動でも追加されます)'}</td></tr>`;
       } else {
         tbody.innerHTML = rows.map(s => `
-          <tr class="border-b border-slate-100 last:border-0 align-top">
+          <tr class="border-b divide-x divide-slate-100 border-slate-100 last:border-0 align-top">
             <td class="p-2.5"><input type="checkbox" ${selectedStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleStoreSelect(${s.id}, this.checked)"></td>
             <td class="p-2.5 text-xs text-slate-500">${esc(s.store_code || '-')}</td>
             <td class="p-2.5 font-bold">${esc(s.name)}</td>
@@ -1472,7 +1472,7 @@
       const header = document.getElementById('av-grid-header');
       const body = document.getElementById('av-grid-body');
       const keyword = normalizeForSearch(document.getElementById('av-search').value.trim());
-      const rows = keyword ? availabilityCache.filter(a => normalizeForSearch(a.driver_name).includes(keyword)) : availabilityCache;
+      const rows = keyword ? availabilityCache.filter(a => normalizeForSearch(a.driver_name).includes(keyword) || normalizeForSearch(a.driver_code).includes(keyword)) : availabilityCache;
       if (rows.length === 0) {
         header.innerHTML = '';
         body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</td></tr>';
@@ -1480,18 +1480,32 @@
       }
       const dates = [...new Set(rows.map(a => a.desired_date))].sort();
       const names = [...new Set(rows.map(a => a.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      // 左端に固定する3列(社員コード・氏名・出勤希望回数)の幅と、それぞれの左端からの位置(px)
+      const CODE_W = 90, NAME_W = 110, COUNT_W = 64;
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">氏名</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(d.slice(5))}(${WEEKDAY_JP[new Date(d + 'T00:00:00').getDay()]})</th>`).join('');
+      header.innerHTML = `
+        <th style="width:${CODE_W}px;left:0" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap">社員コード</th>
+        <th style="width:${NAME_W}px;left:${CODE_W}px" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap">氏名</th>
+        <th style="width:${COUNT_W}px;left:${CODE_W + NAME_W}px" class="p-2 text-right text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)]">希望回数</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(d.slice(5))}(${WEEKDAY_JP[new Date(d + 'T00:00:00').getDay()]})</th>`).join('');
 
       body.innerHTML = names.map(name => {
+        const driverRows = rows.filter(a => a.driver_name === name);
+        const code = driverRows[0]?.driver_code || '-';
+        const count = driverRows.length;
         const cells = dates.map(d => {
-          const entry = rows.find(a => a.driver_name === name && a.desired_date === d);
-          if (!entry) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">休み</td>`;
+          const entry = driverRows.find(a => a.desired_date === d);
+          const bg = dateHighlightBg(d);
+          if (!entry) return `<td class="p-2 border border-slate-100 text-center text-slate-300 ${bg}">休み</td>`;
           const label = entry.time_start && entry.time_end ? `${entry.time_start}〜${entry.time_end}` : (entry.time_start || entry.time_end || '○');
-          return `<td class="p-1.5 border-b border-slate-100 text-center whitespace-nowrap"><span class="inline-block text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">${esc(label)}</span></td>`;
+          return `<td class="p-1.5 border border-slate-100 text-center whitespace-nowrap ${bg}"><span class="inline-block text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">${esc(label)}</span></td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(name)}</td>${cells}</tr>`;
+        return `<tr>
+          <td style="width:${CODE_W}px;left:0" class="p-2 text-xs text-slate-500 sticky z-10 bg-white border border-slate-100 whitespace-nowrap">${esc(code)}</td>
+          <td style="width:${NAME_W}px;left:${CODE_W}px" class="p-2 font-bold text-sm sticky z-10 bg-white border border-slate-100 whitespace-nowrap">${esc(name)}</td>
+          <td style="width:${COUNT_W}px;left:${CODE_W + NAME_W}px" class="p-2 text-right text-xs text-slate-500 sticky z-10 bg-white border border-slate-100 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)]">${count}日</td>
+          ${cells}
+        </tr>`;
       }).join('');
     }
 
@@ -1532,7 +1546,7 @@
       tbody.innerHTML = rows.map(a => {
         const monthlyCount = monthlyCountByDriverMonth.get(`${a.driver_id}|${a.desired_date.slice(0, 7)}`) || 0;
         return `
-        <tr class="border-b border-slate-100 last:border-0 align-top">
+        <tr class="border-b divide-x divide-slate-100 border-slate-100 last:border-0 align-top">
           <td class="p-2.5 text-xs text-slate-500">${esc(a.driver_code || '-')}</td>
           <td class="p-2.5 font-bold">${esc(a.driver_name)}</td>
           <td class="p-2.5 text-xs font-bold ${dateHighlightClass(a.desired_date)}">${esc(withWeekday(a.desired_date))}</td>
@@ -2380,9 +2394,9 @@
       }
     }
 
-    function matchCellHtml(m, label) {
+    function matchCellHtml(m, label, date) {
       const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
-      return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">
+      return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
           <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(label)}</span>
           <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
@@ -2390,14 +2404,16 @@
       </td>`;
     }
 
-    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel) {
+    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date) {
       const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
-      return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">
+      return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700">${label}</span>
       </td>`;
     }
 
-    const emptyCellHtml = '<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>';
+    function emptyCellHtml(date) {
+      return `<td class="p-2 border border-slate-100 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
+    }
 
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
     // 店舗依頼の時間を薄く表示する(「-」ではなく、何時から何時まで何人ほしいかが一目で分かるように)
@@ -2450,8 +2466,8 @@
         maxSlotsByStore.set(storeName, maxSlots);
       }
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       const rowsHtml = [];
       for (const storeName of storeNames) {
@@ -2460,11 +2476,11 @@
           const rowLabel = maxSlots > 1 ? `${storeName}(${slotIndex + 1}人目)` : storeName;
           const cells = dates.map(d => {
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
-            if (!slot) return emptyCellHtml;
-            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name);
-            return placeholderCellHtml(slot.time_start, slot.time_end, '未定');
+            if (!slot) return emptyCellHtml(d);
+            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d);
+            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d);
           }).join('');
-          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
         }
       }
       body.innerHTML = rowsHtml.join('');
@@ -2490,18 +2506,18 @@
       const availByDriverDate = new Map();
       for (const a of availability) availByDriverDate.set(`${a.driver_id}|${a.desired_date}`, a);
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = driverIdsSorted.map(driverId => {
         const cells = dates.map(d => {
           const m = matchByDriverDate.get(`${driverId}|${d}`);
-          if (m) return matchCellHtml(m, m.store_name);
+          if (m) return matchCellHtml(m, m.store_name, d);
           const avail = availByDriverDate.get(`${driverId}|${d}`);
-          if (avail) return placeholderCellHtml(avail.time_start, avail.time_end, '希望あり');
-          return emptyCellHtml;
+          if (avail) return placeholderCellHtml(avail.time_start, avail.time_end, '希望あり', d);
+          return emptyCellHtml(d);
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;
       }).join('');
     }
 
@@ -2775,6 +2791,15 @@
       const dow = new Date(dateStr + 'T00:00:00').getDay();
       if (dow === 0 || isJapaneseHoliday(dateStr)) return 'text-red-600';
       if (dow === 6) return 'text-blue-600';
+      return '';
+    }
+
+    // 日付の列全体を薄く色分けするための背景色クラス(日曜/祝日は薄い赤、土曜は薄い青)
+    function dateHighlightBg(dateStr) {
+      if (!dateStr) return '';
+      const dow = new Date(dateStr + 'T00:00:00').getDay();
+      if (dow === 0 || isJapaneseHoliday(dateStr)) return 'bg-red-50';
+      if (dow === 6) return 'bg-blue-50';
       return '';
     }
 
@@ -3188,13 +3213,14 @@
         return;
       }
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = rows.map(rowName => {
         const cells = dates.map(d => {
+          const bg = dateHighlightBg(d);
           const entries = matches.filter(m => m[rowKey] === rowName && m.match_date === d);
-          if (entries.length === 0) return `<td class="p-2 border-b border-slate-100 text-center text-slate-300">-</td>`;
+          if (entries.length === 0) return `<td class="p-2 border border-slate-100 text-center text-slate-300 ${bg}">-</td>`;
           const content = entries.map(m => {
             const other = dashboardView === 'store' ? m.driver_name : m.store_name;
             const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
@@ -3204,9 +3230,9 @@
                 <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
               </span>`;
           }).join('');
-          return `<td class="p-1.5 border-b border-slate-100 min-w-[110px] align-top">${content}</td>`;
+          return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${bg}">${content}</td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border-b border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
       }).join('');
     }
 
