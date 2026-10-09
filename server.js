@@ -245,6 +245,9 @@ db.serialize(() => {
   ensureColumn('matches', 'experience_count', 'INTEGER DEFAULT 0');
   ensureColumn('matches', 'absence_reason', 'TEXT');
   ensureColumn('matches', 'replaced_by_match_id', 'INTEGER');
+  // 'auto'(自動マッチングで作成)か'manual'(マッチング・結果画面の空き枠右クリックから手動で割り当て)かの区別。
+  // 画面側で色分けして見分けられるようにするために使う
+  ensureColumn('matches', 'created_via', "TEXT DEFAULT 'auto'");
   ensureColumn('stores', 'manager_name', 'TEXT'); // 店舗担当者(店長)
   ensureColumn('stores', 'sv_name', 'TEXT');      // SV(スーパーバイザー)
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
@@ -2498,6 +2501,49 @@ app.post('/api/settings/mock-today', async (req, res) => {
   if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'mock_today']);
   else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['mock_today', value]);
   res.json({ success: true });
+});
+
+// マッチング・結果の表で、空いている枠を右クリック→候補のドライバーをクリックした時に呼ばれる、
+// その場で1件だけ手動でマッチングを作る専用エンドポイント(自動マッチングの候補生成ロジックは経由しない)。
+// 同日の二重割当・必要人数を超えての割当(プール需要の合計も含む)を防ぐチェックのみ行う
+app.post('/api/matches/manual', async (req, res) => {
+  const store_request_id = parseInt(req.body.store_request_id, 10);
+  const driver_id = parseInt(req.body.driver_id, 10);
+  if (!store_request_id || !driver_id) return res.status(400).json({ success: false, message: 'store_request_id, driver_id は必須です' });
+
+  const storeReq = await dbGet('SELECT * FROM store_requests WHERE id = ?', [store_request_id]);
+  if (!storeReq) return res.status(404).json({ success: false, message: '店舗依頼が見つかりません' });
+  const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [driver_id]);
+  if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
+
+  const already = await dbGet(
+    `SELECT 1 FROM matches WHERE driver_id = ? AND match_date = ? AND status != '欠勤' AND archived_month IS NULL`,
+    [driver_id, storeReq.request_date]
+  );
+  if (already) return res.status(400).json({ success: false, message: 'このドライバーは同じ日に既に別の割り当てがあります' });
+
+  // プール需要(候補店舗のどれか1つで合計必要人数が埋まればよい需要)の場合は、グループ全体で
+  // 既に必要人数に達していないか確認する。通常の依頼は自分自身の件数だけで確認する
+  const siblingIds = storeReq.pool_group_id
+    ? (await dbAll('SELECT id FROM store_requests WHERE pool_group_id = ?', [storeReq.pool_group_id])).map(s => s.id)
+    : [store_request_id];
+  const filled = await dbGet(
+    `SELECT COUNT(*) AS c FROM matches WHERE store_request_id IN (${siblingIds.map(() => '?').join(',')}) AND status IN ('候補', '確定', '完了') AND archived_month IS NULL`,
+    siblingIds
+  );
+  if (filled.c >= (storeReq.required_count || 1)) {
+    return res.status(400).json({ success: false, message: 'この店舗依頼は既に必要人数が埋まっています' });
+  }
+
+  const hasCoords = driver.home_lat != null && driver.home_lng != null && storeReq.lat != null && storeReq.lng != null;
+  const distance = hasCoords ? haversineKm(driver.home_lat, driver.home_lng, storeReq.lat, storeReq.lng) : null;
+  const isFar = distance != null && distance > DIST_WARNING_KM;
+  const now = new Date().toISOString();
+  const result = await dbRun(
+    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, created_via) VALUES (?, ?, ?, ?, ?, '候補', ?, 'manual')`,
+    [store_request_id, driver_id, storeReq.request_date, distance, isFar ? 1 : 0, now]
+  );
+  res.json({ success: true, id: result.lastID });
 });
 
 app.post('/api/matches/:id/confirm', async (req, res) => {

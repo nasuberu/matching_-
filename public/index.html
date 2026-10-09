@@ -38,7 +38,10 @@
             <h2 class="font-bold text-slate-800">自動マッチング</h2>
             <p class="text-xs text-slate-500">店舗依頼とドライバーの希望シフトから、自動で候補を作成します(自宅からの距離が30kmを超える場合は⚠️で警告表示します)</p>
           </div>
-          <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
+          <div class="flex gap-2 items-center flex-wrap">
+            <button onclick="runMatching()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">⚡ 自動マッチングを実行</button>
+            <button onclick="confirmAllMatches()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-lg text-sm shadow">✅ 候補を全て確定にする</button>
+          </div>
         </div>
         <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 cursor-pointer">
           <input type="checkbox" id="restrict-fixed-store-checkbox" onchange="saveRestrictMatchingToFixedStore(this.checked)">
@@ -108,7 +111,8 @@
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-50 border border-dashed border-amber-300"></span>未定(依頼/希望の時間のみ)</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-50 border border-dashed border-amber-300"></span>未定(依頼/希望の時間のみ、右クリックで割当可)</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-purple-400"></span>手動で割当て(右クリック)</span>
       </div>
 
       <div id="match-bulk-bar" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-center gap-2 flex-wrap sticky top-[52px] z-20 shadow">
@@ -672,10 +676,9 @@
 
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
         <h2 class="font-bold text-slate-800">📨 シフト表の送付</h2>
-        <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、まず一括で確定してください。</p>
+        <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、先に「マッチング・結果」タブで一括確定してください。</p>
         <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、固定希望店舗の候補としてドライバーマスタ画面に表示されます(ドライバーマスタは自動では書き換わりません。採用したい場合は画面から手動で操作してください)</p>
         <div class="flex gap-2 items-center flex-wrap">
-          <button onclick="confirmAllMatches()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">✅ 候補を全て確定にする</button>
           <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
           <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
         </div>
@@ -756,6 +759,9 @@
     </div>
 
   </main>
+
+  <!-- マッチング・結果の表で、空き枠を右クリックした時に出す「その日に希望シフトを出しているドライバー」一覧 -->
+  <div id="manual-assign-menu" class="hidden fixed z-50 bg-white rounded-lg shadow-xl border border-slate-300 text-sm max-h-72 overflow-y-auto min-w-[160px]"></div>
 
   <script>
     let driversCache = [];
@@ -2478,23 +2484,73 @@
 
     function matchCellHtml(m, label, date) {
       const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
+      // 手動で割り当てた人(右クリックからの割当)は、自動マッチングで決まった人と見分けられるよう枠を付ける
+      const manualRing = m.created_via === 'manual' ? 'ring-2 ring-purple-400' : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
-          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(label)}</span>
-          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
+          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)} ${manualRing}">${esc(label)}</span>
+          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}${m.created_via === 'manual' ? ' ／ 手動割当' : ''}</span>
         </span>
       </td>`;
     }
 
-    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date) {
+    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date, requestId) {
       const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
+      // requestIdがある(=実在する店舗依頼の空き枠)場合だけ、右クリックで「その日に希望シフトを
+      // 出しているドライバー」を一覧表示し、クリックで直接割り当てられるようにする
+      const rightClickAttr = requestId ? `oncontextmenu="return showManualAssignMenu(event, ${requestId}, '${date}')"` : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
-        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700">${label}</span>
+        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700 ${requestId ? 'cursor-context-menu' : ''}" ${rightClickAttr} title="${requestId ? '右クリックでその日に希望シフトを出しているドライバーを割り当てられます' : ''}">${label}</span>
       </td>`;
     }
 
     function emptyCellHtml(date) {
       return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
+    }
+
+    // 空いている枠(placeholderCellHtml)を右クリックした時に、その日に希望シフトを出していて
+    // まだ何にも割り当てられていないドライバーを一覧表示する(クリックでそのままそこに割り当てる)
+    function showManualAssignMenu(event, storeRequestId, date) {
+      event.preventDefault();
+      const menu = document.getElementById('manual-assign-menu');
+      // 既にその日に何かしら割り当て済み(欠勤は除く)のドライバーは、二重登録を避けるため候補から外す
+      const bookedDriverIds = new Set(
+        matchesCache.filter(m => m.match_date === date && m.status !== '欠勤').map(m => m.driver_id)
+      );
+      const candidates = matchesAvailabilityCache
+        .filter(a => a.desired_date === date && !bookedDriverIds.has(a.driver_id))
+        .sort((a, b) => a.driver_name.localeCompare(b.driver_name, 'ja'));
+
+      if (candidates.length === 0) {
+        menu.innerHTML = `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません</div>`;
+      } else {
+        menu.innerHTML = `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者</div>` +
+          candidates.map(a => `
+            <button onclick="assignDriverToRequest(${storeRequestId}, ${a.driver_id})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
+              ${esc(a.driver_name)} <span class="text-slate-400">${esc(a.time_start || '')}〜${esc(a.time_end || '')}</span>
+            </button>
+          `).join('');
+      }
+      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 240)}px`;
+      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
+      menu.classList.remove('hidden');
+      return false; // ブラウザ標準の右クリックメニューを出さない
+    }
+
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('manual-assign-menu');
+      if (!menu.classList.contains('hidden') && !menu.contains(e.target)) menu.classList.add('hidden');
+    });
+
+    async function assignDriverToRequest(storeRequestId, driverId) {
+      document.getElementById('manual-assign-menu').classList.add('hidden');
+      const res = await fetch('/api/matches/manual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_request_id: storeRequestId, driver_id: driverId })
+      });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
+      loadMatches();
     }
 
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
@@ -2542,7 +2598,7 @@
           for (const r of reqs) {
             const ms = matchesByRequestId.get(r.id) || [];
             const count = Math.max(r.required_count || 1, ms.length);
-            for (let i = 0; i < count; i++) slots.push({ time_start: r.time_start, time_end: r.time_end, match: ms[i] || null });
+            for (let i = 0; i < count; i++) slots.push({ time_start: r.time_start, time_end: r.time_end, match: ms[i] || null, requestId: r.id });
           }
           if (reqs.length === 0) {
             // 店舗依頼データが絞り込みで見えない・未登録などの場合でも、マッチ自体は出す
@@ -2569,7 +2625,7 @@
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return emptyCellHtml(d);
             if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d);
-            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d);
+            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId);
           }).join('');
           rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
@@ -3475,7 +3531,7 @@
       { category: 'マッチング・結果', title: '空き状況を単独で調べたい', body:
         '「🔍 空き状況を調べる(単独検索)」で、既存のマッチングとは無関係に「その日に誰が空いているか」をすぐ調べられます。店舗を指定すると距離・相性・経験を加味したスコア順、指定しなければ全員を氏名順に表示します。' },
       { category: 'マッチング・結果', title: 'シフト表を個人事業主・店舗に送りたい', body:
-        'ダッシュボードの「📨 シフト表の送付」から、「候補を全て確定にする」→「個人事業主向け シフト表」「店舗向け シフト表」のExcelボタンでそれぞれ一括ダウンロードできます(1人/1店舗ごとにシート分け)。\nまた「📋 マッチング結果一覧(SV確認シート形式)」では、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表やExcel(1シート)でも出力できます。' },
+        '「マッチング・結果」タブの「✅ 候補を全て確定にする」で候補を確定にしてから、ダッシュボードの「📨 シフト表の送付」にある「個人事業主向け シフト表」「店舗向け シフト表」のExcelボタンでそれぞれ一括ダウンロードできます(1人/1店舗ごとにシート分け)。\nまた「📋 マッチング結果一覧(SV確認シート形式)」では、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表やExcel(1シート)でも出力できます。' },
       { category: 'マッチング・結果', title: 'マッチングの優先順位を変えたい', body:
         '「⚙️ マッチングの優先順位の設定」パネルで、どの条件を優先するか選んでチェックを入れ、↑↓で並び替えられます。チェックを入れた項目の候補を上から順に全店舗分先に確保し、残りは通常のスコアリングで埋めます。保存すると次回の自動マッチングから反映されます。' },
       { category: 'マッチング・結果', title: '固定希望店舗・エリア固定とは？', body:
