@@ -2529,9 +2529,12 @@ app.get('/api/matches/manual-candidates', async (req, res) => {
     WHERE a.desired_date = ? AND a.archived_month IS NULL
   `, [date]);
 
+  // excludeMatchId: 右クリックした枠に既に入っている「候補」を差し替える場合、その枠自身は
+  // 「既に埋まっている」扱いから除外する(今入っている人も選び直せるように候補に残す)
+  const excludeMatchId = req.query.exclude_match_id ? parseInt(req.query.exclude_match_id, 10) : 0;
   const bookedRows = await dbAll(
-    `SELECT DISTINCT driver_id FROM matches WHERE match_date = ? AND status != '欠勤' AND archived_month IS NULL`,
-    [date]
+    `SELECT DISTINCT driver_id FROM matches WHERE match_date = ? AND status != '欠勤' AND archived_month IS NULL AND id != ?`,
+    [date, excludeMatchId]
   );
   const bookedSet = new Set(bookedRows.map(r => r.driver_id));
   const candidates = availability.filter(a => !bookedSet.has(a.driver_id));
@@ -2558,6 +2561,9 @@ app.get('/api/matches/manual-candidates', async (req, res) => {
 app.post('/api/matches/manual', async (req, res) => {
   const store_request_id = parseInt(req.body.store_request_id, 10);
   const driver_id = parseInt(req.body.driver_id, 10);
+  // replace_match_id: 既に「候補」で入っている人を、右クリックから別の人に差し替える場合に指定する
+  // (確定・完了したものは、確定するまでは変更可能という方針のため対象外にする)
+  const replace_match_id = req.body.replace_match_id ? parseInt(req.body.replace_match_id, 10) : null;
   if (!store_request_id || !driver_id) return res.status(400).json({ success: false, message: 'store_request_id, driver_id は必須です' });
 
   const storeReq = await dbGet('SELECT * FROM store_requests WHERE id = ?', [store_request_id]);
@@ -2565,23 +2571,37 @@ app.post('/api/matches/manual', async (req, res) => {
   const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [driver_id]);
   if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
 
+  let replaceTarget = null;
+  if (replace_match_id) {
+    replaceTarget = await dbGet(`SELECT * FROM matches WHERE id = ? AND archived_month IS NULL`, [replace_match_id]);
+    if (!replaceTarget) return res.status(404).json({ success: false, message: '差し替え対象のマッチングが見つかりません' });
+    if (replaceTarget.status !== '候補') {
+      return res.status(400).json({ success: false, message: '確定・完了済みのマッチングは差し替えできません(候補のうちだけ変更できます)' });
+    }
+  }
+
   const already = await dbGet(
-    `SELECT 1 FROM matches WHERE driver_id = ? AND match_date = ? AND status != '欠勤' AND archived_month IS NULL`,
-    [driver_id, storeReq.request_date]
+    `SELECT 1 FROM matches WHERE driver_id = ? AND match_date = ? AND status != '欠勤' AND archived_month IS NULL AND id != ?`,
+    [driver_id, storeReq.request_date, replace_match_id || 0]
   );
   if (already) return res.status(400).json({ success: false, message: 'このドライバーは同じ日に既に別の割り当てがあります' });
 
   // プール需要(候補店舗のどれか1つで合計必要人数が埋まればよい需要)の場合は、グループ全体で
-  // 既に必要人数に達していないか確認する。通常の依頼は自分自身の件数だけで確認する
+  // 既に必要人数に達していないか確認する(差し替えの場合は、差し替え対象自身の分は数えない)。
+  // 通常の依頼は自分自身の件数だけで確認する
   const siblingIds = storeReq.pool_group_id
     ? (await dbAll('SELECT id FROM store_requests WHERE pool_group_id = ?', [storeReq.pool_group_id])).map(s => s.id)
     : [store_request_id];
   const filled = await dbGet(
-    `SELECT COUNT(*) AS c FROM matches WHERE store_request_id IN (${siblingIds.map(() => '?').join(',')}) AND status IN ('候補', '確定', '完了') AND archived_month IS NULL`,
-    siblingIds
+    `SELECT COUNT(*) AS c FROM matches WHERE store_request_id IN (${siblingIds.map(() => '?').join(',')}) AND status IN ('候補', '確定', '完了') AND archived_month IS NULL AND id != ?`,
+    [...siblingIds, replace_match_id || 0]
   );
   if (filled.c >= (storeReq.required_count || 1)) {
     return res.status(400).json({ success: false, message: 'この店舗依頼は既に必要人数が埋まっています' });
+  }
+
+  if (replaceTarget) {
+    await dbRun(`DELETE FROM matches WHERE id = ?`, [replace_match_id]);
   }
 
   const hasCoords = driver.home_lat != null && driver.home_lng != null && storeReq.lat != null && storeReq.lng != null;
