@@ -24,7 +24,7 @@ const INCOMING_FILE_EXTENSIONS = ['.xlsx', '.xls', '.csv', '.txt'];
 // 備考・LINEメッセージのAI解析(任意機能)。.envにANTHROPIC_API_KEYが設定されていない場合はnullのままで、
 // 関連エンドポイントは「AI未設定」を返す(既存の正規表現ベースの解析は影響を受けない)
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
-const AI_MODEL = 'claude-haiku-4-5-20251001'; // 解析用途のため、速く安価なモデルを使う
+const AI_MODEL = 'claude-haiku-5-5'; // 解析用途のため、速く安価なモデルを使う
 
 // 自動マッチングのスコアリング重み(調整しやすいようファイル冒頭に定数化しておく)
 const SCORE_WEIGHT_DISTANCE_KM = -1;     // 距離1kmごとの減点
@@ -37,6 +37,8 @@ const SCORE_EXPERIENCE_PER_VISIT = 5;    // その店舗での過去派遣1回�
 const SCORE_EXPERIENCE_MAX_VISITS = 5;   // 店舗経験ボーナスの上限回数
 const SCORE_AREA_EXPERIENCE_PER_VISIT = 2; // 同エリアでの過去派遣1回あたりのボーナス(配達エリアの知見)
 const SCORE_AREA_EXPERIENCE_MAX_VISITS = 5; // エリア経験ボーナスの上限回数
+const SCORE_AI_PREFERRED_BONUS = 20;     // 店舗依頼の備考をAIが解析し、特定ドライバーを「できれば希望」と判断した場合のボーナス
+const SCORE_AI_EXCLUDED_PENALTY = -99999; // 同、「NG」と判断した場合のペナルティ(候補の絞り込み側で既に除外している想定の、念のための二重の安全策)
 
 // ベーシック認証(最低限の保護)。.envにAUTH_USER/AUTH_PASSが設定されている時だけ有効にする
 // (このPC上の開発用インスタンスは未設定のままにして、今まで通り認証無しで使える)
@@ -246,6 +248,10 @@ db.serialize(() => {
   ensureColumn('matches', 'archived_month', 'TEXT');
   // 取込みの取消し機能用: 行がどの取込みバッチで作成/更新されたかの印(無ければ手入力/旧データ)
   ensureColumn('store_requests', 'import_batch_id', 'INTEGER');
+  // 備考(requests列)をAIで解析した結果のキャッシュ。ai_analyzed_requestsは解析時点のrequests原文を
+  // 保存しておき、再度マッチングを実行する時に内容が変わっていなければ再解析(API呼び出し)をスキップする
+  ensureColumn('store_requests', 'ai_preference_json', 'TEXT');
+  ensureColumn('store_requests', 'ai_analyzed_requests', 'TEXT');
   ensureColumn('driver_availability', 'import_batch_id', 'INTEGER');
   ensureColumn('drivers', 'area_fixed_batch_id', 'INTEGER');
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
@@ -338,6 +344,16 @@ function normalizeStoreName(store_name) {
       .replace(/【[^】]*】/g, '')
       .trim()
   );
+}
+
+// 社員番号の先頭0の有無(「540094」と「00540094」等)の表記ゆれを吸収するため、先頭0を除いた形をキーにする
+function normalizeEmployeeCode(code) {
+  return String(code || '').trim().replace(/^0+(?=\d)/, '');
+}
+
+// 氏名の照合用に、全角/半角スペース・連続スペースの違いを吸収する(「吉川  守人」等)
+function normalizeNameForMatch(name) {
+  return String(name || '').replace(/[\s　]+/g, '');
 }
 
 // 店舗名(自由入力)を店舗マスタに名寄せする。店番(拠点コード)が分かればまずそれで照合し
@@ -467,6 +483,90 @@ async function interpretNoteWithAI(noteText, year, month) {
   }
 }
 
+// 店舗依頼の備考欄(自由記述)をAI(Claude)で解析し、特定のドライバー(個人事業主)への
+// 希望・必須指定・除外(NG)の意図を読み取る。正規表現(数字の社員番号)だけでは拾えない、
+// 「できれば髙橋さん希望」のような自然文表現を読み取るために使う。
+// 未設定時・解析失敗時・該当なしの場合はnullを返す(呼び出し側は従来通りの処理にフォールバックする)
+async function analyzeRequestNoteForMatching(noteText) {
+  if (!anthropic || !noteText || !noteText.trim()) return null;
+  try {
+    const response = await anthropic.messages.create({
+      model: AI_MODEL,
+      max_tokens: 500,
+      tools: [{
+        name: 'analyze_note',
+        description: '配送委託(軽貨物)の店舗依頼の備考欄から、特定の個人事業主(ドライバー)への希望・指定・除外の意図を読み取る',
+        input_schema: {
+          type: 'object',
+          properties: {
+            driver_mentions: {
+              type: 'array',
+              description: '備考文に具体的な人物(社員番号または氏名)への言及があれば、その一覧。無ければ空配列',
+              items: {
+                type: 'object',
+                properties: {
+                  employee_code: { type: 'string', description: '文中の社員番号(数字のみ)。無ければ空文字' },
+                  name_hint: { type: 'string', description: '文中の氏名・苗字の手がかり(例: 「髙橋」「髙橋さん」なら「髙橋」)。無ければ空文字' },
+                  sentiment: {
+                    type: 'string',
+                    enum: ['required', 'preferred', 'excluded'],
+                    description: 'required=必ずこの人にしてほしいという強い指定、preferred=できればこの人がいいという弱い希望、excluded=この人はNG/避けてほしい'
+                  }
+                },
+                required: ['employee_code', 'name_hint', 'sentiment']
+              }
+            },
+            summary: { type: 'string', description: '備考全体の内容を1文で要約(人物指定以外の内容も含めて)。特に内容が無ければ空文字' }
+          },
+          required: ['driver_mentions', 'summary']
+        }
+      }],
+      tool_choice: { type: 'tool', name: 'analyze_note' },
+      messages: [{ role: 'user', content: `配送委託の店舗依頼スプレッドシートの備考欄です。特定の個人事業主への希望・指定・除外が書かれていないか読み取ってください:\n「${noteText}」` }]
+    });
+    const toolUse = response.content.find(c => c.type === 'tool_use');
+    if (!toolUse) return null;
+    return toolUse.input;
+  } catch (e) {
+    return null; // AI解析に失敗しても処理は止めない(呼び出し側で従来通りのフォールバックを使う)
+  }
+}
+
+// analyzeRequestNoteForMatchingが返したdriver_mentionsの1件を、実際のドライバーIDに解決する。
+// 社員番号が一致すればそれを優先し、無ければ氏名の手がかりで部分一致を試みる(表記ゆれがあるため、
+// 正規化した氏名同士が互いに含み合うかで判定する)。複数候補に一致する場合は誤爆を避けるため解決しない
+function resolveDriverMention(mention, driverByCode, driversForNameSearch) {
+  if (mention.employee_code) {
+    const code = normalizeEmployeeCode(mention.employee_code);
+    if (driverByCode.has(code)) return driverByCode.get(code);
+  }
+  if (mention.name_hint) {
+    const hint = normalizeNameForMatch(mention.name_hint);
+    if (hint) {
+      const hits = driversForNameSearch.filter(d => d.normName.includes(hint) || hint.includes(d.normName));
+      if (hits.length === 1) return hits[0].id;
+    }
+  }
+  return null;
+}
+
+// 店舗依頼(store_requests)1件の備考をAIで解析した結果を返す。前回解析時から備考の内容が
+// 変わっていなければ、DBに保存済みの結果をそのまま返す(呼び出すたびにAPIを叩いてコストが
+// かさまないようにするため)。内容が変わっていれば(または未解析であれば)解析してDBに保存し直す
+async function getOrAnalyzeStoreRequestNote(storeRequest) {
+  const noteText = (storeRequest.requests || '').trim();
+  if (!noteText) return null;
+  if (storeRequest.ai_analyzed_requests === noteText && storeRequest.ai_preference_json) {
+    try { return JSON.parse(storeRequest.ai_preference_json); } catch (e) { /* 壊れていたら再解析にフォールバック */ }
+  }
+  const result = await analyzeRequestNoteForMatching(noteText);
+  if (result) {
+    await dbRun('UPDATE store_requests SET ai_preference_json = ?, ai_analyzed_requests = ? WHERE id = ?',
+      [JSON.stringify(result), noteText, storeRequest.id]);
+  }
+  return result;
+}
+
 // 「10:00-22:00」「10〜22」「10時〜22時」のような自由な書き方の時間帯を{start, end}(HH:MM)に変換する。
 // 読み取れなければnull(エリア固定の曜日パターン入力欄で使う)
 function parseTimeRangeText(text) {
@@ -485,8 +585,10 @@ function weekdayKeyOf(dateStr) {
 }
 
 // 候補者(driver_id, home_lat, home_lng, desired_store, desired_area を持つオブジェクト)を
-// 店舗依頼に対してスコアリングする(自動マッチングと欠勤時の代替候補探しの両方で使う共通ロジック)
-function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) {
+// 店舗依頼に対してスコアリングする(自動マッチングと欠勤時の代替候補探しの両方で使う共通ロジック)。
+// aiSentiment: その店舗依頼の備考をAIが解析した結果、この候補者について判定された意図
+// ('preferred'=できれば希望、'excluded'=NG、該当なしはnull/undefined)。省略可(後方互換)
+function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiSentiment) {
   const hasCoords = a.home_lat != null && a.home_lng != null && store.lat != null && store.lng != null;
   const distance = hasCoords ? haversineKm(a.home_lat, a.home_lng, store.lat, store.lng) : null;
   const isStrongMatch = (a.desired_store && a.desired_store === store.store_name) ||
@@ -501,6 +603,8 @@ function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, area
   if (preference && PREFERENCE_LEVEL_WEIGHT[preference]) score += PREFERENCE_LEVEL_WEIGHT[preference] * SCORE_PREFERENCE_LEVEL_UNIT;
   score += experienceCount * SCORE_EXPERIENCE_PER_VISIT;
   score += areaExperienceCount * SCORE_AREA_EXPERIENCE_PER_VISIT;
+  if (aiSentiment === 'preferred') score += SCORE_AI_PREFERRED_BONUS;
+  if (aiSentiment === 'excluded') score += SCORE_AI_EXCLUDED_PENALTY;
 
   return { distance, score, preference, experienceCount };
 }
@@ -510,6 +614,11 @@ function scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, area
 // 残りをスコア順で埋める(2段階処理)。test(a, store, ctx)がtrueを返す候補がその階層の対象。
 // ここに新しい階層を追加すれば、画面側で有効化・並び替えできるようになる
 const TIER_CATALOG = {
+  ai_note_required: {
+    label: '備考でAIが検出した「必須」指定',
+    description: '店舗依頼の備考欄(自由記述)をAIが解析し、特定のドライバーを強く希望している(必須)と判断した場合に最優先する(.envにANTHROPIC_API_KEYが未設定の場合はこの階層は常に対象なし)',
+    test: (a, store, ctx) => ctx.aiPreferenceByKey?.get(`${a.driver_id}:${store.id}`) === 'required'
+  },
   fixed_store: {
     label: '固定希望店舗',
     description: '1ヶ月間ずっと同じ店舗に割り当てられた等でドライバーマスタの「固定希望店舗」に設定されている店舗を最優先する',
@@ -1617,10 +1726,9 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
   }
 
-  const drivers = await dbAll('SELECT id, driver_code, fixed_store_id FROM drivers');
-  // 社員番号の先頭0の有無(「540094」と「00540094」等)の表記ゆれを吸収するため、先頭0を除いた形をキーにする
-  const normalizeEmployeeCode = (code) => String(code || '').trim().replace(/^0+(?=\d)/, '');
+  const drivers = await dbAll('SELECT id, name, driver_code, fixed_store_id FROM drivers');
   const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [normalizeEmployeeCode(d.driver_code), d.id]));
+  const driversForNameSearch = drivers.map(d => ({ id: d.id, normName: normalizeNameForMatch(d.name) }));
   const currentFixedStoreById = new Map(drivers.map(d => [d.id, d.fixed_store_id]));
   // 備考の社員番号から固定希望店舗を自動設定する際、その店舗が既にNG設定されていれば矛盾するため設定しない
   const ngPairs = await dbAll(`SELECT driver_id, store_id FROM driver_store_preferences WHERE preference = 'NG'`);
@@ -1636,6 +1744,28 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
 
   const errors = [];
   let fixedDriverLinks = 0;
+
+  // 備考の内容(社員番号またはAIが読み取った人物像)から、そのドライバーの固定希望店舗をこの店舗に設定する。
+  // ただし、ドライバーマスタに既に固定希望店舗が登録されている場合は、備考の内容よりマスタの登録内容を
+  // 優先し、上書きしない(マスタのメンテナンスが正、備考はあくまで参考情報という位置づけ)。
+  // 正規表現(社員番号)・AI(自然文)どちらの経路から見つかった場合も、この共通処理を通す
+  async function tryLinkFixedStore(matchedDriverId, store_id, rowNumber, store_name, mentionLabel) {
+    const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
+    if (oldFixedStoreId) {
+      if (oldFixedStoreId !== store_id) {
+        errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}は別の固定希望店舗を示していますが、ドライバーマスタに既に固定希望店舗が登録済みのため、マスタの設定を優先し上書きしませんでした(変更したい場合はドライバーマスタから手動で変更してください)`);
+      }
+      return false;
+    }
+    if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
+      errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
+      return false;
+    }
+    await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
+    await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
+    currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
+    return true;
+  }
 
   // 1周目: 同じ店舗×同じ曜日×同じ時間帯の行を合算し、必要人数を数える(1行=1人分のため)
   const slotMap = new Map(); // "storeId|weekdayIndex|time_start|time_end" -> { count, storeName, notesSet }
@@ -1653,25 +1783,22 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     // 店舗マスタに住所が登録されていれば、それを店舗依頼側にも使う(距離計算ができるように)
     const storeInfo = await getStoreMasterInfo(store_id);
 
-    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する。
-    // ただし、ドライバーマスタに既に固定希望店舗が登録されている場合は、備考の内容より
-    // マスタの登録内容を優先し、上書きしない(マスタのメンテナンスが正、備考はあくまで参考情報という位置づけ)
+    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する(確実なのでまずこちらを試す)
     const codeMatch = notesRaw.match(/(\d{5,8})/);
     const normalizedCode = codeMatch ? normalizeEmployeeCode(codeMatch[1]) : null;
     if (normalizedCode && driverByCode.has(normalizedCode)) {
-      const matchedDriverId = driverByCode.get(normalizedCode);
-      const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
-      if (oldFixedStoreId) {
-        if (oldFixedStoreId !== store_id) {
-          errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は別の固定希望店舗を示していますが、ドライバーマスタに既に固定希望店舗が登録済みのため、マスタの設定を優先し上書きしませんでした(変更したい場合はドライバーマスタから手動で変更してください)`);
-        }
-      } else if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
-        errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
-      } else {
-        await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
-        await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
-        currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
-        fixedDriverLinks++;
+      const linked = await tryLinkFixedStore(driverByCode.get(normalizedCode), store_id, r + 1, store_name, `社員番号(${codeMatch[1]})`);
+      if (linked) fixedDriverLinks++;
+    } else if (anthropic && notesRaw) {
+      // 社員番号の記載が無い(=数字で確実には分からない)場合のみ、AIで自然文から人物への言及を読み取る
+      // (「できれば髙橋さん希望」のような表現を拾うため。数字で確実に分かる場合は無駄なAI呼び出しをしない)
+      const aiResult = await analyzeRequestNoteForMatching(notesRaw);
+      for (const mention of (aiResult?.driver_mentions || [])) {
+        if (mention.sentiment !== 'required') continue; // 強い指定の時だけ固定希望店舗に反映する(弱い希望はマッチング時のスコアのみで考慮する)
+        const driverId = resolveDriverMention(mention, driverByCode, driversForNameSearch);
+        if (!driverId) continue;
+        const linked = await tryLinkFixedStore(driverId, store_id, r + 1, store_name, `内容(AIが「${mention.name_hint || mention.employee_code}」への強い希望と判定)`);
+        if (linked) fixedDriverLinks++;
       }
     }
 
@@ -2037,7 +2164,26 @@ app.post('/api/matches/run', async (req, res) => {
 
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
   const areaFixedStoreIdsByDriverId = new Map(areaFixedDrivers.map(d => [d.id, d.storeIds]));
-  const tierCtx = { preferenceByDriverStore, storeVisitCount, areaVisitCount, areaFixedStoreIdsByDriverId };
+
+  // 店舗依頼の備考(自由記述)をAIで解析し、特定ドライバーへの希望・必須指定・除外を読み取る
+  // (.envにANTHROPIC_API_KEYが未設定の場合、getOrAnalyzeStoreRequestNoteは常にnullを返すため
+  // aiPreferenceByKeyは空のままになり、全体としては従来通りの動作になる)
+  const aiDriversForLookup = await dbAll('SELECT id, name, driver_code FROM drivers');
+  const aiDriverByCode = new Map(aiDriversForLookup.filter(d => d.driver_code).map(d => [normalizeEmployeeCode(d.driver_code), d.id]));
+  const aiDriversForNameSearch = aiDriversForLookup.map(d => ({ id: d.id, normName: normalizeNameForMatch(d.name) }));
+  const aiPreferenceByKey = new Map(); // "driver_id:store_request_id" -> 'required'|'preferred'|'excluded'
+  if (anthropic) {
+    await Promise.all(storeRequests.filter(s => s.requests && s.requests.trim()).map(async (store) => {
+      const analysis = await getOrAnalyzeStoreRequestNote(store);
+      if (!analysis || !Array.isArray(analysis.driver_mentions)) return;
+      for (const mention of analysis.driver_mentions) {
+        const driverId = resolveDriverMention(mention, aiDriverByCode, aiDriversForNameSearch);
+        if (driverId) aiPreferenceByKey.set(`${driverId}:${store.id}`, mention.sentiment);
+      }
+    }));
+  }
+
+  const tierCtx = { preferenceByDriverStore, storeVisitCount, areaVisitCount, areaFixedStoreIdsByDriverId, aiPreferenceByKey };
   const enabledTierKeys = await getEnabledTierKeys();
 
   const now = new Date().toISOString();
@@ -2086,8 +2232,9 @@ app.post('/api/matches/run', async (req, res) => {
         a.desired_date === store.request_date &&
         !assignedToday.has(a.driver_id) &&
         tier.test(a, store, tierCtx) &&
-        preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
-      ).map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
+        preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
+        aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
+      ).map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`)) }))
         .sort((x, y) => y.score - x.score);
 
       const picked = tierCandidates.slice(0, needed);
@@ -2103,11 +2250,12 @@ app.post('/api/matches/run', async (req, res) => {
     const needed = (store.required_count || 1) - alreadyFilled;
     if (needed <= 0) continue;
 
-    // 同じ日付の希望を持ち、この店舗をNGにしていないドライバーを候補にする
+    // 同じ日付の希望を持ち、この店舗をNGにしていない(かつAIが備考からNGと判定していない)ドライバーを候補にする
     const normalCandidates = availability.filter(a =>
       a.desired_date === store.request_date &&
       !assignedToday.has(a.driver_id) &&
-      preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG'
+      preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
+      aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
     );
 
     // エリア固定ドライバーのうち、この店舗が候補店舗に含まれ、その曜日のパターンがあり、
@@ -2120,6 +2268,7 @@ app.post('/api/matches/run', async (req, res) => {
       if (assignedToday.has(af.id)) continue;
       if (explicitAvailabilitySet.has(`${af.id}|${store.request_date}`)) continue;
       if (preferenceByDriverStore.get(`${af.id}:${store.store_id}`) === 'NG') continue;
+      if (aiPreferenceByKey.get(`${af.id}:${store.id}`) === 'excluded') continue;
       const timeRange = parseTimeRangeText(af.pattern[weekdayKey]);
       if (!timeRange) continue;
       areaFixedCandidates.push({
@@ -2132,7 +2281,7 @@ app.post('/api/matches/run', async (req, res) => {
     const candidates = [...normalCandidates, ...areaFixedCandidates];
 
     const scored = candidates
-      .map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
+      .map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`)) }))
       .sort((x, y) => y.score - x.score);
 
     const picked = scored.slice(0, needed);

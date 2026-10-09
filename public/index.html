@@ -222,6 +222,7 @@
               <p>※ 同じ店舗・同じ曜日・同じ時間帯の行が複数あれば、必要人数として合算します(1行=1人分の必要枠)</p>
               <p>※ 指定した年月のうち、その曜日に該当するすべての日付に展開して依頼を作成します。再取込みすると同じ枠は上書き更新されます</p>
               <p>※ 「備考」欄に社員番号(5〜7桁の数字)らしき記載があれば、その社員のドライバーマスタの「固定希望店舗」に自動で反映します(ただし、その社員に既に固定希望店舗が登録済みの場合は、備考の内容より登録済みの設定を優先し、上書きしません)</p>
+              <p>※ 社員番号の記載が無く自由な文章(例:「できれば髙橋さん希望」)の場合も、AI(.envにANTHROPIC_API_KEYが設定されていれば)が内容を読み取り、強い希望(必須)と判断すれば同様に固定希望店舗へ反映します。弱い希望(「できれば」等)は固定希望店舗には反映せず、自動マッチングを実行するたびにその店舗依頼のスコアを上げる形で考慮されます(NG等の除外判定も同様にAIが読み取ります)</p>
               <p>※ 同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、それも自動であわせて取込みます(シートを選ぶ必要はありません。無ければ何もしません)</p>
             </div>
           </details>
@@ -869,7 +870,7 @@
           <tr class="border-b divide-x divide-slate-100 border-slate-100 last:border-0 align-top">
             <td class="p-2.5"><input type="checkbox" ${selectedDriverIds.has(d.id) ? 'checked' : ''} onchange="toggleDriverSelect(${d.id}, this.checked)"></td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.driver_code || '-')}</td>
-            <td class="p-2.5 font-bold">${esc(d.name)}</td>
+            <td class="p-2.5 font-bold whitespace-nowrap">${esc(d.name)}</td>
             <td class="p-2.5">${esc(d.company_name || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.phone || '-')}</td>
             <td class="p-2.5">${esc(d.vehicle_type || '-')}</td>
@@ -885,7 +886,7 @@
               ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
             </td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
-            <td class="p-2.5 text-xs text-slate-500">${esc(d.notes || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500 truncate" style="max-width:200px" title="${esc(d.notes || '')}">${esc(d.notes || '-')}</td>
             <td class="p-2.5 whitespace-nowrap">
               <button onclick="editDriver(${d.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
               <button onclick="deleteDriver(${d.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
