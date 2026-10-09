@@ -250,20 +250,13 @@
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
-            <select id="sr-weekly-folder-file" onchange="onIncomingFileSelected('sr-weekly')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
-            <button onclick="loadIncomingFiles('sr-weekly-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
-          </div>
-          <div class="flex gap-2 items-center flex-wrap">
-            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('sr-weekly')">
-            <select id="sr-weekly-sheet" class="p-1.5 border rounded text-xs hidden"></select>
+            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <input id="sr-weekly-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
             <input id="sr-weekly-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
             <span class="text-xs text-slate-500">月分</span>
             <button onclick="importStoreRequestsWeekly()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
           </div>
-          <p class="text-[10px] text-slate-400">複数シートのファイルを選ぶと、使うシートを選択できます(未選択時は先頭シートを使用)</p>
           <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
 
@@ -276,13 +269,7 @@
             </div>
             <p class="text-[10px] text-slate-400">「氏名」「月」〜「日」「想定デポ(候補店舗)」の見出しを含む表を想定しています。氏名はドライバーマスタに登録済みの氏名と完全一致している必要があります(先に登録してください)。想定デポは「、」「・」「,」のいずれで区切っても読み取れます。</p>
             <div class="flex gap-2 items-center flex-wrap">
-              <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
-              <select id="dr-areafixed-folder-file" onchange="onIncomingFileSelected('dr-areafixed')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
-              <button onclick="loadIncomingFiles('dr-areafixed-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
-            </div>
-            <div class="flex gap-2 items-center flex-wrap">
-              <input id="dr-areafixed-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('dr-areafixed')">
-              <select id="dr-areafixed-sheet" class="p-1.5 border rounded text-xs hidden"></select>
+              <input id="dr-areafixed-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
               <button onclick="importAreaFixed()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
             </div>
             <div id="dr-areafixed-import-result" class="text-xs"></div>
@@ -444,27 +431,6 @@
         <div class="space-y-3 pt-3">
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <p class="text-xs font-bold text-slate-600">📥 その他の形式(長形式、1行=1人×1日)から一括取込み</p>
-            <a href="/api/templates/driver-availability-long.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード</a>
-          </div>
-          <details class="text-[10px] text-slate-400">
-            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
-            <div class="mt-1 space-y-1">
-              <p class="text-amber-600 font-bold">※ 楽シフのエクスポートは下の「ワイド形式」です。こちらは手入力の表やその他ツール向けの形式です</p>
-              <p>列名の例: ドライバー名・希望日・希望エリア・希望店舗・開始時刻・終了時刻・要望</p>
-              <p>※ 同じドライバー・同じ希望日の行は上書き更新されます</p>
-              <p class="text-amber-600 font-bold">※ ドライバー名は「ドライバーマスタ」に登録済みの氏名と完全一致する必要があります(先に登録してください)</p>
-            </div>
-          </details>
-          <div class="flex gap-2 items-center">
-            <input id="av-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
-            <button onclick="importAvailability()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
-          </div>
-          <div id="av-import-result" class="text-xs"></div>
-        </div>
-
-        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み</p>
           <details class="text-[10px] text-slate-400">
             <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
@@ -475,13 +441,7 @@
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <span class="text-xs text-slate-500">📂 所定フォルダから選ぶ:</span>
-            <select id="av-wide-folder-file" onchange="onIncomingFileSelected('av-wide')" class="p-1.5 border rounded text-xs"><option value="">-- ファイルをアップロードする場合は選択しない --</option></select>
-            <button onclick="loadIncomingFiles('av-wide-folder-file')" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold">🔄更新</button>
-          </div>
-          <div class="flex gap-2 items-center flex-wrap">
-            <input id="av-wide-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="loadSheetNamesForImport('av-wide')">
-            <select id="av-wide-sheet" class="p-1.5 border rounded text-xs hidden"></select>
+            <input id="av-wide-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
             <input id="av-wide-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
             <input id="av-wide-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
@@ -869,8 +829,8 @@
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
       if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); }
-      if (tab === 'store') { loadStoreRequests(); loadIncomingFiles('sr-weekly-folder-file'); loadIncomingFiles('dr-areafixed-folder-file'); }
-      if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); loadIncomingFiles('av-wide-folder-file'); }
+      if (tab === 'store') { loadStoreRequests(); }
+      if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
       if (tab === 'storemaster') loadStoreMaster();
       if (tab === 'driver') { loadDrivers(); }
       if (tab === 'preferences') { loadDriversForPreferenceSelect(); switchPreferenceView(prefView); }
@@ -1435,66 +1395,11 @@
       if (data.success) loadStoreRequests();
     }
 
-    // ===== 所定フォルダ(uploads/)からのファイル選択(複数の取込み画面で共通利用) =====
-    // prefixは 'sr-weekly' や 'av-wide' のように、各取込み画面のid接頭辞
-    async function loadIncomingFiles(selectId) {
-      const sel = document.getElementById(selectId);
-      const keep = sel.value;
-      const res = await fetch('/api/incoming-files');
-      const data = await res.json();
-      const files = data.files || [];
-      sel.innerHTML = '<option value="">-- ファイルをアップロードする場合は選択しない --</option>' +
-        files.map(f => `<option value="${esc(f.name)}">${esc(f.name)} (${Math.round(f.size / 1024)}KB・${esc(f.mtime.slice(0, 16).replace('T', ' '))})</option>`).join('');
-      sel.value = keep;
-    }
-
-    async function onIncomingFileSelected(prefix) {
-      const folderSelect = document.getElementById(`${prefix}-folder-file`);
-      const sheetSelect = document.getElementById(`${prefix}-sheet`);
-      sheetSelect.innerHTML = '';
-      sheetSelect.classList.add('hidden');
-      if (!folderSelect.value) return;
-      document.getElementById(`${prefix}-import-file`).value = ''; // フォルダ選択を優先する(手動アップロードはクリア)
-      const res = await fetch('/api/incoming-files/sheet-names', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: folderSelect.value })
-      });
-      const data = await res.json();
-      if (!data.success || !data.sheets || data.sheets.length <= 1) return; // 単一シート(またはCSV)なら選択不要
-      sheetSelect.innerHTML = data.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-      sheetSelect.classList.remove('hidden');
-    }
-
-    async function loadSheetNamesForImport(prefix) {
-      const fileInput = document.getElementById(`${prefix}-import-file`);
-      const sheetSelect = document.getElementById(`${prefix}-sheet`);
-      document.getElementById(`${prefix}-folder-file`).value = ''; // ファイル選択を優先する(フォルダ選択はクリア)
-      sheetSelect.innerHTML = '';
-      sheetSelect.classList.add('hidden');
-      if (!fileInput.files[0]) return;
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
-      const res = await fetch('/api/sheet-names', { method: 'POST', body: form });
-      const data = await res.json();
-      if (!data.success || !data.sheets || data.sheets.length <= 1) return;
-      sheetSelect.innerHTML = data.sheets.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-      sheetSelect.classList.remove('hidden');
-    }
-
-    // アップロードしたファイル、または所定フォルダで選んだファイルのどちらかをFormDataに積む。
-    // どちらも未選択ならfalseを返す(呼び出し側で「ファイルを選択してください」と案内する)
+    // 作業者がファイル欄で選んだファイルをFormDataに積む(未選択ならfalseを返す)
     function appendImportSource(prefix, form) {
-      const sheetSelect = document.getElementById(`${prefix}-sheet`);
-      const sheetValue = (sheetSelect && !sheetSelect.classList.contains('hidden') && sheetSelect.value) ? sheetSelect.value : null;
-      const folderFile = document.getElementById(`${prefix}-folder-file`).value;
-      if (folderFile) {
-        form.append('source_filename', folderFile);
-        if (sheetValue) form.append('sheet', sheetValue);
-        return true;
-      }
       const fileInput = document.getElementById(`${prefix}-import-file`);
       if (fileInput.files[0]) {
         form.append('file', fileInput.files[0]);
-        if (sheetValue) form.append('sheet', sheetValue);
         return true;
       }
       return false;
@@ -1683,20 +1588,6 @@
       if (editingAvailabilityId === id) cancelAvailabilityEdit();
       await fetch(`/api/driver-availability/${id}`, { method: 'DELETE' });
       loadAvailability();
-    }
-
-    async function importAvailability() {
-      const fileInput = document.getElementById('av-import-file');
-      const resultEl = document.getElementById('av-import-result');
-      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
-      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
-      const res = await fetch('/api/driver-availability/import', { method: 'POST', body: form });
-      const data = await res.json();
-      renderImportResult(resultEl, data);
-      fileInput.value = '';
-      if (data.success) loadAvailability();
     }
 
     async function importAvailabilityWide() {
@@ -3368,9 +3259,6 @@
         '店舗からの人員依頼(店舗依頼)と、個人事業主(ドライバー)の希望シフトを突き合わせて、誰をどの店舗に割り当てるかの候補を自動で作るツールです。\n基本の流れ:\n①店舗依頼・希望シフトを登録(手入力 or Excel/CSV取込み)\n②「マッチング結果」タブで自動マッチングを実行\n③候補を確認し、問題なければ「確定」にする\n④実際に稼働したら「完了」にする(派遣履歴に自動で記録される)\n⑤月末に「月次クローズ」でその月をアーカイブし、翌月分の取込みに進む' },
       { category: '全体の流れ', title: '複数のPCから使いたい', body:
         'サーバーを起動しているPCのIPアドレスを調べ、同じ社内ネットワークの別PCのブラウザで「http://(IPアドレス):4001」を開けば利用できます。初回はWindowsファイアウォールの許可が必要な場合があります。\nIPアドレスはPCの再起動等で変わることがあるため、安定して使うにはIT部門にDHCP予約(固定化)を依頼するのがおすすめです。\n※複数人が同時に同じデータを編集すると競合する可能性があるため、閲覧と編集で役割を分けるのが安全です。' },
-      { category: '全体の流れ', title: '所定フォルダから取込みたい', body:
-        '「店舗依頼」「希望シフト」タブの取込み欄にある「📂 所定フォルダから選ぶ」を使うと、アプリのフォルダ内の「uploads」フォルダに置いたExcel/CSVファイルを、毎回アップロードし直さずに一覧から選んで取込みできます。複数シートのファイルならシートも選べます。' },
-
       { category: 'マッチング結果', title: '自動マッチングの実行方法', body:
         '「マッチング結果」タブの「⚡ 自動マッチングを実行」を押すと、その時点の店舗依頼・希望シフトから候補を作り直します(既存の候補は一旦削除され、確定済み/完了済みのものも含め全部作り直されるので注意)。\n実行後、候補が見つからなかった依頼は画面上部に警告として一覧表示されます。' },
       { category: 'マッチング結果', title: '候補が見つからない(未マッチ)のはなぜ？', body:
@@ -3396,7 +3284,7 @@
         '曜日・時間帯のセルが読み取れず、備考だけが書かれている行です。備考の内容(「2名希望 1名は○○さん希望」等)を見て、必要であれば手動で店舗依頼を登録・ドライバーマスタの固定希望店舗を設定してください。.envにAIのAPIキーを設定していれば、AIによる解釈案も参考表示されます。' },
 
       { category: '希望シフト', title: '希望シフトの登録方法', body:
-        '「その他の形式(長形式)から一括取込み」「楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み」「LINEメッセージから登録」の3種類に対応しています。\n楽シフのエクスポートはワイド形式です(1行目に日付見出し「1(火)」等が並び、1列目が氏名、各セルが勤務時間または「休み」の表)。ドライバー名はドライバーマスタに登録済みの氏名と完全一致する必要があります。' },
+        '「楽シフのエクスポート(氏名×日付のワイド形式)から一括取込み」「LINEメッセージから登録」の2種類に対応しています。\n楽シフのエクスポートはワイド形式です(1行目に日付見出し「1(火)」等が並び、1列目が氏名、各セルが勤務時間または「休み」の表)。ドライバー名はドライバーマスタに登録済みの氏名と完全一致する必要があります。' },
       { category: '希望シフト', title: 'LINEメッセージから登録したい', body:
         'ドライバーを選び、LINEで届いた文章をそのまま貼り付けて「解析する」を押すと、日付・時間を自動で読み取ってプレビューします。内容を確認・修正してから登録できるので、解析が多少違っていても安心です。「🤖 AIで解析」(APIキー設定時のみ)も選べます。' },
       { category: '希望シフト', title: '希望店舗/エリアが空欄なのは正常？', body:
