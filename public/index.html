@@ -3210,16 +3210,24 @@
       }
       const dates = [...new Set(matches.map(m => m.match_date))].sort();
       const rowKey = dashboardView === 'store' ? 'store_name' : 'driver_name';
+      const codeKey = dashboardView === 'store' ? 'store_code' : 'driver_code';
       const keyword = normalizeForSearch(document.getElementById('dash-grid-search')?.value || '');
       const { field, dir } = dashSortState;
 
       const countByRow = new Map();
-      for (const m of matches) countByRow.set(m[rowKey], (countByRow.get(m[rowKey]) || 0) + 1);
+      const codeByRow = new Map();
+      for (const m of matches) {
+        countByRow.set(m[rowKey], (countByRow.get(m[rowKey]) || 0) + 1);
+        if (!codeByRow.has(m[rowKey])) codeByRow.set(m[rowKey], m[codeKey] || '-');
+      }
 
       let rows = [...new Set(matches.map(m => m[rowKey]))];
-      if (keyword) rows = rows.filter(r => normalizeForSearch(r).includes(keyword));
+      if (keyword) rows = rows.filter(r => normalizeForSearch(r).includes(keyword) || normalizeForSearch(codeByRow.get(r)).includes(keyword));
       rows.sort((a, b) => {
-        const cmp = field === 'count' ? (countByRow.get(a) - countByRow.get(b)) : a.localeCompare(b, 'ja');
+        let cmp;
+        if (field === 'count') cmp = countByRow.get(a) - countByRow.get(b);
+        else if (field === 'code') cmp = (codeByRow.get(a) || '').localeCompare(codeByRow.get(b) || '', 'ja', { numeric: true });
+        else cmp = a.localeCompare(b, 'ja');
         return (dir === 'desc' ? -cmp : cmp) || a.localeCompare(b, 'ja');
       });
 
@@ -3231,8 +3239,11 @@
 
       const arrow = f => f === field ? (dir === 'asc' ? '▲' : '▼') : '⇅';
       const arrowClass = f => f === field ? 'text-blue-600' : 'text-slate-300';
+      const CODE_W = 90;
+      const codeColStyle = `width:${CODE_W}px;min-width:${CODE_W}px;max-width:${CODE_W}px;overflow:hidden;text-overflow:ellipsis`;
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'name', renderDashboardGrid)">${dashboardView === 'store' ? '店舗' : 'ドライバー'} <span class="${arrowClass('name')}">${arrow('name')}</span></th>` +
+      header.innerHTML = `<th style="${codeColStyle};left:0" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'code', renderDashboardGrid)">${dashboardView === 'store' ? '店番' : '社員コード'} <span class="${arrowClass('code')}">${arrow('code')}</span></th>` +
+        `<th style="left:${CODE_W}px" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'name', renderDashboardGrid)">${dashboardView === 'store' ? '店舗' : 'ドライバー'} <span class="${arrowClass('name')}">${arrow('name')}</span></th>` +
         `<th class="p-2 text-right text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-200 whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'count', renderDashboardGrid)">件数 <span class="${arrowClass('count')}">${arrow('count')}</span></th>` +
         dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
@@ -3252,7 +3263,7 @@
           }).join('');
           return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${bg}">${content}</td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td><td class="p-2 text-right text-xs text-slate-500 bg-white border border-slate-100 whitespace-nowrap">${countByRow.get(rowName)}件</td>${cells}</tr>`;
+        return `<tr><td style="${codeColStyle};left:0" class="p-2 text-xs text-slate-500 sticky z-10 bg-white border border-slate-100 whitespace-nowrap">${esc(codeByRow.get(rowName))}</td><td style="left:${CODE_W}px" class="p-2 font-bold text-sm sticky z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td><td class="p-2 text-right text-xs text-slate-500 bg-white border border-slate-100 whitespace-nowrap">${countByRow.get(rowName)}件</td>${cells}</tr>`;
       }).join('');
     }
 
