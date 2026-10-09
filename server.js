@@ -692,10 +692,20 @@ function parseUploadedSpreadsheet(buffer, filename) {
 // 見出し行+各行を配列のまま返す(通常のparseUploadedSpreadsheetは列名をキーにしたオブジェクトを返すため、
 // 「1(火)」のような日付見出しを順序どおり扱いたいこちらの用途には配列のままの形が必要)
 // sheetNameを指定すればそのシートを、未指定(またはファイル内に無い名前)なら先頭シートを読む
-// markerHeaders: 取込み対象のシートを自動判別するための目印の見出し名(例:「想定デポ」)。
-// 1つのExcelファイルに複数のシートがあり(例: 1枚目が週間必要枠表、2枚目がエリア固定の依頼、
-// 3枚目はその他のデータ)、取込み先ごとに読むべきシートが違う場合に、シート名を手で選ばなくても
-// 見出しの中身からそれらしいシートを自動で見つけるために使う。見つからなければ従来通り1枚目を使う
+// ブックの中から、見出しにmarkerHeadersのいずれかを含むシート名を探して返す(xlsx以外や、
+// 一致するシートが無い場合はnull)。1つのExcelファイルに複数シートがあり(例: 1枚目が週間必要枠表、
+// 2枚目がエリア固定の依頼、3枚目はその他のデータ)、取込み先ごとに読むべきシートが違う場合に、
+// シート名を手で選ばなくても見出しの中身からそれらしいシートを自動で見つけるために使う
+function findMarkerSheetName(buffer, filename, markerHeaders) {
+  const ext = (filename || '').toLowerCase();
+  if (ext.endsWith('.csv') || ext.endsWith('.txt') || !markerHeaders || !markerHeaders.length) return null;
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  return workbook.SheetNames.find(name => {
+    const candidateRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false }).slice(0, 15);
+    return candidateRows.some(row => row.some(cell => markerHeaders.includes(String(cell ?? '').trim())));
+  }) || null;
+}
+
 function parseWideSpreadsheet(buffer, filename, sheetName, markerHeaders) {
   const ext = (filename || '').toLowerCase();
   if (ext.endsWith('.csv') || ext.endsWith('.txt')) {
@@ -713,12 +723,7 @@ function parseWideSpreadsheet(buffer, filename, sheetName, markerHeaders) {
   }
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   let targetName = (sheetName && workbook.SheetNames.includes(sheetName)) ? sheetName : null;
-  if (!targetName && markerHeaders && markerHeaders.length) {
-    targetName = workbook.SheetNames.find(name => {
-      const candidateRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false, range: 0 }).slice(0, 15);
-      return candidateRows.some(row => row.some(cell => markerHeaders.includes(String(cell ?? '').trim())));
-    });
-  }
+  if (!targetName) targetName = findMarkerSheetName(buffer, filename, markerHeaders);
   if (!targetName) targetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[targetName];
   return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
@@ -1177,14 +1182,34 @@ app.post('/api/incoming-files/sheet-names', (req, res) => {
 // エリア固定(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗の中から優先的に
 // 割り当てる人)の表を取込む。列は「氏名」「月」〜「日」「想定デポ(候補店舗)」「備考」の見出しで探す
 // (見出しさえあれば、前に他のメモ行があっても大丈夫)。想定デポは「、」「・」「,」のいずれでも区切れる
+const AREA_FIXED_MARKER_HEADERS = ['想定デポ(候補店舗)', '想定デポ', '候補店舗'];
+
 app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, res) => {
   const source = getImportSource(req);
   if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
+
+  // シート名が明示指定されていない「複数シートのExcelファイル」の場合、ファイル内に「想定デポ」の
+  // 表自体が無ければ(=週間必要枠表のみのファイルを、週間必要枠表の取込みに合わせて一緒に投げてきた
+  // 場合など)エラーにはせず、何もせず正常終了として返す(呼び出し元が毎回2つの取込みをまとめて
+  // 叩けるようにするため)。CSVは複数シートを持ち得ないのでこの判定はしない(常に取込みを試みる)
+  const isMultiSheetFile = !/\.(csv|txt)$/i.test(source.filename || '');
+  if (!req.body.sheet && isMultiSheetFile) {
+    let hasAreaFixedSheet;
+    try {
+      hasAreaFixedSheet = !!findMarkerSheetName(source.buffer, source.filename, AREA_FIXED_MARKER_HEADERS);
+    } catch (e) {
+      return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+    }
+    if (!hasAreaFixedSheet) {
+      return res.json({ success: true, skipped: true, imported: 0, fixedDriverLinks: 0, errors: [] });
+    }
+  }
+
   const importBatchId = await createImportBatch('area_fixed', source.filename, '');
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, ['想定デポ(候補店舗)', '想定デポ', '候補店舗']);
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, AREA_FIXED_MARKER_HEADERS);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }

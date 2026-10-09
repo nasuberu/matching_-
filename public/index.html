@@ -211,7 +211,7 @@
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <p class="text-xs font-bold text-slate-600">📥 週間必要枠表(曜日パターン)から一括取込み</p>
-            <a href="/api/templates/store-requests-weekly.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード(エリア固定とも共通)</a>
+            <a href="/api/templates/store-requests-weekly.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード</a>
           </div>
           <details class="text-[10px] text-slate-400">
             <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
@@ -222,6 +222,7 @@
               <p>※ 同じ店舗・同じ曜日・同じ時間帯の行が複数あれば、必要人数として合算します(1行=1人分の必要枠)</p>
               <p>※ 指定した年月のうち、その曜日に該当するすべての日付に展開して依頼を作成します。再取込みすると同じ枠は上書き更新されます</p>
               <p>※ 「備考」欄に社員番号(5〜7桁の数字)らしき記載があれば、その社員のドライバーマスタの「固定希望店舗」に自動で反映します</p>
+              <p>※ 同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、それも自動であわせて取込みます(シートを選ぶ必要はありません。無ければ何もしません)</p>
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
@@ -234,22 +235,6 @@
           </div>
           <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
-
-        <details class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-          <summary class="cursor-pointer select-none text-xs font-bold text-slate-600">📥 エリア固定の一括取込み</summary>
-          <div class="pt-2 space-y-2">
-            <div class="flex items-center justify-between flex-wrap gap-2">
-              <span class="text-[10px] text-slate-400">📄 ひな形は上の「週間必要枠表」と共通です</span>
-              <a href="/api/templates/store-requests-weekly.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード</a>
-            </div>
-            <p class="text-[10px] text-slate-400">「氏名」「月」〜「日」「想定デポ(候補店舗)」の見出しを含む表を想定しています。氏名はドライバーマスタに登録済みの氏名と完全一致している必要があります(先に登録してください)。想定デポは「、」「・」「,」のいずれで区切っても読み取れます。</p>
-            <div class="flex gap-2 items-center flex-wrap">
-              <input id="dr-areafixed-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
-              <button onclick="importAreaFixed()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
-            </div>
-            <div id="dr-areafixed-import-result" class="text-xs"></div>
-          </div>
-        </details>
 
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -1053,26 +1038,6 @@
       if (data.success) loadDrivers();
     }
 
-    async function importAreaFixed() {
-      const resultEl = document.getElementById('dr-areafixed-import-result');
-      const form = new FormData();
-      if (!appendImportSource('dr-areafixed', form)) { alert('ファイルを選択してください'); return; }
-      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      const res = await fetch('/api/drivers/import-area-fixed', { method: 'POST', body: form });
-      const data = await res.json();
-      if (!data.success) {
-        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
-      } else {
-        let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}人分のエリア固定を設定しました</span>`;
-        if (data.errors && data.errors.length > 0) {
-          html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 読み取れなかった行(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
-        }
-        resultEl.innerHTML = html;
-      }
-      document.getElementById('dr-areafixed-import-file').value = '';
-      if (data.success) loadDrivers();
-    }
-
     async function loadDriversForSelect() {
       if (driversCache.length === 0) {
         const res = await fetch('/api/drivers');
@@ -1344,24 +1309,45 @@
       const resultEl = document.getElementById('sr-weekly-import-result');
       const year = document.getElementById('sr-weekly-year').value;
       const month = document.getElementById('sr-weekly-month').value;
-      const form = new FormData();
-      if (!appendImportSource('sr-weekly', form)) { alert('ファイルを選択してください'); return; }
+      const fileInput = document.getElementById('sr-weekly-import-file');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
       if (!year || !month) { alert('対象の年月を入力してください'); return; }
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      form.append('year', year);
-      form.append('month', month);
-      const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: form });
+
+      const weeklyForm = new FormData();
+      weeklyForm.append('file', fileInput.files[0]);
+      weeklyForm.append('year', year);
+      weeklyForm.append('month', month);
+      const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: weeklyForm });
       const data = await res.json();
+
+      let html;
       if (!data.success) {
-        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
+        html = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
       } else {
-        let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の店舗依頼を作成しました${data.fixedDriverLinks > 0 ? `(固定希望店舗を${data.fixedDriverLinks}件反映)` : ''}</span>`;
+        html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の店舗依頼を作成しました${data.fixedDriverLinks > 0 ? `(固定希望店舗を${data.fixedDriverLinks}件反映)` : ''}</span>`;
         if (data.errors && data.errors.length > 0) {
           html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 要確認(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
         }
-        resultEl.innerHTML = html;
+
+        // 同じファイルの別シートに「エリア固定」の表(想定デポ列)があれば、あわせて取込む。
+        // 無ければ/api/drivers/import-area-fixed側が何もせずskipped:trueを返すだけなので、画面には何も出ない
+        const areaForm = new FormData();
+        areaForm.append('file', fileInput.files[0]);
+        const areaRes = await fetch('/api/drivers/import-area-fixed', { method: 'POST', body: areaForm });
+        const areaData = await areaRes.json();
+        if (!areaData.success) {
+          html += `<div class="mt-1 text-red-600 font-bold">❌ エリア固定の取込みに失敗しました: ${esc(areaData.message || '')}</div>`;
+        } else if (!areaData.skipped) {
+          html += `<div class="mt-1 text-indigo-700 font-bold">✅ エリア固定: ${areaData.imported}人分を設定しました</div>`;
+          if (areaData.errors && areaData.errors.length > 0) {
+            html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ エリア固定で要確認(${areaData.errors.length}件):</p><ul class="list-disc pl-4">${areaData.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+          }
+          loadDrivers(); // エリア固定の設定はドライバーマスタ側の表示にも影響するため、キャッシュを更新しておく
+        }
       }
-      document.getElementById('sr-weekly-import-file').value = '';
+      resultEl.innerHTML = html;
+      fileInput.value = '';
       if (data.success) loadStoreRequests();
     }
 
@@ -3372,7 +3358,7 @@
       { category: 'ドライバーマスタ', title: 'ドライバーマスタの管理', body:
         '氏名・社員コード・会社名・電話番号・車両種別・自宅住所・初回委託日・ステータス・メール・固定希望店舗・保険加入状況・備考を登録できます。検索・並び替え・複数選択一括編集に対応しています。' },
       { category: 'ドライバーマスタ', title: 'エリア固定の設定方法', body:
-        '1件ずつなら、ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。\nまとめて設定したい場合は「📥 エリア固定の一括取込み」から、氏名・曜日ごとの時間帯・想定デポ(候補店舗)を書いたExcelで取込めます(ひな形は店舗依頼のひな形と共通です)。' },
+        '1件ずつなら、ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。\nまとめて設定したい場合は、店舗依頼タブの「📥 週間必要枠表から一括取込み」で取込みます(同じExcelファイルの別シートに、氏名・曜日ごとの時間帯・想定デポ(候補店舗)を書いた表があれば、専用のボタンを押さなくても自動であわせて取込まれます)。' },
 
       { category: '店舗相性マスタ', title: '相性の設定方法と見方', body:
         'NG〜1〜2〜3〜4〜5〜OKの7段階で設定します。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。\n「ドライバー別に見る」(1人の全店舗分)、「店舗別に見る」(1店舗の全ドライバー分)、「全件表示」(設定済み全件を一覧)の3つの見方があります。' },
