@@ -112,6 +112,7 @@
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-50 border border-dashed border-amber-300"></span>未定(依頼/希望の時間のみ、右クリックで割当可)</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-sky-400"></span>固定希望店舗で決定</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-purple-400"></span>手動で割当て(右クリック)</span>
       </div>
 
@@ -2482,14 +2483,17 @@
       }
     }
 
+    // 決まった経緯ごとの色枠(ステータスの背景色はそのままに、追加で枠を付けて見分けられるようにする)
+    const CREATED_VIA_RING = { manual: 'ring-2 ring-purple-400', fixed_store_tier: 'ring-2 ring-sky-400' };
+    const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定' };
     function matchCellHtml(m, label, date) {
       const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
-      // 手動で割り当てた人(右クリックからの割当)は、自動マッチングで決まった人と見分けられるよう枠を付ける
-      const manualRing = m.created_via === 'manual' ? 'ring-2 ring-purple-400' : '';
+      const viaRing = CREATED_VIA_RING[m.created_via] || '';
+      const viaLabel = CREATED_VIA_LABEL[m.created_via] ? ` ／ ${CREATED_VIA_LABEL[m.created_via]}` : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
-          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)} ${manualRing}">${esc(label)}</span>
-          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}${m.created_via === 'manual' ? ' ／ 手動割当' : ''}</span>
+          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)} ${viaRing}">${esc(label)}</span>
+          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}${viaLabel}</span>
         </span>
       </td>`;
     }

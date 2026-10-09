@@ -2363,11 +2363,14 @@ app.post('/api/matches/run', async (req, res) => {
     if (em.pool_group_id) filledCountByPoolGroup[em.pool_group_id] = (filledCountByPoolGroup[em.pool_group_id] || 0) + 1;
   }
 
-  async function insertMatch(store, p) {
+  // createdVia: 画面側で色分け表示するための、このマッチングが決まった経緯('fixed_store_tier'=固定希望店舗の
+  // 優先階層で決まった、未指定なら既定値'auto'=それ以外の自動マッチング)。手動割当は/api/matches/manualが
+  // 別途'manual'を指定する(このinsertMatchは自動マッチング実行時専用)
+  async function insertMatch(store, p, createdVia) {
     const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
     await dbRun(
-      `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount]
+      `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count, created_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount, createdVia || 'auto']
     );
     assignedDriverIdsByDate[store.request_date].add(p.driver_id);
     filledCountByRequestId[store.id] = (filledCountByRequestId[store.id] || 0) + 1;
@@ -2397,7 +2400,7 @@ app.post('/api/matches/run', async (req, res) => {
         .sort((x, y) => y.score - x.score);
 
       const picked = tierCandidates.slice(0, needed);
-      for (const p of picked) await insertMatch(store, p);
+      for (const p of picked) await insertMatch(store, p, tierKey === 'fixed_store' ? 'fixed_store_tier' : 'auto');
     }
   }
 
