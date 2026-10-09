@@ -2244,7 +2244,7 @@ app.get('/api/matches', async (req, res) => {
   const rows = await dbAll(`
     SELECT m.*, d.name AS driver_name, d.phone AS driver_phone, d.home_address, d.driver_code,
            s.store_name, s.area, s.address AS store_address, s.time_start, s.time_end, s.requests AS store_requests,
-           st.store_code AS store_code
+           st.store_code AS store_code, st.sv_name AS store_sv_name
     FROM matches m
     JOIN drivers d ON d.id = m.driver_id
     JOIN store_requests s ON s.id = m.store_request_id

@@ -256,6 +256,7 @@
 
     <!-- ドライバーマスタタブ -->
     <div id="tab-driver" class="hidden space-y-4">
+      <div id="dr-duplicate-fixed-store-alert" class="hidden"></div>
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🚚 ドライバーを登録</summary>
         <div class="space-y-3 pt-3">
@@ -798,6 +799,34 @@
       return driverFormStoresCache.find(s => storeOptionLabel(s) === trimmed);
     }
 
+    // 複数のドライバーが同じ店舗を固定希望店舗にしている場合に、ドライバーマスタ画面上部に知らせる。
+    // 重複自体はエラーではない(マッチング時はスコアで競わせて上位から必要人数分を割り当てる)が、
+    // 意図しない重複に気付けるように一覧表示しておく
+    function renderDuplicateFixedStoreAlert() {
+      const el = document.getElementById('dr-duplicate-fixed-store-alert');
+      const byStore = new Map(); // store_id -> [driver, ...]
+      for (const d of driversCache) {
+        if (!d.fixed_store_id) continue;
+        if (!byStore.has(d.fixed_store_id)) byStore.set(d.fixed_store_id, []);
+        byStore.get(d.fixed_store_id).push(d);
+      }
+      const duplicated = [...byStore.entries()].filter(([, ds]) => ds.length > 1);
+      if (duplicated.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <details class="bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <summary class="font-bold text-amber-800 text-sm cursor-pointer select-none">⚠️ 固定希望店舗が重複している店舗が ${duplicated.length} 件あります(クリックで開閉)</summary>
+          <p class="text-xs text-amber-700 mt-2 mb-2">エラーではありません(マッチング時はスコアの高い人から必要人数分を割り当てます)。意図しない重複が無いかご確認ください。</p>
+          <div class="max-h-52 overflow-y-auto space-y-1">
+            ${duplicated.map(([storeId, ds]) => `
+              <div class="bg-white rounded px-2 py-1.5 border border-amber-100 text-xs">
+                🏬 ${esc(ds[0].fixed_store_name || '(店舗名不明)')}: ${ds.map(d => esc(d.name)).join('・')}
+              </div>
+            `).join('')}
+          </div>
+        </details>`;
+    }
+
     async function loadDrivers() {
       const [driversRes, storesRes, suggestionsRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores'), fetch('/api/fixed-store-suggestions')]);
       const driversData = await driversRes.json();
@@ -807,6 +836,7 @@
       fixedStoreSuggestionsCache = (await suggestionsRes.json()).suggestions || [];
       document.getElementById('store-datalist').innerHTML =
         driverFormStoresCache.map(s => `<option value="${esc(storeOptionLabel(s))}">`).join('');
+      renderDuplicateFixedStoreAlert();
       renderAreaFixedStoreList();
       renderDriverList();
     }
@@ -2275,9 +2305,9 @@
       if (unmatchedAlertCache.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
       el.innerHTML = `
-        <div class="bg-amber-50 border border-amber-300 rounded-xl p-4">
-          <p class="font-bold text-amber-800 text-sm">⚠️ 候補が見つからない店舗依頼が ${unmatchedAlertCache.length} 件あります</p>
-          <p class="text-xs text-amber-700 mt-0.5 mb-2">その日に希望シフトを出しているドライバーがいない、または全員が相性NGで除外された可能性があります。「調べる」から個別に空き状況を確認できます</p>
+        <details class="bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <summary class="font-bold text-amber-800 text-sm cursor-pointer select-none">⚠️ 候補が見つからない店舗依頼が ${unmatchedAlertCache.length} 件あります(クリックで開閉)</summary>
+          <p class="text-xs text-amber-700 mt-2 mb-2">その日に希望シフトを出しているドライバーがいない、または全員が相性NGで除外された可能性があります。「調べる」から個別に空き状況を確認できます</p>
           <div class="max-h-52 overflow-y-auto space-y-1">
             ${unmatchedAlertCache.map(r => `
               <div class="flex justify-between items-center bg-white rounded px-2 py-1.5 border border-amber-100">
@@ -2286,7 +2316,7 @@
               </div>
             `).join('')}
           </div>
-        </div>
+        </details>
       `;
     }
 
@@ -2448,7 +2478,7 @@
 
     function matchCellHtml(m, label, date) {
       const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
-      return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${dateHighlightBg(date)}">
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
           <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap cursor-default ${dashboardStatusColor(m.status)}">${esc(label)}</span>
           <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}</span>
@@ -2458,13 +2488,13 @@
 
     function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date) {
       const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
-      return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${dateHighlightBg(date)}">
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700">${label}</span>
       </td>`;
     }
 
     function emptyCellHtml(date) {
-      return `<td class="p-2 border border-slate-100 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
+      return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
     }
 
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
@@ -2481,6 +2511,12 @@
         return;
       }
       const dates = [...new Set([...matches.map(m => m.match_date), ...storeRequests.map(r => r.request_date)])].sort();
+      // 店舗コード(固定列に表示)・SV名(スクロールで隠れてよい列に表示)を、店舗名から引けるようにしておく
+      const codeByStoreName = new Map(), svByStoreName = new Map();
+      for (const m of matches) {
+        if (m.store_code && !codeByStoreName.has(m.store_name)) codeByStoreName.set(m.store_name, m.store_code);
+        if (m.store_sv_name && !svByStoreName.has(m.store_name)) svByStoreName.set(m.store_name, m.store_sv_name);
+      }
 
       const requestsByStoreDate = new Map(); // "店舗名|日付" -> 店舗依頼の行配列(時間帯違いが複数あり得る)
       for (const r of storeRequests) {
@@ -2518,21 +2554,24 @@
         maxSlotsByStore.set(storeName, maxSlots);
       }
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
+        `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-300 whitespace-nowrap">SV</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-300 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       const rowsHtml = [];
       for (const storeName of storeNames) {
         const maxSlots = maxSlotsByStore.get(storeName);
+        const code = codeByStoreName.get(storeName);
+        const sv = svByStoreName.get(storeName) || '-';
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
-          const rowLabel = maxSlots > 1 ? `${storeName}(${slotIndex + 1}人目)` : storeName;
+          const rowLabel = `${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
           const cells = dates.map(d => {
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return emptyCellHtml(d);
             if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d);
             return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d);
           }).join('');
-          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
       }
       body.innerHTML = rowsHtml.join('');
@@ -2558,8 +2597,8 @@
       const availByDriverDate = new Map();
       for (const a of availability) availByDriverDate.set(`${a.driver_id}|${a.desired_date}`, a);
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
-        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-300 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = driverIdsSorted.map(driverId => {
         const cells = dates.map(d => {
@@ -2569,7 +2608,7 @@
           if (avail) return placeholderCellHtml(avail.time_start, avail.time_end, '希望あり', d);
           return emptyCellHtml(d);
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;
       }).join('');
     }
 
