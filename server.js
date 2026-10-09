@@ -1245,6 +1245,27 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
   res.json({ success: true, imported, total: rows.length, errors });
 });
 
+// ドライバーマスタをExcelでエクスポートする(他のPCへ渡して取込み直せるよう、一括取込みと同じ列構成・列名にしてある)
+app.get('/api/export/drivers.xlsx', async (req, res) => {
+  const drivers = await dbAll(`
+    SELECT d.*, fs.name AS fixed_store_name
+    FROM drivers d LEFT JOIN stores fs ON fs.id = d.fixed_store_id
+    ORDER BY d.name
+  `);
+  const header = ['社員コード', '氏名', '会社名', 'お住まい住所', '初回委託日', 'ステータス', 'メールアドレス', '固定希望店舗', '保険加入状況', '電話番号', '車両種別', '備考'];
+  const rows = drivers.map(d => [
+    d.driver_code || '', d.name || '', d.company_name || '', d.home_address || '',
+    d.first_contract_date || '', d.status || '', d.email || '', d.fixed_store_name || '',
+    d.insurance_info || '', d.phone || '', d.vehicle_type || '', d.notes || ''
+  ]);
+  const wb = new ExcelJS.Workbook();
+  addFilledSampleSheet(wb, 'ドライバーマスタ', header, rows, [10, 20, 14, 24, 14, 10, 18, 14, 14, 16, 16, 36]);
+  const buffer = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="driver_master_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(Buffer.from(buffer));
+});
+
 app.delete('/api/drivers/:id', async (req, res) => {
   await dbRun('DELETE FROM drivers WHERE id = ?', [req.params.id]);
   // 過去の月としてアーカイブ済みの希望シフトは、ドライバーがマスタから削除されても履歴として残す
@@ -2187,6 +2208,21 @@ app.post('/api/stores/import-sv-manager', upload.single('file'), async (req, res
   await finalizeImportBatch(importBatchId, updated);
 
   res.json({ success: true, updated, errors, importBatchId });
+});
+
+// 店舗マスタをExcelでエクスポートする(他のPCへ渡して取込み直せるよう、一括取込みと同じ列構成・列名にしてある)
+app.get('/api/export/stores.xlsx', async (req, res) => {
+  const stores = await dbAll('SELECT * FROM stores ORDER BY name');
+  const header = ['店番', '店舗名', 'エリア', '住所', '店長', 'SV', '備考'];
+  const rows = stores.map(s => [
+    s.store_code || '', s.name || '', s.area || '', s.address || '', s.manager_name || '', s.sv_name || '', s.notes || ''
+  ]);
+  const wb = new ExcelJS.Workbook();
+  addFilledSampleSheet(wb, '店舗マスタ', header, rows, [10, 22, 12, 30, 14, 14, 30]);
+  const buffer = await wb.xlsx.writeBuffer();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="store_master_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  res.send(Buffer.from(buffer));
 });
 
 // ===== ドライバー×店舗の相性(好き/NG) =====
