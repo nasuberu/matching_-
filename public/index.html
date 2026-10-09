@@ -162,16 +162,7 @@
       </details>
 
       <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
-        <label class="text-xs font-bold text-slate-600">並び替え:</label>
-        <select id="sm-sort" onchange="renderStoreMasterList()" class="p-1.5 border rounded text-xs">
-          <option value="name">店舗名順</option>
-          <option value="store_code">店番順</option>
-          <option value="area">エリア順</option>
-          <option value="address">住所順</option>
-          <option value="manager_name">店長順</option>
-          <option value="sv_name">SV順</option>
-          <option value="notes">備考順</option>
-        </select>
+        <span class="text-[11px] text-slate-400">↕ 見出しクリックで並び替え</span>
         <input id="sm-search" oninput="renderStoreMasterList()" placeholder="🔍 店舗名・エリア・住所・店長・SVで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
         <button onclick="exportStoreMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
       </div>
@@ -193,16 +184,16 @@
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
-          <thead class="sticky top-0 z-10 bg-white">
+          <thead id="sm-thead" class="sticky top-0 z-10 bg-white">
             <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
               <th class="p-2.5 bg-white"><input type="checkbox" id="sm-select-all" onchange="toggleSelectAllStores(this.checked)"></th>
-              <th class="p-2.5 bg-white">店番</th>
-              <th class="p-2.5 bg-white">店舗名</th>
-              <th class="p-2.5 bg-white">エリア</th>
-              <th class="p-2.5 bg-white">住所</th>
-              <th class="p-2.5 bg-white">店長</th>
-              <th class="p-2.5 bg-white">SV</th>
-              <th class="p-2.5 bg-white">備考</th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'store_code', renderStoreMasterList)">店番 <span class="sort-arrow text-slate-300" data-field="store_code">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'name', renderStoreMasterList)">店舗名 <span class="sort-arrow text-slate-300" data-field="name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'area', renderStoreMasterList)">エリア <span class="sort-arrow text-slate-300" data-field="area">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'address', renderStoreMasterList)">住所 <span class="sort-arrow text-slate-300" data-field="address">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'manager_name', renderStoreMasterList)">店長 <span class="sort-arrow text-slate-300" data-field="manager_name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'sv_name', renderStoreMasterList)">SV <span class="sort-arrow text-slate-300" data-field="sv_name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(smSortState, 'notes', renderStoreMasterList)">備考 <span class="sort-arrow text-slate-300" data-field="notes">⇅</span></th>
               <th class="p-2.5 bg-white"></th>
             </tr>
           </thead>
@@ -365,21 +356,7 @@
       </details>
 
       <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center gap-2 flex-wrap">
-        <label class="text-xs font-bold text-slate-600">並び替え:</label>
-        <select id="dr-sort" onchange="renderDriverList()" class="p-1.5 border rounded text-xs">
-          <option value="name">氏名順</option>
-          <option value="driver_code">社員コード順</option>
-          <option value="company_name">会社名順</option>
-          <option value="phone">電話番号順</option>
-          <option value="vehicle_type">車両種別順</option>
-          <option value="home_address">自宅住所順</option>
-          <option value="first_contract_date">初回委託日順</option>
-          <option value="status">ステータス順</option>
-          <option value="email">メール順</option>
-          <option value="fixed_store_name">固定希望店舗順</option>
-          <option value="insurance_info">保険加入状況順</option>
-          <option value="notes">備考順</option>
-        </select>
+        <span class="text-[11px] text-slate-400">↕ 見出しクリックで並び替え</span>
         <input id="dr-search" oninput="renderDriverList()" placeholder="🔍 氏名・社員コード・会社名・住所・電話・メールで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
         <button onclick="exportDriverMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
       </div>
@@ -401,21 +378,21 @@
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
-          <thead class="sticky top-0 z-10 bg-white">
+          <thead id="dr-thead" class="sticky top-0 z-10 bg-white">
             <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
               <th class="p-2.5 bg-white"><input type="checkbox" id="dr-select-all" onchange="toggleSelectAllDrivers(this.checked)"></th>
-              <th class="p-2.5 bg-white">社員コード</th>
-              <th class="p-2.5 bg-white">氏名</th>
-              <th class="p-2.5 bg-white">会社名</th>
-              <th class="p-2.5 bg-white">電話番号</th>
-              <th class="p-2.5 bg-white">車両種別</th>
-              <th class="p-2.5 bg-white">自宅住所</th>
-              <th class="p-2.5 bg-white">初回委託日</th>
-              <th class="p-2.5 bg-white">ステータス</th>
-              <th class="p-2.5 bg-white">メール</th>
-              <th class="p-2.5 bg-white">固定希望店舗</th>
-              <th class="p-2.5 bg-white">保険加入状況</th>
-              <th class="p-2.5 bg-white">備考</th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'driver_code', renderDriverList)">社員コード <span class="sort-arrow text-slate-300" data-field="driver_code">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'name', renderDriverList)">氏名 <span class="sort-arrow text-slate-300" data-field="name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'company_name', renderDriverList)">会社名 <span class="sort-arrow text-slate-300" data-field="company_name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'phone', renderDriverList)">電話番号 <span class="sort-arrow text-slate-300" data-field="phone">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'vehicle_type', renderDriverList)">車両種別 <span class="sort-arrow text-slate-300" data-field="vehicle_type">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'home_address', renderDriverList)">自宅住所 <span class="sort-arrow text-slate-300" data-field="home_address">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'first_contract_date', renderDriverList)">初回委託日 <span class="sort-arrow text-slate-300" data-field="first_contract_date">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'status', renderDriverList)">ステータス <span class="sort-arrow text-slate-300" data-field="status">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'email', renderDriverList)">メール <span class="sort-arrow text-slate-300" data-field="email">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'fixed_store_name', renderDriverList)">固定希望店舗 <span class="sort-arrow text-slate-300" data-field="fixed_store_name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'insurance_info', renderDriverList)">保険加入状況 <span class="sort-arrow text-slate-300" data-field="insurance_info">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'notes', renderDriverList)">備考 <span class="sort-arrow text-slate-300" data-field="notes">⇅</span></th>
               <th class="p-2.5 bg-white"></th>
             </tr>
           </thead>
@@ -495,32 +472,23 @@
           <button id="av-view-list-btn" onclick="switchAvailabilityView('list')" class="text-xs px-3 py-1.5 rounded font-bold">リスト表示</button>
           <button id="av-view-grid-btn" onclick="switchAvailabilityView('grid')" class="text-xs px-3 py-1.5 rounded font-bold">📅 カレンダー表示</button>
         </div>
-        <label class="text-xs font-bold text-slate-600 ml-2">並び替え:</label>
-        <select id="av-sort" onchange="renderAvailabilityCurrentView()" class="p-1.5 border rounded text-xs">
-          <option value="date">希望日順</option>
-          <option value="name">ドライバー名順</option>
-          <option value="desired_area">希望エリア順</option>
-          <option value="desired_store">希望店舗順</option>
-          <option value="time_start">開始時刻順</option>
-          <option value="time_end">終了時刻順</option>
-          <option value="requests">要望順</option>
-        </select>
+        <span class="text-[11px] text-slate-400 ml-2">↕ 見出しクリックで並び替え(リスト表示)</span>
         <input id="av-search" oninput="renderAvailabilityCurrentView()" placeholder="🔍 ドライバー名・希望日・エリア・店舗で検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
       </div>
 
       <div id="av-list-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
-          <thead class="sticky top-0 z-10 bg-white">
+          <thead id="av-thead" class="sticky top-0 z-10 bg-white">
             <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
-              <th class="p-2.5 bg-white">社員コード</th>
-              <th class="p-2.5 bg-white">ドライバー名</th>
-              <th class="p-2.5 bg-white">希望日</th>
-              <th class="p-2.5 bg-white">希望エリア</th>
-              <th class="p-2.5 bg-white">希望店舗</th>
-              <th class="p-2.5 bg-white">開始</th>
-              <th class="p-2.5 bg-white">終了</th>
-              <th class="p-2.5 bg-white">要望</th>
-              <th class="p-2.5 bg-white text-right">月間希望日数</th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'driver_code', renderAvailabilityList)">社員コード <span class="sort-arrow text-slate-300" data-field="driver_code">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'name', renderAvailabilityList)">ドライバー名 <span class="sort-arrow text-slate-300" data-field="name">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'date', renderAvailabilityList)">希望日 <span class="sort-arrow text-slate-300" data-field="date">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'desired_area', renderAvailabilityList)">希望エリア <span class="sort-arrow text-slate-300" data-field="desired_area">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'desired_store', renderAvailabilityList)">希望店舗 <span class="sort-arrow text-slate-300" data-field="desired_store">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'time_start', renderAvailabilityList)">開始 <span class="sort-arrow text-slate-300" data-field="time_start">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'time_end', renderAvailabilityList)">終了 <span class="sort-arrow text-slate-300" data-field="time_end">⇅</span></th>
+              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'requests', renderAvailabilityList)">要望 <span class="sort-arrow text-slate-300" data-field="requests">⇅</span></th>
+              <th class="p-2.5 bg-white text-right cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(avSortState, 'monthly_count', renderAvailabilityList)">月間希望日数 <span class="sort-arrow text-slate-300" data-field="monthly_count">⇅</span></th>
               <th class="p-2.5 bg-white"></th>
             </tr>
           </thead>
@@ -845,6 +813,7 @@
     // ===== ドライバーマスタ =====
     let editingDriverId = null;
     let selectedDriverIds = new Set();
+    let drSortState = { field: 'name', dir: 'asc' };
 
     async function loadDrivers() {
       const [driversRes, storesRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores')]);
@@ -904,7 +873,7 @@
     }
 
     function getVisibleDrivers() {
-      const sortBy = document.getElementById('dr-sort').value;
+      const { field, dir } = drSortState;
       const keyword = normalizeForSearch(document.getElementById('dr-search').value.trim());
 
       let rows = driversCache;
@@ -912,17 +881,13 @@
         rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.fixed_store_name, d.notes]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
-      const DRIVER_SORT_FIELDS = {
-        driver_code: true, company_name: false, phone: true, vehicle_type: false, home_address: false,
-        first_contract_date: false, status: false, email: false, fixed_store_name: false, insurance_info: false, notes: false
-      };
-      return [...rows].sort((a, b) => {
-        if (sortBy in DRIVER_SORT_FIELDS) {
-          const numeric = DRIVER_SORT_FIELDS[sortBy];
-          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
-        }
-        return a.name.localeCompare(b.name, 'ja');
+      const DRIVER_SORT_NUMERIC = { driver_code: true, phone: true };
+      const sorted = [...rows].sort((a, b) => {
+        const numeric = DRIVER_SORT_NUMERIC[field];
+        const cmp = (a[field] || '').localeCompare(b[field] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
+        return dir === 'desc' ? -cmp : cmp;
       });
+      return sorted;
     }
 
     function renderDriverList() {
@@ -959,6 +924,7 @@
 
       document.getElementById('dr-select-all').checked = rows.length > 0 && rows.every(d => selectedDriverIds.has(d.id));
       updateDriverBulkBar();
+      updateSortArrows('dr-thead', drSortState);
     }
 
     function toggleDriverSelect(id, checked) {
@@ -1143,6 +1109,7 @@
     // ===== 店舗マスタ =====
     let storeMasterCache = [];
     let editingStoreId = null;
+    let smSortState = { field: 'name', dir: 'asc' };
 
     async function loadStoreMaster() {
       const res = await fetch('/api/stores');
@@ -1155,7 +1122,7 @@
 
     // 現在の検索/並び替え条件を反映した表示対象一覧を返す(表示・全選択・CSV書き出しで共通利用)
     function getVisibleStores() {
-      const sortBy = document.getElementById('sm-sort').value;
+      const { field, dir } = smSortState;
       const keyword = normalizeForSearch(document.getElementById('sm-search').value.trim());
 
       let rows = storeMasterCache;
@@ -1163,14 +1130,13 @@
         rows = rows.filter(s => [s.name, s.store_code, s.area, s.address, s.manager_name, s.sv_name, s.notes]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
-      const STORE_SORT_FIELDS = { store_code: true, area: false, address: false, manager_name: false, sv_name: false, notes: false };
-      return [...rows].sort((a, b) => {
-        if (sortBy in STORE_SORT_FIELDS) {
-          const numeric = STORE_SORT_FIELDS[sortBy];
-          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
-        }
-        return a.name.localeCompare(b.name, 'ja');
+      const STORE_SORT_NUMERIC = { store_code: true };
+      const sorted = [...rows].sort((a, b) => {
+        const numeric = STORE_SORT_NUMERIC[field];
+        const cmp = (a[field] || '').localeCompare(b[field] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
+        return dir === 'desc' ? -cmp : cmp;
       });
+      return sorted;
     }
 
     function renderStoreMasterList() {
@@ -1201,6 +1167,7 @@
 
       document.getElementById('sm-select-all').checked = rows.length > 0 && rows.every(s => selectedStoreIds.has(s.id));
       updateBulkBar();
+      updateSortArrows('sm-thead', smSortState);
     }
 
     function toggleStoreSelect(id, checked) {
@@ -1446,6 +1413,17 @@
     let availabilityCache = [];
     let editingAvailabilityId = null;
     let availabilityView = 'grid';
+    let avSortState = { field: 'date', dir: 'desc' };
+
+    // 月間希望日数は現在の絞り込みに関係なく、全データから「このドライバーのこの月の提出日数」を数える
+    function getAvailabilityMonthlyCountMap() {
+      const map = new Map();
+      for (const a of availabilityCache) {
+        const key = `${a.driver_id}|${a.desired_date.slice(0, 7)}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+      return map;
+    }
 
     async function loadAvailability() {
       const res = await fetch('/api/driver-availability');
@@ -1512,7 +1490,7 @@
     }
 
     function getVisibleAvailability() {
-      const sortBy = document.getElementById('av-sort').value;
+      const { field, dir } = avSortState;
       const keyword = normalizeForSearch(document.getElementById('av-search').value.trim());
 
       let rows = availabilityCache;
@@ -1520,14 +1498,23 @@
         rows = rows.filter(a => [a.driver_name, a.driver_code, a.desired_date, a.desired_area, a.desired_store, a.requests]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
-      const AV_SORT_FIELDS = ['desired_area', 'desired_store', 'time_start', 'time_end', 'requests'];
-      return [...rows].sort((a, b) => {
-        if (sortBy === 'name') return a.driver_name.localeCompare(b.driver_name, 'ja') || a.desired_date.localeCompare(b.desired_date);
-        if (AV_SORT_FIELDS.includes(sortBy)) {
-          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja') || a.desired_date.localeCompare(b.desired_date);
+      const monthlyMap = getAvailabilityMonthlyCountMap();
+      const sorted = [...rows].sort((a, b) => {
+        let cmp;
+        if (field === 'name') cmp = a.driver_name.localeCompare(b.driver_name, 'ja');
+        else if (field === 'date') cmp = a.desired_date.localeCompare(b.desired_date);
+        else if (field === 'driver_code') cmp = (a.driver_code || '').localeCompare(b.driver_code || '', 'ja', { numeric: true });
+        else if (field === 'monthly_count') {
+          const ca = monthlyMap.get(`${a.driver_id}|${a.desired_date.slice(0, 7)}`) || 0;
+          const cb = monthlyMap.get(`${b.driver_id}|${b.desired_date.slice(0, 7)}`) || 0;
+          cmp = ca - cb;
+        } else {
+          cmp = (a[field] || '').localeCompare(b[field] || '', 'ja');
         }
-        return b.desired_date.localeCompare(a.desired_date) || a.driver_name.localeCompare(b.driver_name, 'ja');
+        if (cmp === 0) cmp = a.desired_date.localeCompare(b.desired_date) || a.driver_name.localeCompare(b.driver_name, 'ja');
+        return dir === 'desc' ? -cmp : cmp;
       });
+      return sorted;
     }
 
     function renderAvailabilityList() {
@@ -1537,14 +1524,10 @@
 
       if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="10" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する希望シフトが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+        updateSortArrows('av-thead', avSortState);
         return;
       }
-      // 月間希望日数は現在の絞り込みに関係なく、全データから「このドライバーのこの月の提出日数」を数える
-      const monthlyCountByDriverMonth = new Map();
-      for (const a of availabilityCache) {
-        const key = `${a.driver_id}|${a.desired_date.slice(0, 7)}`;
-        monthlyCountByDriverMonth.set(key, (monthlyCountByDriverMonth.get(key) || 0) + 1);
-      }
+      const monthlyCountByDriverMonth = getAvailabilityMonthlyCountMap();
       tbody.innerHTML = rows.map(a => {
         const monthlyCount = monthlyCountByDriverMonth.get(`${a.driver_id}|${a.desired_date.slice(0, 7)}`) || 0;
         return `
@@ -1565,6 +1548,7 @@
         </tr>
       `;
       }).join('');
+      updateSortArrows('av-thead', avSortState);
     }
 
     function editAvailability(id) {
@@ -2749,6 +2733,28 @@
     // 「吉川  守人」のようにスペースの数や種類が実データ側でバラついていても検索でヒットするようにするため)
     function normalizeForSearch(str) {
       return String(str || '').toLowerCase().replace(/[\s　]+/g, '');
+    }
+
+    // 一覧テーブルの「列見出しをクリックして並び替え」共通処理。
+    // 同じ列を再クリックすると昇順/降順を切り替える。
+    function toggleSort(sortState, field, renderFn) {
+      if (sortState.field === field) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState.field = field;
+        sortState.dir = 'asc';
+      }
+      renderFn();
+    }
+
+    // 見出し内の矢印(▲▼⇅)を現在の並び替え状態に合わせて更新する
+    function updateSortArrows(theadId, sortState) {
+      document.querySelectorAll(`#${theadId} .sort-arrow`).forEach(el => {
+        const active = el.dataset.field === sortState.field;
+        el.textContent = active ? (sortState.dir === 'asc' ? '▲' : '▼') : '⇅';
+        el.classList.toggle('text-blue-600', active);
+        el.classList.toggle('text-slate-300', !active);
+      });
     }
 
     // "YYYY-MM-DD"の日付文字列に「(月)」のような曜日を付けて返す
