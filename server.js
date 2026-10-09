@@ -1635,21 +1635,24 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     // 店舗マスタに住所が登録されていれば、それを店舗依頼側にも使う(距離計算ができるように)
     const storeInfo = await getStoreMasterInfo(store_id);
 
-    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する
-    // (ただし、その店舗が店舗相性マスタで既にNGに設定されている場合は矛盾するため設定しない)
+    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する。
+    // ただし、ドライバーマスタに既に固定希望店舗が登録されている場合は、備考の内容より
+    // マスタの登録内容を優先し、上書きしない(マスタのメンテナンスが正、備考はあくまで参考情報という位置づけ)
     const codeMatch = notesRaw.match(/(\d{5,8})/);
     const normalizedCode = codeMatch ? normalizeEmployeeCode(codeMatch[1]) : null;
     if (normalizedCode && driverByCode.has(normalizedCode)) {
       const matchedDriverId = driverByCode.get(normalizedCode);
-      if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
+      const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
+      if (oldFixedStoreId) {
+        if (oldFixedStoreId !== store_id) {
+          errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は別の固定希望店舗を示していますが、ドライバーマスタに既に固定希望店舗が登録済みのため、マスタの設定を優先し上書きしませんでした(変更したい場合はドライバーマスタから手動で変更してください)`);
+        }
+      } else if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
         errors.push(`${r + 1}行目「${store_name}」: 備考の社員番号(${codeMatch[1]})は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
       } else {
-        const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
         await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
-        if (oldFixedStoreId !== store_id) {
-          await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
-          currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
-        }
+        await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
+        currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
         fixedDriverLinks++;
       }
     }
