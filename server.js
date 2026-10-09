@@ -270,6 +270,10 @@ db.serialize(() => {
   // 保存しておき、再度マッチングを実行する時に内容が変わっていなければ再解析(API呼び出し)をスキップする
   ensureColumn('store_requests', 'ai_preference_json', 'TEXT');
   ensureColumn('store_requests', 'ai_analyzed_requests', 'TEXT');
+  // エリア固定の「SV行」(特定の個人ではなく、SVが担当するエリア全体の需要)から生成された店舗依頼を
+  // グループ化するキー。同じpool_group_idを持つ行は「このうちどれか1件が指定人数分埋まればよい」
+  // 候補店舗群として扱う(通常の店舗依頼はNULLのまま、1件=1店舗の個別需要として今まで通り扱う)
+  ensureColumn('store_requests', 'pool_group_id', 'TEXT');
   ensureColumn('driver_availability', 'import_batch_id', 'INTEGER');
   ensureColumn('drivers', 'area_fixed_batch_id', 'INTEGER');
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
@@ -621,6 +625,18 @@ function parseTimeRangeText(text) {
 const WEEKDAY_KEY_BY_JSDAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 function weekdayKeyOf(dateStr) {
   return WEEKDAY_KEY_BY_JSDAY[new Date(dateStr + 'T00:00:00').getDay()];
+}
+
+// 指定した年月の日付を、曜日(Date.getDay()の0=日,1=月,...,6=土)ごとにまとめた対応表を返す
+// (「この曜日は月内のこの日付たち」という対応。曜日パターンを実際の日付に展開する時に使う)
+function datesByWeekdayInMonth(year, month) {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const datesByJsDay = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    const jsDay = new Date(year, month - 1, d).getDay();
+    (datesByJsDay[jsDay] = datesByJsDay[jsDay] || []).push(d);
+  }
+  return datesByJsDay;
 }
 
 // 候補者(driver_id, home_lat, home_lng, desired_store, desired_area を持つオブジェクト)を
@@ -1436,18 +1452,26 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
   const colName = colOf(NAME_COLUMN_LABELS);
   const colNotes = colOf(['備考']);
   const colDepo = colOf(['想定デポ(候補店舗)', '想定デポ', '候補店舗']);
+  const colCount = colOf(['希望人数', '人数']);
   const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
   const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const WEEKDAY_JSDAY_AF = [1, 2, 3, 4, 5, 6, 0]; // Date.getDay()に合わせる(0=日,1=月,...,6=土)
   const weekdayCols = WEEKDAY_LABELS.map(l => colOf([l]));
   if (weekdayCols.some(c => c === -1)) {
     return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
   }
 
+  const year = req.body.year ? parseInt(req.body.year, 10) : null;
+  const month = req.body.month ? parseInt(req.body.month, 10) : null;
+  const datesByJsDay = (year && month) ? datesByWeekdayInMonth(year, month) : null;
+
   const drivers = await dbAll('SELECT id, name, area_fixed_enabled, fixed_store_id FROM drivers');
   const driverByName = new Map(drivers.map(d => [d.name.trim(), d]));
 
   let imported = 0;
+  let poolRequestsCreated = 0;
   const errors = [];
+  const now = new Date().toISOString();
   for (let r = headerRowIndex + 1; r < rows.length; r++) {
     const row = rows[r];
     const name = String(row[colName] ?? '').trim();
@@ -1460,7 +1484,7 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
       if (!cell) continue;
       const timeRange = parseTimeRangeText(cell);
       if (!timeRange) continue;
-      pattern[WEEKDAY_KEYS[w]] = `${timeRange.start}-${timeRange.end}`;
+      pattern[WEEKDAY_KEYS[w]] = timeRange;
       hasAnyPattern = true;
     }
 
@@ -1468,9 +1492,6 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
     const depoNames = depoRaw.split(/[、・,，]/).map(s => s.trim()).filter(Boolean);
 
     if (!hasAnyPattern && depoNames.length === 0) continue; // 名前だけの空行はスキップ(候補者リストの未記入分)
-
-    const driver = driverByName.get(name);
-    if (!driver) { errors.push(`${r + 1}行目「${name}」: ドライバーマスタに見つかりません(先に登録してください)`); continue; }
 
     const storeIds = [];
     const unresolvedStoreNames = [];
@@ -1482,19 +1503,70 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
       errors.push(`${r + 1}行目「${name}」: 想定デポの店舗名が認識できませんでした: ${unresolvedStoreNames.join('、')}`);
     }
     if (storeIds.length === 0) {
-      errors.push(`${r + 1}行目「${name}」: 候補店舗が1件も認識できなかったため、エリア固定を設定しませんでした`);
+      errors.push(`${r + 1}行目「${name}」: 候補店舗が1件も認識できなかったため、設定しませんでした`);
       continue;
     }
 
-    await dbRun(
-      'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ?, area_fixed_batch_id = ? WHERE id = ?',
-      [JSON.stringify(pattern), JSON.stringify(storeIds), importBatchId, driver.id]
-    );
-    imported++;
-  }
-  await finalizeImportBatch(importBatchId, imported);
+    const driver = driverByName.get(name);
+    if (driver) {
+      // 個人事業主(ドライバー)本人の行: 従来通りドライバーマスタにエリア固定を設定する
+      await dbRun(
+        'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ?, area_fixed_batch_id = ? WHERE id = ?',
+        [JSON.stringify(Object.fromEntries(Object.entries(pattern).map(([k, v]) => [k, `${v.start}-${v.end}`]))), JSON.stringify(storeIds), importBatchId, driver.id]
+      );
+      imported++;
+      continue;
+    }
 
-  res.json({ success: true, imported, errors, importBatchId });
+    // ドライバーマスタに見つからない名前(=SVの名前など、個人事業主ではない名義)の行は、
+    // 「このSVが担当するエリア(想定デポの店舗群)全体で、指定人数が必要」という店舗側の需要として扱う。
+    // 特定の個人には紐付けず、誰でもよいので候補店舗のうちどれか1つに合計の必要人数が埋まればよい
+    // (pool_group_idを共有する店舗依頼を複数作り、マッチング側でグループ単位の合計で必要人数を判定する)
+    if (!year || !month) {
+      errors.push(`${r + 1}行目「${name}」: ドライバーマスタに見つからない名前のため店舗側の需要として取込もうとしましたが、対象年月が指定されていないため取込めませんでした`);
+      continue;
+    }
+    const requiredCount = colCount !== -1 ? (parseInt(String(row[colCount] ?? '').trim(), 10) || 1) : 1;
+    const rowNotes = colNotes !== -1 ? String(row[colNotes] ?? '').trim() : '';
+    const storeInfoRows = await dbAll(`SELECT id, name, area, address, lat, lng FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`, storeIds);
+    const storeInfoById = new Map(storeInfoRows.map(s => [s.id, s]));
+    const storeNamesForNote = storeInfoRows.map(s => s.name).filter(Boolean);
+
+    for (const [weekdayKey, timeRange] of Object.entries(pattern)) {
+      const jsDay = WEEKDAY_JSDAY_AF[WEEKDAY_KEYS.indexOf(weekdayKey)];
+      for (const day of (datesByJsDay[jsDay] || [])) {
+        const request_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const poolGroupId = `af_pool_${normalizeNameForMatch(name)}_${request_date}`;
+
+        const siblings = await dbAll('SELECT id FROM store_requests WHERE pool_group_id = ? AND archived_month IS NULL', [poolGroupId]);
+        if (siblings.length > 0) {
+          const hasConfirmed = await dbGet(
+            `SELECT 1 FROM matches WHERE store_request_id IN (${siblings.map(() => '?').join(',')}) AND status IN ('確定', '完了') AND archived_month IS NULL`,
+            siblings.map(s => s.id)
+          );
+          if (hasConfirmed) {
+            errors.push(`${r + 1}行目「${name}」: ${request_date}は既に確定/完了のマッチングがあるため、候補店舗の更新をスキップしました`);
+            continue;
+          }
+          await dbRun(`DELETE FROM store_requests WHERE pool_group_id = ?`, [poolGroupId]);
+        }
+
+        const requests = `【エリア固定プール: ${name}さん担当エリア】候補店舗(いずれか1つで可): ${storeNamesForNote.join('・')}${rowNotes ? ` / ${rowNotes}` : ''}`;
+        for (const storeId of storeIds) {
+          const storeInfo = storeInfoById.get(storeId);
+          await dbRun(
+            `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id, import_batch_id, pool_group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [storeInfo?.name || '', storeInfo?.area || '', storeInfo?.address || '', storeInfo?.lat ?? null, storeInfo?.lng ?? null,
+              request_date, timeRange.start, timeRange.end, requiredCount, requests, now, storeId, importBatchId, poolGroupId]
+          );
+          poolRequestsCreated++;
+        }
+      }
+    }
+  }
+  await finalizeImportBatch(importBatchId, imported + poolRequestsCreated);
+
+  res.json({ success: true, imported, poolRequestsCreated, errors, importBatchId });
 });
 
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
@@ -2266,16 +2338,26 @@ app.post('/api/matches/run', async (req, res) => {
   let createdCount = 0;
   let noCandidateCount = 0;
   const filledCountByRequestId = {}; // store_request.id -> 既に埋まった人数(優先階層で埋めた分)
+  // エリア固定の「SV行」由来のプール需要(pool_group_id)は、グループ内のどの店舗で埋まっても
+  // 合計でカウントする(「4店舗のうちどれか1つに合計N人」という意味のため、1店舗ごとの個別集計ではなく
+  // グループ単位で必要人数を判定する)
+  const filledCountByPoolGroup = {};
+  function getFilledCount(store) {
+    return store.pool_group_id ? (filledCountByPoolGroup[store.pool_group_id] || 0) : (filledCountByRequestId[store.id] || 0);
+  }
 
   // 既に「確定」「完了」になっているマッチングは消さずそのまま活かすため、その分を
   // 「埋まった人数」「その日は既に割当済みのドライバー」として先に計上しておく
   // (そうしないと必要人数を超えて候補を追加したり、同じドライバーを同日に二重登録してしまう)
   const existingMatches = await dbAll(`
-    SELECT store_request_id, driver_id, match_date FROM matches WHERE archived_month IS NULL AND status IN ('確定', '完了')
+    SELECT m.store_request_id, m.driver_id, m.match_date, s.pool_group_id
+    FROM matches m JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
   `);
   for (const em of existingMatches) {
     (assignedDriverIdsByDate[em.match_date] = assignedDriverIdsByDate[em.match_date] || new Set()).add(em.driver_id);
     filledCountByRequestId[em.store_request_id] = (filledCountByRequestId[em.store_request_id] || 0) + 1;
+    if (em.pool_group_id) filledCountByPoolGroup[em.pool_group_id] = (filledCountByPoolGroup[em.pool_group_id] || 0) + 1;
   }
 
   async function insertMatch(store, p) {
@@ -2285,6 +2367,8 @@ app.post('/api/matches/run', async (req, res) => {
       [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount]
     );
     assignedDriverIdsByDate[store.request_date].add(p.driver_id);
+    filledCountByRequestId[store.id] = (filledCountByRequestId[store.id] || 0) + 1;
+    if (store.pool_group_id) filledCountByPoolGroup[store.pool_group_id] = (filledCountByPoolGroup[store.pool_group_id] || 0) + 1;
     createdCount++;
   }
 
@@ -2296,7 +2380,7 @@ app.post('/api/matches/run', async (req, res) => {
     if (!tier) continue;
     for (const store of storeRequests) {
       const assignedToday = assignedDriverIdsByDate[store.request_date];
-      const alreadyFilled = filledCountByRequestId[store.id] || 0;
+      const alreadyFilled = getFilledCount(store);
       const needed = (store.required_count || 1) - alreadyFilled;
       if (needed <= 0) continue;
 
@@ -2311,14 +2395,13 @@ app.post('/api/matches/run', async (req, res) => {
 
       const picked = tierCandidates.slice(0, needed);
       for (const p of picked) await insertMatch(store, p);
-      filledCountByRequestId[store.id] = alreadyFilled + picked.length;
     }
   }
 
   // 2階層目: 残りの枠を、これまで通りのスコアリング(距離・希望店舗/エリア一致・相性・経験)で埋める
   for (const store of storeRequests) {
     const assignedToday = assignedDriverIdsByDate[store.request_date];
-    const alreadyFilled = filledCountByRequestId[store.id] || 0;
+    const alreadyFilled = getFilledCount(store);
     const needed = (store.required_count || 1) - alreadyFilled;
     if (needed <= 0) continue;
 

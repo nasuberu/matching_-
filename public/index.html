@@ -18,7 +18,7 @@
 
   <nav class="bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto sticky top-[52px] z-30">
     <button id="btn-nav-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📊 ダッシュボード</button>
-    <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap"><span id="nav-label-matches">📋 マッチング結果</span></button>
+    <button id="btn-nav-matches" onclick="switchTab('matches')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap"><span id="nav-label-matches">📋 マッチング・結果</span></button>
     <button id="btn-nav-store" onclick="switchTab('store')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏬 店舗依頼</button>
     <button id="btn-nav-availability" onclick="switchTab('availability')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🗓️ 希望シフト</button>
     <button id="btn-nav-storemaster" onclick="switchTab('storemaster')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🏪 店舗マスタ</button>
@@ -503,7 +503,7 @@
     <div id="tab-history" class="hidden space-y-4">
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
         <h2 class="font-bold text-slate-800">📜 派遣履歴を登録</h2>
-        <p class="text-[11px] text-slate-400">マッチング結果タブで「完了にする」を押すと自動でここに記録されます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。</p>
+        <p class="text-[11px] text-slate-400">マッチング・結果タブで「完了にする」を押すと自動でここに記録されます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。</p>
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <p class="text-xs font-bold text-slate-600">📥 過去実績をExcel/CSVから一括取込み</p>
@@ -546,7 +546,7 @@
           <li>① サンプルドライバーを「ドライバーマスタ」タブの一括取込みで登録する</li>
           <li>② サンプル店舗依頼を「店舗依頼」タブの店舗依頼取込みで登録する</li>
           <li>③ サンプル希望シフトを「ドライバーマスタ」タブの楽シフ形式の一括取込みで登録する(①を先に済ませておくこと)</li>
-          <li>④ 「マッチング結果」タブで自動マッチングを実行し、結果を見てみる</li>
+          <li>④ 「マッチング・結果」タブで自動マッチングを実行し、結果を見てみる</li>
           <li>⑤ 練習が終わったら、①のサンプルドライバーを削除する(②③のデータも連動して消えます)。②の取込みだけ先に消したい場合はダッシュボードの「📥 取込み履歴」から取り消せます</li>
         </ol>
         <div class="flex gap-2 flex-wrap">
@@ -1355,7 +1355,7 @@
       list.innerHTML = rows.map(s => `
         <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
           <div>
-            <p class="font-bold text-sm">${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span></p>
+            <p class="font-bold text-sm">${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span>${s.pool_group_id ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🔀候補店舗のいずれか1つでOK</span>' : ''}</p>
             <p class="text-xs text-slate-500">📅 ${esc(s.request_date)} ${esc(s.time_start || '')}〜${esc(s.time_end || '')} ／ 必要人数: ${s.required_count}名</p>
             <p class="text-[11px] text-slate-400">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</p>
             ${s.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(s.requests)}</p>` : ''}
@@ -1432,12 +1432,17 @@
         // 無ければ/api/drivers/import-area-fixed側が何もせずskipped:trueを返すだけなので、画面には何も出ない
         const areaForm = new FormData();
         areaForm.append('file', fileInput.files[0]);
+        areaForm.append('year', year);
+        areaForm.append('month', month);
         const areaRes = await fetch('/api/drivers/import-area-fixed', { method: 'POST', body: areaForm });
         const areaData = await areaRes.json();
         if (!areaData.success) {
           html += `<div class="mt-1 text-red-600 font-bold">❌ エリア固定の取込みに失敗しました: ${esc(areaData.message || '')}</div>`;
         } else if (!areaData.skipped) {
-          html += `<div class="mt-1 text-indigo-700 font-bold">✅ エリア固定: ${areaData.imported}人分を設定しました</div>`;
+          const parts = [];
+          if (areaData.imported > 0) parts.push(`${areaData.imported}人分のエリア固定を設定`);
+          if (areaData.poolRequestsCreated > 0) parts.push(`SV担当エリアの店舗依頼を${areaData.poolRequestsCreated}件作成(誰でも応募可、候補店舗のいずれか1つで必要人数が埋まればOK)`);
+          if (parts.length > 0) html += `<div class="mt-1 text-indigo-700 font-bold">✅ エリア固定: ${parts.join(' / ')}</div>`;
           if (areaData.errors && areaData.errors.length > 0) {
             html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ エリア固定で要確認(${areaData.errors.length}件):</p><ul class="list-disc pl-4">${areaData.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
           }
@@ -2893,7 +2898,7 @@
       const data = await res.json();
       if (!data.success) { el.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '失敗しました')}</span>`; return; }
       if (data.needsConfirmation) {
-        if (confirm(`「確定」のまま「完了」にしていないマッチングが${data.unfinishedCount}件残っています。このまま削除してよろしいですか？(先にマッチング結果タブで「完了」にすることをおすすめします)`)) {
+        if (confirm(`「確定」のまま「完了」にしていないマッチングが${data.unfinishedCount}件残っています。このまま削除してよろしいですか？(先にマッチング・結果タブで「完了」にすることをおすすめします)`)) {
           return closeMonth(true);
         }
         el.innerHTML = '<span class="text-amber-600">キャンセルしました。先に「完了」にしてから再度実行してください</span>';
@@ -3417,25 +3422,25 @@
     // ===== 使い方・よくある質問 =====
     const HELP_TOPICS = [
       { category: '全体の流れ', title: 'このアプリは何をするもの？', body:
-        '店舗からの人員依頼(店舗依頼)と、個人事業主(ドライバー)の希望シフトを突き合わせて、誰をどの店舗に割り当てるかの候補を自動で作るツールです。\n基本の流れ:\n①店舗依頼・希望シフトを登録(手入力 or Excel/CSV取込み)\n②「マッチング結果」タブで自動マッチングを実行\n③候補を確認し、問題なければ「確定」にする\n④実際に稼働したら「完了」にする(派遣履歴に自動で記録される)\n⑤月末に「月次クローズ」でその月をアーカイブし、翌月分の取込みに進む' },
+        '店舗からの人員依頼(店舗依頼)と、個人事業主(ドライバー)の希望シフトを突き合わせて、誰をどの店舗に割り当てるかの候補を自動で作るツールです。\n基本の流れ:\n①店舗依頼・希望シフトを登録(手入力 or Excel/CSV取込み)\n②「マッチング・結果」タブで自動マッチングを実行\n③候補を確認し、問題なければ「確定」にする\n④実際に稼働したら「完了」にする(派遣履歴に自動で記録される)\n⑤月末に「月次クローズ」でその月をアーカイブし、翌月分の取込みに進む' },
       { category: '全体の流れ', title: '複数のPCから使いたい', body:
         'サーバーを起動しているPCのIPアドレスを調べ、同じ社内ネットワークの別PCのブラウザで「http://(IPアドレス):4001」を開けば利用できます。初回はWindowsファイアウォールの許可が必要な場合があります。\nIPアドレスはPCの再起動等で変わることがあるため、安定して使うにはIT部門にDHCP予約(固定化)を依頼するのがおすすめです。\n※複数人が同時に同じデータを編集すると競合する可能性があるため、閲覧と編集で役割を分けるのが安全です。' },
-      { category: 'マッチング結果', title: '自動マッチングの実行方法', body:
-        '「マッチング結果」タブの「⚡ 自動マッチングを実行」を押すと、その時点の店舗依頼・希望シフトから候補を作り直します(既存の候補は一旦削除され、確定済み/完了済みのものも含め全部作り直されるので注意)。\n実行後、候補が見つからなかった依頼は画面上部に警告として一覧表示されます。' },
-      { category: 'マッチング結果', title: '候補が見つからない(未マッチ)のはなぜ？', body:
+      { category: 'マッチング・結果', title: '自動マッチングの実行方法', body:
+        '「マッチング・結果」タブの「⚡ 自動マッチングを実行」を押すと、その時点の店舗依頼・希望シフトから候補を作り直します(既存の候補は一旦削除され、確定済み/完了済みのものも含め全部作り直されるので注意)。\n実行後、候補が見つからなかった依頼は画面上部に警告として一覧表示されます。' },
+      { category: 'マッチング・結果', title: '候補が見つからない(未マッチ)のはなぜ？', body:
         '以下のいずれか(複合も含む)が原因です:\n・その日の希望シフト提出者が少ない(ドライバー数不足。これは構造的な問題で、バグではありません)\n・その日に必要な店舗数が多く、1人1日1店舗の制約で取り合いになっている\n・その日に空いている人が全員その店舗をNGにしている\n「🔍 空き状況を調べる」で日付・店舗を指定すれば、個別に手動で確認・調整できます。' },
-      { category: 'マッチング結果', title: '候補・確定・完了・欠勤・変更とは？', body:
+      { category: 'マッチング・結果', title: '候補・確定・完了・欠勤・変更とは？', body:
         '・候補: 自動マッチングが作った未確定の提案\n・確定: コーディネーターが確定させた状態(ここでシフト表送付の対象になる)\n・完了: 実際に稼働が終わった状態(派遣履歴に自動記録される)\n・欠勤: 確定/完了後に本人都合で来られなくなった場合\n・変更: 欠勤以外の理由(店舗都合など)で担当を変える場合\n欠勤・変更にすると、その場で「代替を探す」機能が使えます。' },
-      { category: 'マッチング結果', title: '欠勤・交代が出たときの代わりの人の探し方', body:
+      { category: 'マッチング・結果', title: '欠勤・交代が出たときの代わりの人の探し方', body:
         '確定/候補の行にある「🔁 交代させる」ボタンから理由を選んで登録すると、ステータスが「欠勤」または「変更」になります。その行の「🔁 代替を探す」を押すと、その日・その店舗に割り当て可能な人を全ドライバーの中からスコア順に提案します。選ぶとその場で新しい候補が作られます。' },
-      { category: 'マッチング結果', title: '空き状況を単独で調べたい', body:
+      { category: 'マッチング・結果', title: '空き状況を単独で調べたい', body:
         '「🔍 空き状況を調べる(単独検索)」で、既存のマッチングとは無関係に「その日に誰が空いているか」をすぐ調べられます。店舗を指定すると距離・相性・経験を加味したスコア順、指定しなければ全員を氏名順に表示します。' },
-      { category: 'マッチング結果', title: 'シフト表を個人事業主・店舗に送りたい', body:
+      { category: 'マッチング・結果', title: 'シフト表を個人事業主・店舗に送りたい', body:
         'ダッシュボードの「📨 シフト表の送付」から、「候補を全て確定にする」→「個人事業主向け シフト表」「店舗向け シフト表」のExcelボタンでそれぞれ一括ダウンロードできます(1人/1店舗ごとにシート分け)。\nまた「📋 マッチング結果一覧(SV確認シート形式)」では、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表やExcel(1シート)でも出力できます。' },
-      { category: 'マッチング結果', title: 'マッチングの優先順位を変えたい', body:
+      { category: 'マッチング・結果', title: 'マッチングの優先順位を変えたい', body:
         '「⚙️ マッチングの優先順位の設定」パネルで、どの条件を優先するか選んでチェックを入れ、↑↓で並び替えられます。チェックを入れた項目の候補を上から順に全店舗分先に確保し、残りは通常のスコアリングで埋めます。保存すると次回の自動マッチングから反映されます。' },
-      { category: 'マッチング結果', title: '固定希望店舗・エリア固定とは？', body:
-        '・固定希望店舗: そのドライバーがいつも行く決まった店舗(ドライバーマスタで設定)。希望シフトで店舗未入力の日の初期値として使われ、「マッチングの優先順位」で最優先にすることもできる。1ヶ月間ずっと同じ店舗に割り当てられると自動でも設定される。\n・エリア固定: 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗(想定デポ)の中から、その日の空き状況に応じて優先的に割り当てる仕組み。希望シフト未提出の日だけ適用される。' },
+      { category: 'マッチング・結果', title: '固定希望店舗・エリア固定とは？', body:
+        '・固定希望店舗: そのドライバーがいつも行く決まった店舗(ドライバーマスタで設定)。希望シフトで店舗未入力の日の初期値として使われ、「マッチングの優先順位」で最優先にすることもできる。1ヶ月間ずっと同じ店舗に割り当てられている、または店舗依頼の備考(社員番号やAI解析)から示唆された場合は、ドライバーマスタ一覧に💡候補として表示される(自動では設定されない。採用するかはコーディネーターが一覧から手動で判断する)。\n・エリア固定(個人事業主ごと): 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗(想定デポ)の中から、その日の空き状況に応じて優先的に割り当てる仕組み。希望シフト未提出の日だけ適用される。\n・エリア固定(SVのエリア需要): エリア固定の取込みデータで、名前がドライバーマスタに登録されていない(=SV等、個人事業主ではない)場合は、「そのSVが担当するエリア(候補店舗群)全体で、指定人数が必要」という店舗側の需要として扱われる。特定の個人には紐付けず、候補店舗のうちどれか1つに合計の必要人数が埋まればよい(店舗依頼一覧に🔀バッジ付きで表示される)。' },
 
       { category: '店舗依頼', title: '店舗依頼の登録方法', body:
         '1件ずつ手入力のほか、「📥 店舗依頼取込み」から店舗×曜日ごとの時間帯表(週次パターン)をExcel/CSVで一括取込みできます。指定した年月の実際の日付に展開して登録し、同じ店舗・同じ曜日・同じ時間帯の行が複数あれば必要人数として合算します。\n「店番」の列(任意)があれば、店舗名の表記ゆれに関係なく確実に同じ店舗として照合できます。\n同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、ボタンを分けなくても自動であわせて取込まれます。' },
@@ -3457,13 +3462,13 @@
       { category: 'ドライバーマスタ', title: 'ドライバーマスタの管理', body:
         '氏名・社員コード・会社名・電話番号・車両種別・自宅住所・初回委託日・ステータス・メール・固定希望店舗・保険加入状況・備考を登録できます。検索・並び替え・複数選択一括編集に対応しています。' },
       { category: 'ドライバーマスタ', title: 'エリア固定の設定方法', body:
-        '1件ずつなら、ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。\nまとめて設定したい場合は、店舗依頼タブの「📥 店舗依頼取込み」で取込みます(同じExcelファイルの別シートに、氏名・曜日ごとの時間帯・想定デポ(候補店舗)を書いた表があれば、専用のボタンを押さなくても自動であわせて取込まれます)。' },
+        '1件ずつなら、ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。\nまとめて設定したい場合は、店舗依頼タブの「📥 店舗依頼取込み」で取込みます(同じExcelファイルの別シートに、氏名・曜日ごとの時間帯・想定デポ(候補店舗)を書いた表があれば、専用のボタンを押さなくても自動であわせて取込まれます)。\n取込みデータの名前がドライバーマスタに居ない場合(SVの名前など)は、個人への設定ではなく「そのエリア全体で指定人数が必要」という店舗依頼として取込まれます(候補店舗のうちどれか1つで必要人数が埋まればOK、誰でも応募できます)。' },
 
       { category: '店舗相性マスタ', title: '相性の設定方法と見方', body:
         'NG〜1〜2〜3〜4〜5〜OKの7段階で設定します。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。\n「ドライバー別に見る」(1人の全店舗分)、「店舗別に見る」(1店舗の全ドライバー分)、「全件表示」(設定済み全件を一覧)の3つの見方があります。' },
 
       { category: '派遣履歴', title: '派遣履歴とは？', body:
-        'マッチング結果タブで「完了にする」を押すと自動でここに記録されます。この実績が、自動マッチングの「経験(その店舗/エリアへの派遣回数)」スコアに使われます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。' },
+        'マッチング・結果タブで「完了にする」を押すと自動でここに記録されます。この実績が、自動マッチングの「経験(その店舗/エリアへの派遣回数)」スコアに使われます。アプリ運用前の過去実績は、ここで手入力またはCSV/Excelで取り込んでください。' },
 
       { category: 'ダッシュボード', title: 'ダッシュボードで見られるもの', body:
         '・店舗依頼件数/希望シフト件数/マッチング件数/候補が見つからない依頼数/マッチング率などのKPI\n・店舗別の依頼件数一覧(五十音順、折りたたみ可)\n・店舗相性の統計(評価段階ごとの件数、NG/好きが多い店舗ランキング。グラフをクリックすると内訳が見られます)\n・店舗別/ドライバー別のグリッド表(日付ごとに誰がどこに行くか。セルにマウスを乗せると時間が表示されます)\n・マッチング結果一覧(SV確認シート形式)\n・過去の月を見る(アーカイブ)' },
