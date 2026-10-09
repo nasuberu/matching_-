@@ -684,13 +684,26 @@
           <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
         </div>
         <hr class="border-slate-100">
-        <p class="text-xs text-slate-500">個人事業主さんに個別でお渡しする「作業依頼表」をPDFで1人1枚ずつ作成します(実際に使われているフォーマットと同じ見た目)。対象月の「確定」「完了」のマッチングがあるドライバーの分だけ作成し、デスクトップに自動でフォルダを作成して出力します。</p>
+        <p class="text-xs text-slate-500">個人事業主さんに個別でお渡しする「作業依頼表」を、PDF(1人1枚)とExcel(1ファイル・氏名ごとにシート分け)で作成します(実際に使われているフォーマットと同じ見た目)。対象月の「確定」「完了」のマッチングがあるドライバーの分だけ作成し、デスクトップに自動でフォルダを作成して出力します。</p>
+        <details class="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <summary class="cursor-pointer select-none text-xs font-bold text-slate-600">⚙️ PDF表記の設定(依頼者・担当者・電話番号)</summary>
+          <div class="pt-2 space-y-2">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input id="pdf-header-requester-name" placeholder="依頼者(会社名)" class="p-2 border rounded text-sm">
+              <input id="pdf-header-requester-address" placeholder="依頼者(住所)" class="p-2 border rounded text-sm">
+              <input id="pdf-header-contact-name" placeholder="担当者" class="p-2 border rounded text-sm">
+              <input id="pdf-header-contact-phone" placeholder="電話番号" class="p-2 border rounded text-sm">
+            </div>
+            <button onclick="savePdfHeaderSettings()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs">💾 保存する</button>
+            <span id="pdf-header-saved-msg" class="text-xs text-emerald-600 font-bold hidden">✅ 保存しました(次回のPDF/Excel作成から反映されます)</span>
+          </div>
+        </details>
         <div class="flex gap-2 items-center flex-wrap">
           <input id="pdf-export-year" type="number" placeholder="年" class="p-2 border rounded text-sm w-20">
           <span class="text-xs text-slate-500">年</span>
           <input id="pdf-export-month" type="number" min="1" max="12" placeholder="月" class="p-2 border rounded text-sm w-16">
           <span class="text-xs text-slate-500">月分</span>
-          <button onclick="exportDriverShiftPdfs()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📄 個人事業主ごとの作業依頼表(PDF・デスクトップに出力)</button>
+          <button onclick="exportDriverShiftPdfs()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📄 個人事業主ごとの作業依頼表(PDF+Excel・デスクトップに出力)</button>
         </div>
         <div id="pdf-export-result" class="text-xs"></div>
       </div>
@@ -3061,6 +3074,35 @@
       loadFixedStoreChangeLog();
       loadImportBatchLog();
       loadMockToday();
+      loadPdfHeaderSettings();
+    }
+
+    // ===== 個人事業主向けPDF/Excelの表記設定(依頼者・担当者・電話番号) =====
+    async function loadPdfHeaderSettings() {
+      const res = await fetch('/api/settings/pdf-header');
+      const data = await res.json();
+      if (!data.success) return;
+      document.getElementById('pdf-header-requester-name').value = data.settings.requester_name || '';
+      document.getElementById('pdf-header-requester-address').value = data.settings.requester_address || '';
+      document.getElementById('pdf-header-contact-name').value = data.settings.contact_name || '';
+      document.getElementById('pdf-header-contact-phone').value = data.settings.contact_phone || '';
+    }
+
+    async function savePdfHeaderSettings() {
+      const payload = {
+        requester_name: document.getElementById('pdf-header-requester-name').value.trim(),
+        requester_address: document.getElementById('pdf-header-requester-address').value.trim(),
+        contact_name: document.getElementById('pdf-header-contact-name').value.trim(),
+        contact_phone: document.getElementById('pdf-header-contact-phone').value.trim()
+      };
+      const res = await fetch('/api/settings/pdf-header', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.success) { alert('保存に失敗しました'); return; }
+      const msg = document.getElementById('pdf-header-saved-msg');
+      msg.classList.remove('hidden');
+      setTimeout(() => msg.classList.add('hidden'), 3000);
     }
 
     // ===== 今日の日付(練習用、アプリ内だけの「今日」) =====
@@ -3566,7 +3608,7 @@
         resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '作成に失敗しました')}</span>`;
         return;
       }
-      let html = `<span class="text-emerald-600 font-bold">✅ ${data.count}人分のPDFを作成しました</span><br><span class="text-slate-500">📁 ${esc(data.folder)}</span>`;
+      let html = `<span class="text-emerald-600 font-bold">✅ ${data.count}人分のPDFと、まとめのExcel(${esc(data.excelFileName || '')})を作成しました</span><br><span class="text-slate-500">📁 ${esc(data.folder)}</span>`;
       if (data.errors && data.errors.length > 0) {
         html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 作成できなかった分(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
       }

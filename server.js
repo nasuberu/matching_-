@@ -759,6 +759,20 @@ async function getMockToday() {
   return row && row.value ? row.value : null; // 'YYYY-MM-DD' または未設定ならnull(本当の今日を使う)
 }
 
+// 個人事業主向けPDF(作業依頼表)の「依頼者」「担当者」「電話番号」欄の表記。画面(ダッシュボード)
+// から変更できるようにしてある(会社名・担当者が変わった時にコードを直さずに済むように)
+const PDF_HEADER_DEFAULTS = {
+  requester_name: '株式会社 ひとまいるロジスティクス',
+  requester_address: '埼玉県和光市新倉7-7-25',
+  contact_name: '上北　渉',
+  contact_phone: '090-9146-9122'
+};
+async function getPdfHeaderSettings() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['pdf_header_settings']);
+  if (!row || !row.value) return { ...PDF_HEADER_DEFAULTS };
+  try { return { ...PDF_HEADER_DEFAULTS, ...JSON.parse(row.value) }; } catch (e) { return { ...PDF_HEADER_DEFAULTS }; }
+}
+
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
 async function loadScoringContext() {
@@ -2508,6 +2522,25 @@ app.post('/api/settings/mock-today', async (req, res) => {
   res.json({ success: true });
 });
 
+// 個人事業主向けPDF(作業依頼表)の「依頼者」「担当者」「電話番号」欄の表記設定
+app.get('/api/settings/pdf-header', async (req, res) => {
+  res.json({ success: true, settings: await getPdfHeaderSettings() });
+});
+app.post('/api/settings/pdf-header', async (req, res) => {
+  const current = await getPdfHeaderSettings();
+  const next = {
+    requester_name: (req.body.requester_name ?? current.requester_name) || '',
+    requester_address: (req.body.requester_address ?? current.requester_address) || '',
+    contact_name: (req.body.contact_name ?? current.contact_name) || '',
+    contact_phone: (req.body.contact_phone ?? current.contact_phone) || ''
+  };
+  const value = JSON.stringify(next);
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['pdf_header_settings']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'pdf_header_settings']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['pdf_header_settings', value]);
+  res.json({ success: true, settings: next });
+});
+
 // マッチング・結果の表で、空いている枠を右クリック→候補のドライバーをクリックした時に呼ばれる、
 // その場で1件だけ手動でマッチングを作る専用エンドポイント(自動マッチングの候補生成ロジックは経由しない)。
 // 同日の二重割当・必要人数を超えての割当(プール需要の合計も含む)を防ぐチェックのみ行う
@@ -3028,6 +3061,32 @@ function sanitizeSheetName(name, usedNames) {
   return candidate;
 }
 
+// あるシートの内容(値・スタイル・列幅・行高さ・結合セル)を、別のワークブックの新しいシートへ
+// そのままコピーする(ExcelJSにはワークブックをまたいだシート複製の機能が無いため、自前で実装している)。
+// 個人事業主ごとの作業依頼表PDFと同時に、全員分を1つのExcelファイル(氏名ごとにシート分け)でも
+// 出力するために使う
+function copyWorksheetContent(targetWs, sourceWs, maxRow, maxCol) {
+  targetWs.pageSetup = { ...sourceWs.pageSetup };
+  for (let c = 1; c <= maxCol; c++) {
+    const srcCol = sourceWs.getColumn(c);
+    if (srcCol && srcCol.width) targetWs.getColumn(c).width = srcCol.width;
+  }
+  for (let r = 1; r <= maxRow; r++) {
+    const srcRow = sourceWs.getRow(r);
+    const tgtRow = targetWs.getRow(r);
+    if (srcRow.height) tgtRow.height = srcRow.height;
+    for (let c = 1; c <= maxCol; c++) {
+      const srcCell = srcRow.getCell(c);
+      const tgtCell = tgtRow.getCell(c);
+      tgtCell.value = srcCell.value;
+      tgtCell.style = { ...srcCell.style };
+    }
+  }
+  for (const range of (sourceWs.model.merges || [])) {
+    try { targetWs.mergeCells(range); } catch (e) { /* 既にマージ済み等は無視してよい */ }
+  }
+}
+
 // 個人事業主ごとの月間シフト表をExcelで一括出力する(1人1シート)。「確定」「完了」のみが対象(候補はまだ未確定のため含めない)
 app.get('/api/export/shift-by-driver', async (req, res) => {
   const matches = await dbAll(`
@@ -3114,12 +3173,18 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
     byDriver.get(m.driver_id).rows.push(m);
   }
 
+  const pdfHeader = await getPdfHeaderSettings();
   const WEEKDAY_LABELS_JP = ['日', '月', '火', '水', '木', '金', '土'];
   const HEADER_ROW = 18, DAY_BLOCK_ROWS = 31;
+  const TEMPLATE_MAX_ROW = 71, TEMPLATE_MAX_COL = 6; // ひな形の実際の範囲(B1:F71)。Excel全体コピー用
   const daysInMonth = new Date(year, month, 0).getDate();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shift_pdf_'));
   const desktopDir = path.join(os.homedir(), 'Desktop', `個人事業主シフトPDF_${year}年${String(month).padStart(2, '0')}月`);
   fs.mkdirSync(desktopDir, { recursive: true });
+
+  // PDFとは別に、全員分を1つのExcelファイル(氏名ごとにシート分け)にもまとめる
+  const combinedWb = new ExcelJS.Workbook();
+  const usedSheetNames = new Set();
 
   const generatedFiles = [];
   const errors = [];
@@ -3137,6 +3202,9 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
       ws.getRow(8).getCell(4).value = info.code || '';
       const today = new Date();
       ws.getRow(10).getCell(6).value = excelSafeDate(today.getFullYear(), today.getMonth() + 1, today.getDate()); // 依頼日(発行日)
+      ws.getRow(11).getCell(6).value = `${pdfHeader.requester_address}\n${pdfHeader.requester_name}`;
+      ws.getRow(12).getCell(6).value = pdfHeader.contact_name;
+      ws.getRow(13).getCell(6).value = pdfHeader.contact_phone;
       ws.getRow(13).getCell(2).value = `${year}年`;
       ws.getRow(14).getCell(2).value = month;
       ws.getRow(15).getCell(3).value = year;
@@ -3184,6 +3252,10 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
       const xlsxPath = path.join(workDir, `${fileStem}.xlsx`);
       await wb.xlsx.writeFile(xlsxPath);
       generatedFiles.push(xlsxPath);
+
+      // 同じ内容を、全員まとめた1つのExcelファイルのシートとしても追加しておく
+      const combinedWs = combinedWb.addWorksheet(sanitizeSheetName(info.name, usedSheetNames));
+      copyWorksheetContent(combinedWs, ws, TEMPLATE_MAX_ROW, TEMPLATE_MAX_COL);
     } catch (e) {
       errors.push(`${info.name}さんの作成に失敗しました: ${e.message}`);
     }
@@ -3201,7 +3273,12 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
     return res.status(500).json({ success: false, message: 'PDF変換に失敗しました: ' + (result.error ? result.error.message : (result.stderr || '').toString()) });
   }
 
-  res.json({ success: true, count: generatedFiles.length, folder: desktopDir, errors });
+  // 全員分まとめたExcelファイルも同じフォルダに保存する
+  const excelFileName = `個人事業主別シフト_${year}年${String(month).padStart(2, '0')}月.xlsx`;
+  const excelPath = path.join(desktopDir, excelFileName);
+  await combinedWb.xlsx.writeFile(excelPath);
+
+  res.json({ success: true, count: generatedFiles.length, folder: desktopDir, excelFileName, errors });
 });
 
 app.get('/api/export/shift-by-store', async (req, res) => {
