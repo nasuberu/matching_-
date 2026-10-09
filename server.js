@@ -2511,6 +2511,50 @@ app.post('/api/settings/mock-today', async (req, res) => {
 // マッチング・結果の表で、空いている枠を右クリック→候補のドライバーをクリックした時に呼ばれる、
 // その場で1件だけ手動でマッチングを作る専用エンドポイント(自動マッチングの候補生成ロジックは経由しない)。
 // 同日の二重割当・必要人数を超えての割当(プール需要の合計も含む)を防ぐチェックのみ行う
+// マッチング・結果の表で、空き枠を右クリックした時に出す候補一覧を返す。その日に希望シフトを
+// 出していて、まだ何にも割り当てが無い(欠勤は除く)ドライバーを、その店舗への過去の派遣実績
+// (dispatch_history)が多い順に並べて返す(実績が無い人は末尾、同数なら氏名順)。
+// 「直近に手動で割り当てた人を上に出す」という並び替えは、画面側(JS)でこの結果にかぶせて行う
+app.get('/api/matches/manual-candidates', async (req, res) => {
+  const storeRequestId = parseInt(req.query.store_request_id, 10);
+  if (!storeRequestId) return res.status(400).json({ success: false, message: 'store_request_id は必須です' });
+  const storeReq = await dbGet('SELECT * FROM store_requests WHERE id = ?', [storeRequestId]);
+  if (!storeReq) return res.status(404).json({ success: false, message: '店舗依頼が見つかりません' });
+
+  const date = storeReq.request_date;
+  const availability = await dbAll(`
+    SELECT a.driver_id, a.time_start, a.time_end, d.name AS driver_name
+    FROM driver_availability a
+    JOIN drivers d ON d.id = a.driver_id
+    WHERE a.desired_date = ? AND a.archived_month IS NULL
+  `, [date]);
+
+  const bookedRows = await dbAll(
+    `SELECT DISTINCT driver_id FROM matches WHERE match_date = ? AND status != '欠勤' AND archived_month IS NULL`,
+    [date]
+  );
+  const bookedSet = new Set(bookedRows.map(r => r.driver_id));
+  const candidates = availability.filter(a => !bookedSet.has(a.driver_id));
+
+  let visitCountByDriver = new Map();
+  if (storeReq.store_id) {
+    const historyRows = await dbAll(
+      `SELECT driver_id, COUNT(*) AS c FROM dispatch_history WHERE store_id = ? GROUP BY driver_id`,
+      [storeReq.store_id]
+    );
+    visitCountByDriver = new Map(historyRows.map(r => [r.driver_id, r.c]));
+  }
+
+  const result = candidates
+    .map(a => ({
+      driver_id: a.driver_id, driver_name: a.driver_name, time_start: a.time_start, time_end: a.time_end,
+      visit_count: visitCountByDriver.get(a.driver_id) || 0
+    }))
+    .sort((x, y) => y.visit_count - x.visit_count || x.driver_name.localeCompare(y.driver_name, 'ja'));
+
+  res.json({ success: true, candidates: result });
+});
+
 app.post('/api/matches/manual', async (req, res) => {
   const store_request_id = parseInt(req.body.store_request_id, 10);
   const driver_id = parseInt(req.body.driver_id, 10);

@@ -2522,18 +2522,34 @@
       return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
     }
 
+    // 直近に手動で割り当てた人(最大2人、新しい順)。次に右クリックした時、候補の一番上に
+    // 出すために使う(同じ人を連日同じ店舗に割り当てていく作業を楽にするため)
+    let recentManualPicks = [];
+
     // 空いている枠(placeholderCellHtml)を右クリックした時に、その日に希望シフトを出していて
-    // まだ何にも割り当てられていないドライバーを一覧表示する(クリックでそのままそこに割り当てる)
-    function showManualAssignMenu(event, storeRequestId, date) {
+    // まだ何にも割り当てられていないドライバーを一覧表示する(クリックでそのままそこに割り当てる)。
+    // 並び順: ①直近に手動で割り当てた人(最大2人、新しい順) ②その店舗への過去の派遣実績が多い順
+    async function showManualAssignMenu(event, storeRequestId, date) {
       event.preventDefault();
       const menu = document.getElementById('manual-assign-menu');
-      // 既にその日に何かしら割り当て済み(欠勤は除く)のドライバーは、二重登録を避けるため候補から外す
-      const bookedDriverIds = new Set(
-        matchesCache.filter(m => m.match_date === date && m.status !== '欠勤').map(m => m.driver_id)
-      );
-      const candidates = matchesAvailabilityCache
-        .filter(a => a.desired_date === date && !bookedDriverIds.has(a.driver_id))
-        .sort((a, b) => a.driver_name.localeCompare(b.driver_name, 'ja'));
+      menu.innerHTML = '<div class="p-3 text-xs text-slate-400">読み込み中...</div>';
+      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 240)}px`;
+      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
+      menu.classList.remove('hidden');
+
+      const res = await fetch(`/api/matches/manual-candidates?store_request_id=${storeRequestId}`);
+      const data = await res.json();
+      if (!data.success) {
+        menu.innerHTML = `<div class="p-3 text-xs text-red-600 max-w-[220px]">${esc(data.message || '候補の取得に失敗しました')}</div>`;
+        return;
+      }
+      let candidates = data.candidates || [];
+
+      // 直近の手動割当て(最大2人)のうち、今回の候補に含まれる人を先頭に、新しい順で並べ直す
+      const byId = new Map(candidates.map(c => [c.driver_id, c]));
+      const pinned = recentManualPicks.filter(id => byId.has(id)).map(id => byId.get(id));
+      const pinnedIds = new Set(pinned.map(c => c.driver_id));
+      candidates = [...pinned, ...candidates.filter(c => !pinnedIds.has(c.driver_id))];
 
       if (candidates.length === 0) {
         menu.innerHTML = `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません</div>`;
@@ -2541,14 +2557,10 @@
         menu.innerHTML = `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者</div>` +
           candidates.map(a => `
             <button onclick="assignDriverToRequest(${storeRequestId}, ${a.driver_id})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
-              ${esc(a.driver_name)} <span class="text-slate-400">${esc(a.time_start || '')}〜${esc(a.time_end || '')}</span>
+              ${pinnedIds.has(a.driver_id) ? '🕐 ' : ''}${esc(a.driver_name)} <span class="text-slate-400">${esc(a.time_start || '')}〜${esc(a.time_end || '')}${a.visit_count > 0 ? ` ・この店舗${a.visit_count}回目` : ''}</span>
             </button>
           `).join('');
       }
-      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 240)}px`;
-      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
-      menu.classList.remove('hidden');
-      return false; // ブラウザ標準の右クリックメニューを出さない
     }
 
     document.addEventListener('click', (e) => {
@@ -2564,6 +2576,8 @@
       });
       const data = await res.json();
       if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
+      // 直近に選んだ人として先頭に記録しておく(最大2人まで保持)
+      recentManualPicks = [driverId, ...recentManualPicks.filter(id => id !== driverId)].slice(0, 2);
       loadMatches();
     }
 
