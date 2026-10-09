@@ -2121,6 +2121,74 @@ app.post('/api/stores/import', upload.single('file'), async (req, res) => {
   res.json({ success: true, imported, total: rows.length, errors });
 });
 
+// 本部等から定期的に配布される「店舗対SV・店長一覧表」を取込み、店舗マスタのSV・店長を
+// 最新の状態に更新する(人事異動のたびに再取込みする運用を想定)。「課・エリア／担当SV・責任者」の
+// ような1つの列にまとまった自由文から、「ＳＶ」または「課長」の後ろの氏名を読み取る。
+// 店番(確実)→店舗名の順で照合し、見つかった店舗のSV・店長は(前の値が何であれ)常に上書きする
+app.post('/api/stores/import-sv-manager', upload.single('file'), async (req, res) => {
+  const source = getImportSource(req);
+  if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
+  const importBatchId = await createImportBatch('store_sv_manager', source.filename, '');
+
+  let rows;
+  try {
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, ['店番']);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
+  }
+
+  let headerRowIndex = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const cells = rows[i].map(c => String(c ?? '').trim());
+    if (cells.includes('店番') && cells.includes('店舗名')) { headerRowIndex = i; break; }
+  }
+  if (headerRowIndex === -1) {
+    return res.status(400).json({ success: false, message: '見出し行(「店番」「店舗名」の列)が見つかりませんでした' });
+  }
+  const header = rows[headerRowIndex].map(h => String(h ?? '').trim());
+  const colOf = (labels) => header.findIndex(h => labels.includes(h));
+  const colCode = colOf(['店番']);
+  const colName = colOf(['店舗名']);
+  const colManager = colOf(['店長']);
+  // SV名はこの列単独にあるとは限らず、「拠点運営七課　11店舗　ＳＶ　吉田　拓人」のように
+  // 他の情報と1つの列にまとまっていることがあるため、その中から正規表現で拾う
+  const colSvBlock = colOf(['課・エリア／担当SV・責任者', '課・エリア/担当SV・責任者', 'ＳＶ', 'SV']);
+
+  const errors = [];
+  let updated = 0;
+  for (let r = headerRowIndex + 1; r < rows.length; r++) {
+    const row = rows[r];
+    const store_name = colName !== -1 ? String(row[colName] ?? '').trim() : '';
+    const store_code = colCode !== -1 ? String(row[colCode] ?? '').trim() : '';
+    if (!store_name && !store_code) continue;
+
+    const manager_name = colManager !== -1 ? String(row[colManager] ?? '').trim() : '';
+    let sv_name = '';
+    if (colSvBlock !== -1) {
+      const raw = String(row[colSvBlock] ?? '');
+      const m = raw.match(/(?:ＳＶ|SV|課長)[\s：:　]*(.+)$/);
+      if (m) {
+        // 「川村　優太　070-1329-6078」のように電話番号が紛れ込むことがあるため、末尾の電話番号らしき
+        // 部分は取り除く
+        sv_name = m[1].replace(/[\s　]*[\d０-９]{2,4}[-－‐―]{1}[\d０-９]{2,4}[-－‐―]{1}[\d０-９]{3,4}\s*$/, '').trim();
+      } else if (raw.trim()) {
+        errors.push(`${r + 1}行目「${store_name || store_code}」: 「ＳＶ」「課長」の記載が見つからず、SV名を読み取れませんでした(内容: ${raw.trim()})`);
+      }
+    }
+
+    const store_id = await resolveStoreId({ store_name, store_code });
+    if (!store_id) {
+      errors.push(`${r + 1}行目「${store_name || store_code}」: 店舗を特定できませんでした`);
+      continue;
+    }
+    await dbRun('UPDATE stores SET sv_name = ?, manager_name = ?, store_code = COALESCE(NULLIF(store_code, \'\'), ?) WHERE id = ?', [sv_name, manager_name, store_code || null, store_id]);
+    updated++;
+  }
+  await finalizeImportBatch(importBatchId, updated);
+
+  res.json({ success: true, updated, errors, importBatchId });
+});
+
 // ===== ドライバー×店舗の相性(好き/NG) =====
 // 設定済みの相性を全件返す(ダッシュボードの統計表示用)
 app.get('/api/driver-store-preferences', async (req, res) => {

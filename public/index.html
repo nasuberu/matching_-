@@ -149,6 +149,16 @@
           <div id="sm-import-result" class="text-xs"></div>
         </div>
 
+        <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+          <p class="text-xs font-bold text-slate-600">📥 SV・店長一覧の取込み(人事異動の反映用)</p>
+          <p class="text-[10px] text-slate-400">本部等から配布される「店舗対SV・店長一覧表」をそのまま取込めます(店番・店舗名・店長の列に加え、「課・エリア／担当SV・責任者」のような1つの列にまとまった記載からでも「ＳＶ」「課長」の後ろの氏名を読み取ります)。一致した店舗のSV・店長は、今の値に関わらず常に最新の内容で上書きします。人事異動のたびに、最新のファイルで再取込みしてください。</p>
+          <div class="flex gap-2 items-center">
+            <input id="sm-svmgr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <button onclick="importStoreSvManager()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="sm-svmgr-import-result" class="text-xs"></div>
+        </div>
+
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input id="sm-name" placeholder="店舗名 *" class="p-2 border rounded text-sm">
@@ -1401,6 +1411,28 @@
       const res = await fetch('/api/stores/import', { method: 'POST', body: form });
       const data = await res.json();
       renderImportResult(resultEl, data);
+      fileInput.value = '';
+      if (data.success) loadStoreMaster();
+    }
+
+    async function importStoreSvManager() {
+      const fileInput = document.getElementById('sm-svmgr-import-file');
+      const resultEl = document.getElementById('sm-svmgr-import-result');
+      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
+      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/stores/import-sv-manager', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!data.success) {
+        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
+      } else {
+        let html = `<span class="text-emerald-600 font-bold">✅ ${data.updated}件のSV・店長を更新しました</span>`;
+        if (data.errors && data.errors.length > 0) {
+          html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 要確認(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+        }
+        resultEl.innerHTML = html;
+      }
       fileInput.value = '';
       if (data.success) loadStoreMaster();
     }
