@@ -206,6 +206,24 @@ db.serialize(() => {
     )
   `);
 
+  // 固定希望店舗の「候補」。店舗依頼の備考(社員番号・AI解析)や、確定/完了マッチングの実績パターンから
+  // 固定希望店舗が示唆された時に、ドライバーマスタを自動で書き換える代わりにここに記録しておき、
+  // コーディネーターがドライバーマスタ画面で見て手動で採用/却下できるようにする
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fixed_store_suggestions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      driver_id INTEGER NOT NULL,
+      suggested_store_id INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT,
+      resolved_at TEXT,
+      FOREIGN KEY (driver_id) REFERENCES drivers(id),
+      FOREIGN KEY (suggested_store_id) REFERENCES stores(id)
+    )
+  `);
+
   // 一括取込み(店舗依頼/希望シフト/エリア固定)を1回につき1件記録し、間違えた/テストで入れた取込みを
   // まとめて取り消せるようにする(行ごとにimport_batch_idの印をつけ、このバッチ単位で取り消す)
   db.run(`
@@ -400,6 +418,24 @@ async function logFixedStoreChange(driver_id, old_store_id, new_store_id, source
   );
 }
 
+// 固定希望店舗の「候補」を記録する(ドライバーマスタは書き換えない)。同じドライバー・同じ候補店舗の
+// 保留中の候補が既にあれば、日時と理由だけ更新する(取込むたびに同じ候補が重複して積み上がらないように)
+async function recordFixedStoreSuggestion(driverId, suggestedStoreId, source, reason) {
+  const existing = await dbGet(
+    `SELECT id FROM fixed_store_suggestions WHERE driver_id = ? AND suggested_store_id = ? AND status = 'pending'`,
+    [driverId, suggestedStoreId]
+  );
+  const now = new Date().toISOString();
+  if (existing) {
+    await dbRun('UPDATE fixed_store_suggestions SET source = ?, reason = ?, created_at = ? WHERE id = ?', [source, reason, now, existing.id]);
+  } else {
+    await dbRun(
+      `INSERT INTO fixed_store_suggestions (driver_id, suggested_store_id, source, reason, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)`,
+      [driverId, suggestedStoreId, source, reason, now]
+    );
+  }
+}
+
 // 一括取込みの開始時に呼び、取込み履歴(import_batches)に1件記録してそのidを返す。
 // 取込み処理中は、作成/更新した行にこのidを印として付けておき(import_batch_id列)、
 // 後から「この取込みを取り消す」際にまとめて特定できるようにする
@@ -416,21 +452,24 @@ async function finalizeImportBatch(batchId, rowCount) {
 }
 
 // 「確定」「完了」のマッチングを見て、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、
-// そのドライバーマスタの「固定希望店舗」に自動反映する(2日以上、かつ全ての確定/完了マッチングが
-// 同じ店舗の場合のみ対象。既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定。
-// エリア固定が有効なドライバーは対象外(たまたま数日同じ店舗が続いただけで固定希望店舗が設定されてしまうと、
-// 本来は複数の候補店舗を柔軟に回る設計のエリア固定が、1店舗に固定される優先階層に上書きされてしまうため)
+// 固定希望店舗の「候補」として記録する(2日以上、かつ全ての確定/完了マッチングが同じ店舗の場合のみ対象。
+// 既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定。
+// ※以前はここでドライバーマスタを自動で書き換えていたが、自動で勝手に書き換えないでほしいという
+// 要望を受け、候補の記録のみに変更した(実際に設定するかはコーディネーターがドライバーマスタ画面で判断する)。
+// エリア固定が有効なドライバーは対象外(たまたま数日同じ店舗が続いただけで固定希望店舗の候補にしてしまうと、
+// 本来は複数の候補店舗を柔軟に回る設計のエリア固定の良さを分かりにくくしてしまうため)
 async function applyAutoFixedStoreFromMatches() {
   const rows = await dbAll(`
-    SELECT m.driver_id, s.store_id, d.fixed_store_id
+    SELECT m.driver_id, s.store_id, st.name AS store_name, d.fixed_store_id
     FROM matches m
     JOIN store_requests s ON s.id = m.store_request_id
     JOIN drivers d ON d.id = m.driver_id
+    LEFT JOIN stores st ON st.id = s.store_id
     WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了') AND d.area_fixed_enabled = 0
   `);
-  const byDriver = new Map(); // driver_id -> { storeIds: Set, count, currentFixedStoreId }
+  const byDriver = new Map(); // driver_id -> { storeIds: Set, storeName, count, currentFixedStoreId }
   for (const r of rows) {
-    const entry = byDriver.get(r.driver_id) || { storeIds: new Set(), count: 0, currentFixedStoreId: r.fixed_store_id };
+    const entry = byDriver.get(r.driver_id) || { storeIds: new Set(), storeName: r.store_name, count: 0, currentFixedStoreId: r.fixed_store_id };
     entry.storeIds.add(r.store_id);
     entry.count++;
     byDriver.set(r.driver_id, entry);
@@ -441,8 +480,8 @@ async function applyAutoFixedStoreFromMatches() {
     if (entry.count < 2 || entry.storeIds.size !== 1) continue; // 同じ店舗が2件以上続いている場合のみ対象
     const onlyStoreId = [...entry.storeIds][0];
     if (entry.currentFixedStoreId === onlyStoreId) continue; // 既に同じ設定なら何もしない
-    await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [onlyStoreId, driver_id]);
-    await logFixedStoreChange(driver_id, entry.currentFixedStoreId, onlyStoreId, 'auto_pattern');
+    await recordFixedStoreSuggestion(driver_id, onlyStoreId, 'match_pattern',
+      `直近の確定/完了マッチングで、同じ店舗(${entry.storeName || ''})に${entry.count}件連続して割り当てられています`);
     updated++;
   }
   return updated;
@@ -999,6 +1038,47 @@ app.post('/api/drivers/:id/fixed-store', async (req, res) => {
     await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [newFixedStoreId, id]);
     await logFixedStoreChange(id, existing.fixed_store_id, newFixedStoreId, 'manual');
   }
+  res.json({ success: true });
+});
+
+// 固定希望店舗の「候補」一覧(保留中のみ、新しい順)。driver_idを指定すると、そのドライバーの分だけに絞る
+// (ドライバーマスタ一覧に候補バッジを出す時に使う)
+app.get('/api/fixed-store-suggestions', async (req, res) => {
+  const driverId = req.query.driver_id ? parseInt(req.query.driver_id, 10) : null;
+  const rows = await dbAll(`
+    SELECT fs.*, d.name AS driver_name, s.name AS suggested_store_name
+    FROM fixed_store_suggestions fs
+    JOIN drivers d ON d.id = fs.driver_id
+    JOIN stores s ON s.id = fs.suggested_store_id
+    WHERE fs.status = 'pending' ${driverId ? 'AND fs.driver_id = ?' : ''}
+    ORDER BY fs.id DESC
+  `, driverId ? [driverId] : []);
+  res.json({ success: true, suggestions: rows });
+});
+
+// 固定希望店舗の候補を採用する(=その内容でドライバーマスタのfixed_store_idを実際に設定する、唯一の経路)。
+// コーディネーターがドライバーマスタ画面でボタンを押した時だけ呼ばれる、明示的な手動操作
+app.post('/api/fixed-store-suggestions/:id/apply', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const suggestion = await dbGet(`SELECT * FROM fixed_store_suggestions WHERE id = ? AND status = 'pending'`, [id]);
+  if (!suggestion) return res.status(404).json({ success: false, message: '候補が見つかりません(既に処理済みかもしれません)' });
+  const driver = await dbGet('SELECT fixed_store_id FROM drivers WHERE id = ?', [suggestion.driver_id]);
+  if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
+  await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [suggestion.suggested_store_id, suggestion.driver_id]);
+  if (driver.fixed_store_id !== suggestion.suggested_store_id) {
+    await logFixedStoreChange(suggestion.driver_id, driver.fixed_store_id, suggestion.suggested_store_id, 'manual_from_suggestion');
+  }
+  await dbRun(`UPDATE fixed_store_suggestions SET status = 'applied', resolved_at = ? WHERE id = ?`, [new Date().toISOString(), id]);
+  // 同じドライバーへの他の保留中候補も、採用した以上は役目を終えたとみなして消しておく(放置されたままにならないように)
+  await dbRun(`UPDATE fixed_store_suggestions SET status = 'dismissed', resolved_at = ? WHERE driver_id = ? AND status = 'pending'`, [new Date().toISOString(), suggestion.driver_id]);
+  res.json({ success: true });
+});
+
+// 固定希望店舗の候補を却下する(この内容では設定しない、という意思表示。ドライバーマスタは変更しない)
+app.post('/api/fixed-store-suggestions/:id/dismiss', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const result = await dbRun(`UPDATE fixed_store_suggestions SET status = 'dismissed', resolved_at = ? WHERE id = ? AND status = 'pending'`, [new Date().toISOString(), id]);
+  if (result.changes === 0) return res.status(404).json({ success: false, message: '候補が見つかりません(既に処理済みかもしれません)' });
   res.json({ success: true });
 });
 
@@ -1751,12 +1831,13 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   // (マスタの内容を勝手に変更しないでほしいという要望のため)。見つかったことは「要確認」として
   // 伝えるだけに留め、実際に設定するかどうかはコーディネーターがドライバーマスタの一覧から
   // 手動で判断・操作する(一覧の「固定希望店舗」列はその場で編集できる)
-  function suggestFixedStoreLink(matchedDriverId, store_id, rowNumber, store_name, mentionLabel) {
+  async function suggestFixedStoreLink(matchedDriverId, store_id, rowNumber, store_name, mentionLabel, source) {
     const currentFixedStoreId = currentFixedStoreById.get(matchedDriverId);
     if (currentFixedStoreId === store_id) return false; // 既に同じ設定ならあらためて知らせる必要はない
     const driverName = driverNameById.get(matchedDriverId) || `id:${matchedDriverId}`;
     const ngNote = ngPairSet.has(`${matchedDriverId}:${store_id}`) ? '(この店舗は店舗相性マスタでNGに設定されています)' : '';
     errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}から、${driverName}さんの固定希望店舗として「${store_name}」が考えられます${ngNote}。必要であればドライバーマスタの一覧から手動で設定してください(自動では設定していません)`);
+    await recordFixedStoreSuggestion(matchedDriverId, store_id, source, `店舗依頼の備考(${mentionLabel})より(${rowNumber}行目「${store_name}」)`);
     return true;
   }
 
@@ -1780,7 +1861,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     const codeMatch = notesRaw.match(/(\d{5,8})/);
     const normalizedCode = codeMatch ? normalizeEmployeeCode(codeMatch[1]) : null;
     if (normalizedCode && driverByCode.has(normalizedCode)) {
-      if (suggestFixedStoreLink(driverByCode.get(normalizedCode), store_id, r + 1, store_name, `社員番号(${codeMatch[1]})`)) fixedStoreSuggestions++;
+      if (await suggestFixedStoreLink(driverByCode.get(normalizedCode), store_id, r + 1, store_name, `社員番号(${codeMatch[1]})`, 'note_code')) fixedStoreSuggestions++;
     } else if (anthropic && notesRaw) {
       // 社員番号の記載が無い(=数字で確実には分からない)場合のみ、AIで自然文から人物への言及を読み取る
       // (「できれば髙橋さん希望」のような表現を拾うため。数字で確実に分かる場合は無駄なAI呼び出しをしない)
@@ -1789,7 +1870,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
         if (mention.sentiment !== 'required') continue; // 強い指定の時だけ固定希望店舗の候補として表示する(弱い希望はマッチング時のスコアのみで考慮する)
         const driverId = resolveDriverMention(mention, driverByCode, driversForNameSearch);
         if (!driverId) continue;
-        if (suggestFixedStoreLink(driverId, store_id, r + 1, store_name, `内容(AIが「${mention.name_hint || mention.employee_code}」への強い希望と判定)`)) fixedStoreSuggestions++;
+        if (await suggestFixedStoreLink(driverId, store_id, r + 1, store_name, `内容(AIが「${mention.name_hint || mention.employee_code}」への強い希望と判定)`, 'note_ai')) fixedStoreSuggestions++;
       }
     }
 
@@ -2338,8 +2419,8 @@ app.post('/api/settings/mock-today', async (req, res) => {
 
 app.post('/api/matches/:id/confirm', async (req, res) => {
   await dbRun(`UPDATE matches SET status = '確定' WHERE id = ?`, [req.params.id]);
-  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
-  res.json({ success: true, autoFixedStoreUpdated });
+  const autoFixedStoreSuggested = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, autoFixedStoreSuggested });
 });
 
 // 複数の「候補」をまとめて「確定」にする(画面の一括確定機能用)。
@@ -2350,8 +2431,8 @@ app.post('/api/matches/bulk-confirm', async (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, message: 'ids(配列)は必須です' });
   const placeholders = ids.map(() => '?').join(',');
   const result = await dbRun(`UPDATE matches SET status = '確定' WHERE id IN (${placeholders}) AND status = '候補'`, ids);
-  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
-  res.json({ success: true, confirmed: result.changes, autoFixedStoreUpdated });
+  const autoFixedStoreSuggested = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, confirmed: result.changes, autoFixedStoreSuggested });
 });
 
 // 確定済みのマッチングを「完了」にし、派遣履歴に記録する(次回以降のマッチングで店舗/エリアの知見として使われる)
@@ -2371,8 +2452,8 @@ app.post('/api/matches/:id/complete', async (req, res) => {
       [match.driver_id, match.store_id, match.id, match.match_date, '', now]
     );
   }
-  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
-  res.json({ success: true, autoFixedStoreUpdated });
+  const autoFixedStoreSuggested = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, autoFixedStoreSuggested });
 });
 
 // 「完了」を取り消して「確定」に戻す(押し間違い・後からの取り消し用)。あわせて自動作成された派遣履歴も削除する
@@ -2678,8 +2759,8 @@ app.post('/api/archive/:month/restore', async (req, res) => {
 // 「候補」を一括で「確定」にする(1件ずつ確定ボタンを押さなくても、シフト表送付の準備がすぐできるように)
 app.post('/api/matches/confirm-all', async (req, res) => {
   const result = await dbRun(`UPDATE matches SET status = '確定' WHERE archived_month IS NULL AND status = '候補'`);
-  const autoFixedStoreUpdated = await applyAutoFixedStoreFromMatches();
-  res.json({ success: true, confirmed: result.changes, autoFixedStoreUpdated });
+  const autoFixedStoreSuggested = await applyAutoFixedStoreFromMatches();
+  res.json({ success: true, confirmed: result.changes, autoFixedStoreSuggested });
 });
 
 function weekdayLabelOf(dateStr) {

@@ -673,7 +673,7 @@
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
         <h2 class="font-bold text-slate-800">📨 シフト表の送付</h2>
         <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、まず一括で確定してください。</p>
-        <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、ドライバーマスタの「固定希望店舗」に自動で反映されます(来月以降のマッチングで優先的に同じ店舗になりやすくなります)</p>
+        <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、固定希望店舗の候補としてドライバーマスタ画面に表示されます(ドライバーマスタは自動では書き換わりません。採用したい場合は画面から手動で操作してください)</p>
         <div class="flex gap-2 items-center flex-wrap">
           <button onclick="confirmAllMatches()" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">✅ 候補を全て確定にする</button>
           <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
@@ -782,12 +782,15 @@
     let selectedDriverIds = new Set();
     let drSortState = { field: 'name', dir: 'asc' };
 
+    let fixedStoreSuggestionsCache = [];
+
     async function loadDrivers() {
-      const [driversRes, storesRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores')]);
+      const [driversRes, storesRes, suggestionsRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores'), fetch('/api/fixed-store-suggestions')]);
       const driversData = await driversRes.json();
       const storesData = await storesRes.json();
       driversCache = driversData.drivers || [];
       driverFormStoresCache = storesData.stores || [];
+      fixedStoreSuggestionsCache = (await suggestionsRes.json()).suggestions || [];
       const fixedStoreSelect = document.getElementById('dr-fixed-store');
       const keepValue = fixedStoreSelect.value;
       fixedStoreSelect.innerHTML = '<option value="">固定希望店舗(なし)</option>' +
@@ -795,6 +798,20 @@
       fixedStoreSelect.value = keepValue;
       renderAreaFixedStoreList();
       renderDriverList();
+    }
+
+    // 固定希望店舗の候補を採用/却下する(ドライバーマスタ一覧の💡バッジから呼ばれる)
+    async function applyFixedStoreSuggestion(suggestionId) {
+      const res = await fetch(`/api/fixed-store-suggestions/${suggestionId}/apply`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '採用に失敗しました'); }
+      loadDrivers();
+    }
+    async function dismissFixedStoreSuggestion(suggestionId) {
+      const res = await fetch(`/api/fixed-store-suggestions/${suggestionId}/dismiss`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '却下に失敗しました'); }
+      loadDrivers();
     }
 
     // ===== エリア固定(曜日ごとの決まった時間帯で、複数の候補店舗から優先的に割り当てる仕組み) =====
@@ -866,7 +883,9 @@
       if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="14" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
       } else {
-        tbody.innerHTML = rows.map(d => `
+        tbody.innerHTML = rows.map(d => {
+        const pendingSuggestions = fixedStoreSuggestionsCache.filter(s => s.driver_id === d.id);
+        return `
           <tr class="border-b divide-x divide-slate-100 border-slate-100 last:border-0 align-top">
             <td class="p-2.5"><input type="checkbox" ${selectedDriverIds.has(d.id) ? 'checked' : ''} onchange="toggleDriverSelect(${d.id}, this.checked)"></td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.driver_code || '-')}</td>
@@ -884,6 +903,16 @@
                 ${driverFormStoresCache.map(s => `<option value="${s.id}" ${s.id === d.fixed_store_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
               </select>
               ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
+              ${pendingSuggestions.map(s => `
+                <div class="mt-1 bg-amber-50 border border-amber-200 rounded p-1.5 text-[10px] text-amber-800 max-w-[200px]">
+                  💡「${esc(s.suggested_store_name)}」希望<br>
+                  <span class="text-slate-500">${esc(s.reason || '')}</span>
+                  <div class="flex gap-1 mt-1">
+                    <button onclick="applyFixedStoreSuggestion(${s.id})" class="bg-amber-500 hover:bg-amber-600 text-white px-1.5 py-0.5 rounded font-bold">採用</button>
+                    <button onclick="dismissFixedStoreSuggestion(${s.id})" class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-bold">却下</button>
+                  </div>
+                </div>
+              `).join('')}
             </td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500 truncate" style="max-width:200px" title="${esc(d.notes || '')}">${esc(d.notes || '-')}</td>
@@ -892,7 +921,8 @@
               <button onclick="deleteDriver(${d.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
             </td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
       }
 
       document.getElementById('dr-select-all').checked = rows.length > 0 && rows.every(d => selectedDriverIds.has(d.id));
@@ -994,7 +1024,7 @@
       if (logs.length === 0) {
         el.innerHTML = '<p class="font-bold text-slate-500">📝 固定希望店舗の変更履歴(直近3ヶ月)</p><p>変更履歴はありません</p>';
       } else {
-        const sourceLabel = { manual: '手動', auto_remarks: '備考から自動反映', auto_stable_assignment: '同じ店舗が続いたため自動反映' };
+        const sourceLabel = { manual: '手動', manual_from_suggestion: '候補を採用(手動)', auto_remarks: '備考から自動反映(旧仕様)', auto_pattern: '同じ店舗が続いたため自動反映(旧仕様)' };
         el.innerHTML = '<p class="font-bold text-slate-500">📝 固定希望店舗の変更履歴(直近3ヶ月)</p>' +
           '<ul class="list-disc pl-4 space-y-0.5">' +
           logs.map(l => `<li>${esc(l.created_at.slice(0, 16).replace('T', ' '))} ${esc(l.old_store_name || '(なし)')} → ${esc(l.new_store_name || '(なし)')} (${esc(sourceLabel[l.source] || l.source)})</li>`).join('') +
@@ -3324,7 +3354,8 @@
       const res = await fetch('/api/matches/confirm-all', { method: 'POST' });
       const data = await res.json();
       if (!data.success) { alert('確定に失敗しました'); return; }
-      alert(`✅ ${data.confirmed}件を確定にしました${data.autoFixedStoreUpdated > 0 ? `\n🏬 1ヶ月間ずっと同じ店舗だったドライバー${data.autoFixedStoreUpdated}人の固定希望店舗を自動反映しました` : ''}`);
+      alert(`✅ ${data.confirmed}件を確定にしました${data.autoFixedStoreSuggested > 0 ? `\n💡 1ヶ月間ずっと同じ店舗だったドライバーが${data.autoFixedStoreSuggested}人いるため、固定希望店舗の候補として記録しました(ドライバーマスタ画面でご確認ください)` : ''}`);
+      loadDrivers(); // 固定希望店舗の候補バッジを最新化
       loadMatches();
       loadDashboard();
     }
