@@ -472,7 +472,7 @@
           <button id="av-view-list-btn" onclick="switchAvailabilityView('list')" class="text-xs px-3 py-1.5 rounded font-bold">リスト表示</button>
           <button id="av-view-grid-btn" onclick="switchAvailabilityView('grid')" class="text-xs px-3 py-1.5 rounded font-bold">📅 カレンダー表示</button>
         </div>
-        <span class="text-[11px] text-slate-400 ml-2">↕ 見出しクリックで並び替え(リスト表示)</span>
+        <span class="text-[11px] text-slate-400 ml-2">↕ 見出しクリックで並び替え</span>
         <input id="av-search" oninput="renderAvailabilityCurrentView()" placeholder="🔍 ドライバー名・希望日・エリア・店舗で検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
       </div>
 
@@ -756,12 +756,7 @@
         <div class="flex gap-1.5 items-center flex-wrap">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
           <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
-          <select id="dash-grid-sort" onchange="renderDashboardGrid()" class="p-1.5 border rounded text-xs">
-            <option value="name_asc">名前順(あ→ん)</option>
-            <option value="name_desc">名前順(ん→あ)</option>
-            <option value="count_desc">件数が多い順</option>
-            <option value="count_asc">件数が少ない順</option>
-          </select>
+          <span class="text-[11px] text-slate-400">↕ 見出しクリックで並び替え</span>
           <input id="dash-grid-search" oninput="renderDashboardGrid()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-1.5 border rounded text-xs min-w-[160px]">
           <span class="text-[10px] text-slate-400">(下の書き出しは社内確認用の生データCSVです。送付用は上の「シフト表の送付」から)</span>
         </div>
@@ -1447,6 +1442,7 @@
     }
 
     // カレンダー表示(氏名×日付のマス目)。取込み元のExcelと同じ見た目で一覧できるようにする
+    let avGridSortState = { field: 'name', dir: 'asc' };
     function renderAvailabilityGrid() {
       const header = document.getElementById('av-grid-header');
       const body = document.getElementById('av-grid-body');
@@ -1458,21 +1454,32 @@
         return;
       }
       const dates = [...new Set(rows.map(a => a.desired_date))].sort();
-      const names = [...new Set(rows.map(a => a.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      const { field, dir } = avGridSortState;
+      const driverRowsList = [...new Set(rows.map(a => a.driver_name))].map(name => {
+        const driverRows = rows.filter(a => a.driver_name === name);
+        return { name, code: driverRows[0]?.driver_code || '-', count: driverRows.length, driverRows };
+      });
+      driverRowsList.sort((a, b) => {
+        let cmp;
+        if (field === 'driver_code') cmp = a.code.localeCompare(b.code, 'ja', { numeric: true });
+        else if (field === 'count') cmp = a.count - b.count;
+        else cmp = a.name.localeCompare(b.name, 'ja');
+        if (cmp === 0) cmp = a.name.localeCompare(b.name, 'ja');
+        return dir === 'desc' ? -cmp : cmp;
+      });
       // 左端に固定する2列(社員コード・氏名)の幅と、それぞれの左端からの位置(px)。希望回数はスクロールで隠れてよい
       const CODE_W = 96, NAME_W = 110, COUNT_W = 68, DATE_W = 100;
       const fixedColStyle = w => `width:${w}px;min-width:${w}px;max-width:${w}px;overflow:hidden;text-overflow:ellipsis`;
+      const arrow = f => f === field ? (dir === 'asc' ? '▲' : '▼') : '⇅';
+      const arrowClass = f => f === field ? 'text-blue-600' : 'text-slate-300';
 
       header.innerHTML = `
-        <th style="${fixedColStyle(CODE_W)};left:0" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap">社員コード</th>
-        <th style="${fixedColStyle(NAME_W)};left:${CODE_W}px" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)]">氏名</th>
-        <th style="${fixedColStyle(COUNT_W)}" class="p-2 text-right text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-200 whitespace-nowrap">希望回数</th>` +
+        <th style="${fixedColStyle(CODE_W)};left:0" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(avGridSortState, 'driver_code', renderAvailabilityGrid)">社員コード <span class="${arrowClass('driver_code')}">${arrow('driver_code')}</span></th>
+        <th style="${fixedColStyle(NAME_W)};left:${CODE_W}px" class="p-2 text-left text-xs text-slate-500 sticky top-0 z-20 bg-white border border-slate-200 whitespace-nowrap shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(avGridSortState, 'name', renderAvailabilityGrid)">氏名 <span class="${arrowClass('name')}">${arrow('name')}</span></th>
+        <th style="${fixedColStyle(COUNT_W)}" class="p-2 text-right text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-200 whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(avGridSortState, 'count', renderAvailabilityGrid)">希望回数 <span class="${arrowClass('count')}">${arrow('count')}</span></th>` +
         dates.map(d => `<th style="${fixedColStyle(DATE_W)}" class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(d.slice(5))}(${WEEKDAY_JP[new Date(d + 'T00:00:00').getDay()]})</th>`).join('');
 
-      body.innerHTML = names.map(name => {
-        const driverRows = rows.filter(a => a.driver_name === name);
-        const code = driverRows[0]?.driver_code || '-';
-        const count = driverRows.length;
+      body.innerHTML = driverRowsList.map(({ name, code, count, driverRows }) => {
         const cells = dates.map(d => {
           const entry = driverRows.find(a => a.desired_date === d);
           const bg = dateHighlightBg(d);
@@ -2816,6 +2823,7 @@
     let dashboardStoreRequestsCache = [];
     let dashboardAvailabilityCache = [];
     let dashboardView = 'store';
+    let dashSortState = { field: 'name', dir: 'asc' };
 
     async function closeMonth(force) {
       const year = document.getElementById('close-year').value;
@@ -3203,17 +3211,17 @@
       const dates = [...new Set(matches.map(m => m.match_date))].sort();
       const rowKey = dashboardView === 'store' ? 'store_name' : 'driver_name';
       const keyword = normalizeForSearch(document.getElementById('dash-grid-search')?.value || '');
-      const sortBy = document.getElementById('dash-grid-sort')?.value || 'name_asc';
+      const { field, dir } = dashSortState;
 
       const countByRow = new Map();
       for (const m of matches) countByRow.set(m[rowKey], (countByRow.get(m[rowKey]) || 0) + 1);
 
       let rows = [...new Set(matches.map(m => m[rowKey]))];
       if (keyword) rows = rows.filter(r => normalizeForSearch(r).includes(keyword));
-      if (sortBy === 'name_asc') rows.sort((a, b) => a.localeCompare(b, 'ja'));
-      else if (sortBy === 'name_desc') rows.sort((a, b) => b.localeCompare(a, 'ja'));
-      else if (sortBy === 'count_desc') rows.sort((a, b) => countByRow.get(b) - countByRow.get(a) || a.localeCompare(b, 'ja'));
-      else if (sortBy === 'count_asc') rows.sort((a, b) => countByRow.get(a) - countByRow.get(b) || a.localeCompare(b, 'ja'));
+      rows.sort((a, b) => {
+        const cmp = field === 'count' ? (countByRow.get(a) - countByRow.get(b)) : a.localeCompare(b, 'ja');
+        return (dir === 'desc' ? -cmp : cmp) || a.localeCompare(b, 'ja');
+      });
 
       if (rows.length === 0) {
         header.innerHTML = '';
@@ -3221,7 +3229,11 @@
         return;
       }
 
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
+      const arrow = f => f === field ? (dir === 'asc' ? '▲' : '▼') : '⇅';
+      const arrowClass = f => f === field ? 'text-blue-600' : 'text-slate-300';
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'name', renderDashboardGrid)">${dashboardView === 'store' ? '店舗' : 'ドライバー'} <span class="${arrowClass('name')}">${arrow('name')}</span></th>` +
+        `<th class="p-2 text-right text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-200 whitespace-nowrap cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(dashSortState, 'count', renderDashboardGrid)">件数 <span class="${arrowClass('count')}">${arrow('count')}</span></th>` +
         dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = rows.map(rowName => {
@@ -3240,7 +3252,7 @@
           }).join('');
           return `<td class="p-1.5 border border-slate-100 min-w-[110px] align-top ${bg}">${content}</td>`;
         }).join('');
-        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td>${cells}</tr>`;
+        return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowName)}</td><td class="p-2 text-right text-xs text-slate-500 bg-white border border-slate-100 whitespace-nowrap">${countByRow.get(rowName)}件</td>${cells}</tr>`;
       }).join('');
     }
 
