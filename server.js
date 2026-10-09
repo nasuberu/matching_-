@@ -3,6 +3,8 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { spawnSync } = require('child_process');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs'); // 罫線等のセル装飾が必要なひな形生成に使う(xlsxパッケージは装飾の書き出しに非対応のため)
@@ -2901,6 +2903,53 @@ function weekdayLabelOf(dateStr) {
   return WEEKDAY_LABELS_JP[d.getDay()];
 }
 
+// 日本の祝日判定(固定日+ハッピーマンデー+春分/秋分の近似式+振替休日)。概算式のため、稀に公式発表と
+// 1日ずれる可能性があるが、個人事業主向けPDFの土日祝の色分け用途であり実用上問題ない
+// (フロント側のisJapaneseHoliday(index.html)と同じロジック)
+function isJapaneseHoliday(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+  function nthMonday(month, n) {
+    const first = new Date(y, month - 1, 1);
+    const firstMonday = 1 + ((8 - first.getDay()) % 7);
+    return firstMonday + (n - 1) * 7;
+  }
+  const shunbun = Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+  const shubun = Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+  const fixed = new Set(['1-1', '2-11', '2-23', '4-29', '5-3', '5-4', '5-5', '8-11', '11-3', '11-23', `3-${shunbun}`, `9-${shubun}`]);
+  const movable = new Set([`1-${nthMonday(1, 2)}`, `7-${nthMonday(7, 3)}`, `9-${nthMonday(9, 3)}`, `10-${nthMonday(10, 2)}`]);
+  const key = `${m}-${day}`;
+  if (fixed.has(key) || movable.has(key)) return true;
+  if (d.getDay() === 1) {
+    const prev = new Date(d); prev.setDate(d.getDate() - 1);
+    if (prev.getDay() === 0) {
+      const pKey = `${prev.getMonth() + 1}-${prev.getDate()}`;
+      if (fixed.has(pKey) || movable.has(pKey)) return true;
+    }
+  }
+  return false;
+}
+
+// ExcelJSはDateオブジェクトをUTC基準でシリアル値に変換するため、日本時間(UTC+9)のまま
+// new Date(year, month-1, day)を渡すと、Excel上で前日の日付として表示されてしまう
+// (例: 日本時間10/1 0:00 は UTC 9/30 15:00 であり、UTC基準では9/30扱いになる)。
+// この「UTC上でもその年月日の0時になる」Dateを作ることで、ズレを防ぐ
+function excelSafeDate(year, month, day) {
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+// LibreOffice(soffice)の実行ファイルを探す(個人事業主向けPDF出力で、xlsx→PDF変換に使う)
+function findSofficePath() {
+  const candidates = [
+    'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
+    'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
 // Excelのシート名制約(31文字以内、: \ / ? * [ ] 不可、重複不可)に収まるように名前を整形する
 function sanitizeSheetName(name, usedNames) {
   let base = String(name || '').replace(/[:\\/?*[\]]/g, '').trim() || 'シート';
@@ -2955,6 +3004,142 @@ app.get('/api/export/shift-by-driver', async (req, res) => {
 });
 
 // 店舗ごとの月間シフト表(誰が何時から何時まで来るか)をExcelで一括出力する(1店舗1シート)
+// 個人事業主ごとの月間「作業依頼表」をPDFで一括出力する。実際に使われている実ファイル
+// (★11月HML個人事業主作業依頼表_00540102鈴木　翔.xls)の一番新しい月のシートの書式を
+// そのままひな形(templates/driver_monthly_shift_template.xlsx)として使い、氏名・社員コード・
+// 年月・その月の確定/完了シフトだけを差し込んでPDF化する(LibreOfficeのsofficeコマンドで変換)。
+// 日付・曜日はテンプレートの数式(DATE関数等)をそのまま使うと再計算されない恐れがあるため、
+// 実際の値(Dateオブジェクト・曜日の漢字)をこちら側で計算して直接書き込む
+app.post('/api/export/driver-shift-pdfs', async (req, res) => {
+  const year = parseInt(req.body.year, 10);
+  const month = parseInt(req.body.month, 10);
+  if (!year || !month || month < 1 || month > 12) {
+    return res.status(400).json({ success: false, message: '対象年月を指定してください' });
+  }
+  const statuses = Array.isArray(req.body.statuses) && req.body.statuses.length ? req.body.statuses : ['確定', '完了'];
+
+  const sofficePath = findSofficePath();
+  if (!sofficePath) {
+    return res.status(400).json({ success: false, message: 'LibreOffice(soffice)が見つかりません。このPC(マッチングアプリを動かしているPC)にLibreOfficeをインストールしてから再度お試しください。' });
+  }
+
+  const templatePath = path.join(__dirname, 'templates', 'driver_monthly_shift_template.xlsx');
+  if (!fs.existsSync(templatePath)) {
+    return res.status(400).json({ success: false, message: 'PDFのひな形ファイルが見つかりません(templates/driver_monthly_shift_template.xlsx)' });
+  }
+
+  const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+  const placeholders = statuses.map(() => '?').join(',');
+  const matches = await dbAll(`
+    SELECT m.match_date, m.driver_id, d.name AS driver_name, d.driver_code,
+           s.store_name, s.time_start, s.time_end
+    FROM matches m
+    JOIN drivers d ON d.id = m.driver_id
+    JOIN store_requests s ON s.id = m.store_request_id
+    WHERE m.archived_month IS NULL AND m.status IN (${placeholders}) AND substr(m.match_date, 1, 7) = ?
+    ORDER BY d.name ASC, m.match_date ASC
+  `, [...statuses, monthStr]);
+
+  if (matches.length === 0) {
+    return res.status(400).json({ success: false, message: `${year}年${month}月分で、指定したステータス(${statuses.join('/')})のマッチングが見つかりませんでした` });
+  }
+
+  const byDriver = new Map();
+  for (const m of matches) {
+    if (!byDriver.has(m.driver_id)) byDriver.set(m.driver_id, { name: m.driver_name, code: m.driver_code, rows: [] });
+    byDriver.get(m.driver_id).rows.push(m);
+  }
+
+  const WEEKDAY_LABELS_JP = ['日', '月', '火', '水', '木', '金', '土'];
+  const HEADER_ROW = 18, DAY_BLOCK_ROWS = 31;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shift_pdf_'));
+  const desktopDir = path.join(os.homedir(), 'Desktop', `個人事業主シフトPDF_${year}年${String(month).padStart(2, '0')}月`);
+  fs.mkdirSync(desktopDir, { recursive: true });
+
+  const generatedFiles = [];
+  const errors = [];
+  for (const [, info] of byDriver) {
+    try {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(templatePath);
+      const ws = wb.worksheets[0];
+
+      // ふりがな欄はドライバーマスタに読み仮名データが無いため空欄にする(テンプレート本来の
+      // 「すずき」「しょう」が他の人にも残ってしまわないように明示的にクリアする)
+      ws.getRow(6).getCell(3).value = null;
+      ws.getRow(6).getCell(4).value = null;
+      ws.getRow(7).getCell(2).value = `氏名　（${info.name}）　殿`;
+      ws.getRow(8).getCell(4).value = info.code || '';
+      const today = new Date();
+      ws.getRow(10).getCell(6).value = excelSafeDate(today.getFullYear(), today.getMonth() + 1, today.getDate()); // 依頼日(発行日)
+      ws.getRow(13).getCell(2).value = `${year}年`;
+      ws.getRow(14).getCell(2).value = month;
+      ws.getRow(15).getCell(3).value = year;
+
+      const byDate = new Map(info.rows.map(m => [m.match_date, m]));
+      for (let i = 0; i < DAY_BLOCK_ROWS; i++) {
+        const row = ws.getRow(HEADER_ROW + 1 + i);
+        const dayNum = i + 1;
+        const bCell = row.getCell(2), cCell = row.getCell(3), dCell = row.getCell(4), eCell = row.getCell(5), fCell = row.getCell(6);
+        if (dayNum > daysInMonth) {
+          // テンプレートは31行固定だが、月を跨いだ分(翌月の日付)は表示せず空欄にする
+          bCell.value = null; cCell.value = null; dCell.value = null; eCell.value = null; fCell.value = null;
+          continue;
+        }
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        const dow = new Date(dateStr + 'T00:00:00').getDay();
+        bCell.value = excelSafeDate(year, month, dayNum);
+        cCell.value = WEEKDAY_LABELS_JP[dow];
+
+        let fillArgb, fontArgb;
+        if (dow === 6) { fillArgb = 'FF00B0F0'; fontArgb = 'FFFFFFFF'; }
+        else if (dow === 0 || isJapaneseHoliday(dateStr)) { fillArgb = 'FFFF66CC'; fontArgb = 'FFFFFFFF'; }
+        else { fillArgb = 'FFFFFFFF'; fontArgb = 'FF000000'; }
+        // ※ cCell.fill / cCell.font を個別に代入すると、このテンプレート(既存の複雑なスタイルを
+        // 持つセル)特有のExcelJSの不具合で、他の行と色が混ざってしまうことがあった(実際に発生を確認)。
+        // border/alignment/numFmtを今の値のまま保持しつつ、スタイル全体を1回で置き換えることで回避する
+        cCell.style = {
+          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } },
+          font: { ...cCell.font, color: { argb: fontArgb } },
+          border: cCell.border,
+          alignment: cCell.alignment,
+          numFmt: cCell.numFmt
+        };
+
+        const match = byDate.get(dateStr);
+        if (match) {
+          dCell.value = match.time_start || '';
+          eCell.value = match.time_end || '';
+          fCell.value = match.store_name || '';
+        }
+      }
+
+      const safeName = info.name.replace(/[\\/:*?"<>|]/g, '');
+      const fileStem = `★${month}月HML個人事業主作業依頼表_${info.code || ''}${safeName}`;
+      const xlsxPath = path.join(workDir, `${fileStem}.xlsx`);
+      await wb.xlsx.writeFile(xlsxPath);
+      generatedFiles.push(xlsxPath);
+    } catch (e) {
+      errors.push(`${info.name}さんの作成に失敗しました: ${e.message}`);
+    }
+  }
+
+  if (generatedFiles.length === 0) {
+    fs.rmSync(workDir, { recursive: true, force: true });
+    return res.status(400).json({ success: false, message: 'PDFを1件も作成できませんでした', errors });
+  }
+
+  // LibreOfficeで一括PDF変換(1人ずつsofficeを起動するより、まとめて1回で変換した方が大幅に速い)
+  const result = spawnSync(sofficePath, ['--headless', '--norestore', '--convert-to', 'pdf', '--outdir', desktopDir, ...generatedFiles], { timeout: 300000 });
+  fs.rmSync(workDir, { recursive: true, force: true });
+  if (result.error || result.status !== 0) {
+    return res.status(500).json({ success: false, message: 'PDF変換に失敗しました: ' + (result.error ? result.error.message : (result.stderr || '').toString()) });
+  }
+
+  res.json({ success: true, count: generatedFiles.length, folder: desktopDir, errors });
+});
+
 app.get('/api/export/shift-by-store', async (req, res) => {
   const matches = await dbAll(`
     SELECT m.*, d.name AS driver_name, d.phone AS driver_phone,

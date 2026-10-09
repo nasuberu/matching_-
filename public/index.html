@@ -683,6 +683,16 @@
           <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
           <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
         </div>
+        <hr class="border-slate-100">
+        <p class="text-xs text-slate-500">個人事業主さんに個別でお渡しする「作業依頼表」をPDFで1人1枚ずつ作成します(実際に使われているフォーマットと同じ見た目)。対象月の「確定」「完了」のマッチングがあるドライバーの分だけ作成し、デスクトップに自動でフォルダを作成して出力します。</p>
+        <div class="flex gap-2 items-center flex-wrap">
+          <input id="pdf-export-year" type="number" placeholder="年" class="p-2 border rounded text-sm w-20">
+          <span class="text-xs text-slate-500">年</span>
+          <input id="pdf-export-month" type="number" min="1" max="12" placeholder="月" class="p-2 border rounded text-sm w-16">
+          <span class="text-xs text-slate-500">月分</span>
+          <button onclick="exportDriverShiftPdfs()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📄 個人事業主ごとの作業依頼表(PDF・デスクトップに出力)</button>
+        </div>
+        <div id="pdf-export-result" class="text-xs"></div>
       </div>
 
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
@@ -3516,6 +3526,28 @@
 
     function exportShiftByStore() {
       downloadShiftExcel('/api/export/shift-by-store', 'store_shifts.xlsx');
+    }
+
+    async function exportDriverShiftPdfs() {
+      const year = document.getElementById('pdf-export-year').value;
+      const month = document.getElementById('pdf-export-month').value;
+      if (!year || !month) { alert('対象の年月を入力してください'); return; }
+      const resultEl = document.getElementById('pdf-export-result');
+      resultEl.innerHTML = '<span class="text-slate-400">PDFを作成中です(人数が多いと数分かかります)...</span>';
+      const res = await fetch('/api/export/driver-shift-pdfs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: parseInt(year, 10), month: parseInt(month, 10) })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '作成に失敗しました')}</span>`;
+        return;
+      }
+      let html = `<span class="text-emerald-600 font-bold">✅ ${data.count}人分のPDFを作成しました</span><br><span class="text-slate-500">📁 ${esc(data.folder)}</span>`;
+      if (data.errors && data.errors.length > 0) {
+        html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 作成できなかった分(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+      }
+      resultEl.innerHTML = html;
     }
 
     // ===== 使い方・よくある質問 =====
