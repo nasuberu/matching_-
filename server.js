@@ -1328,7 +1328,7 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
       return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
     }
     if (!hasAreaFixedSheet) {
-      return res.json({ success: true, skipped: true, imported: 0, fixedDriverLinks: 0, errors: [] });
+      return res.json({ success: true, skipped: true, imported: 0, errors: [] });
     }
   }
 
@@ -1729,6 +1729,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   const drivers = await dbAll('SELECT id, name, driver_code, fixed_store_id FROM drivers');
   const driverByCode = new Map(drivers.filter(d => d.driver_code).map(d => [normalizeEmployeeCode(d.driver_code), d.id]));
   const driversForNameSearch = drivers.map(d => ({ id: d.id, normName: normalizeNameForMatch(d.name) }));
+  const driverNameById = new Map(drivers.map(d => [d.id, d.name]));
   const currentFixedStoreById = new Map(drivers.map(d => [d.id, d.fixed_store_id]));
   // 備考の社員番号から固定希望店舗を自動設定する際、その店舗が既にNG設定されていれば矛盾するため設定しない
   const ngPairs = await dbAll(`SELECT driver_id, store_id FROM driver_store_preferences WHERE preference = 'NG'`);
@@ -1743,27 +1744,19 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   }
 
   const errors = [];
-  let fixedDriverLinks = 0;
+  let fixedStoreSuggestions = 0;
 
-  // 備考の内容(社員番号またはAIが読み取った人物像)から、そのドライバーの固定希望店舗をこの店舗に設定する。
-  // ただし、ドライバーマスタに既に固定希望店舗が登録されている場合は、備考の内容よりマスタの登録内容を
-  // 優先し、上書きしない(マスタのメンテナンスが正、備考はあくまで参考情報という位置づけ)。
-  // 正規表現(社員番号)・AI(自然文)どちらの経路から見つかった場合も、この共通処理を通す
-  async function tryLinkFixedStore(matchedDriverId, store_id, rowNumber, store_name, mentionLabel) {
-    const oldFixedStoreId = currentFixedStoreById.get(matchedDriverId);
-    if (oldFixedStoreId) {
-      if (oldFixedStoreId !== store_id) {
-        errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}は別の固定希望店舗を示していますが、ドライバーマスタに既に固定希望店舗が登録済みのため、マスタの設定を優先し上書きしませんでした(変更したい場合はドライバーマスタから手動で変更してください)`);
-      }
-      return false;
-    }
-    if (ngPairSet.has(`${matchedDriverId}:${store_id}`)) {
-      errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}は固定希望店舗の対象ですが、この店舗は店舗相性マスタでNGに設定されているため、固定希望店舗には反映しませんでした(手動で確認してください)`);
-      return false;
-    }
-    await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [store_id, matchedDriverId]);
-    await logFixedStoreChange(matchedDriverId, oldFixedStoreId, store_id, 'auto_remarks');
-    currentFixedStoreById.set(matchedDriverId, store_id); // 同じ取込み内で複数回ヒットしても重複記録しないように
+  // 備考の内容(社員番号またはAIが読み取った人物像)から、固定希望店舗の候補が見つかった場合の処理。
+  // ※どんなに強い希望の記載があっても、ドライバーマスタのfixed_store_idは自動で書き換えない
+  // (マスタの内容を勝手に変更しないでほしいという要望のため)。見つかったことは「要確認」として
+  // 伝えるだけに留め、実際に設定するかどうかはコーディネーターがドライバーマスタの一覧から
+  // 手動で判断・操作する(一覧の「固定希望店舗」列はその場で編集できる)
+  function suggestFixedStoreLink(matchedDriverId, store_id, rowNumber, store_name, mentionLabel) {
+    const currentFixedStoreId = currentFixedStoreById.get(matchedDriverId);
+    if (currentFixedStoreId === store_id) return false; // 既に同じ設定ならあらためて知らせる必要はない
+    const driverName = driverNameById.get(matchedDriverId) || `id:${matchedDriverId}`;
+    const ngNote = ngPairSet.has(`${matchedDriverId}:${store_id}`) ? '(この店舗は店舗相性マスタでNGに設定されています)' : '';
+    errors.push(`${rowNumber}行目「${store_name}」: 備考の${mentionLabel}から、${driverName}さんの固定希望店舗として「${store_name}」が考えられます${ngNote}。必要であればドライバーマスタの一覧から手動で設定してください(自動では設定していません)`);
     return true;
   }
 
@@ -1783,22 +1776,20 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     // 店舗マスタに住所が登録されていれば、それを店舗依頼側にも使う(距離計算ができるように)
     const storeInfo = await getStoreMasterInfo(store_id);
 
-    // 備考に社員番号らしき数字があれば、その社員の固定希望店舗をこの店舗に設定する(確実なのでまずこちらを試す)
+    // 備考に社員番号らしき数字があれば、固定希望店舗の候補として要確認に表示する(確実なのでまずこちらを試す)
     const codeMatch = notesRaw.match(/(\d{5,8})/);
     const normalizedCode = codeMatch ? normalizeEmployeeCode(codeMatch[1]) : null;
     if (normalizedCode && driverByCode.has(normalizedCode)) {
-      const linked = await tryLinkFixedStore(driverByCode.get(normalizedCode), store_id, r + 1, store_name, `社員番号(${codeMatch[1]})`);
-      if (linked) fixedDriverLinks++;
+      if (suggestFixedStoreLink(driverByCode.get(normalizedCode), store_id, r + 1, store_name, `社員番号(${codeMatch[1]})`)) fixedStoreSuggestions++;
     } else if (anthropic && notesRaw) {
       // 社員番号の記載が無い(=数字で確実には分からない)場合のみ、AIで自然文から人物への言及を読み取る
       // (「できれば髙橋さん希望」のような表現を拾うため。数字で確実に分かる場合は無駄なAI呼び出しをしない)
       const aiResult = await analyzeRequestNoteForMatching(notesRaw);
       for (const mention of (aiResult?.driver_mentions || [])) {
-        if (mention.sentiment !== 'required') continue; // 強い指定の時だけ固定希望店舗に反映する(弱い希望はマッチング時のスコアのみで考慮する)
+        if (mention.sentiment !== 'required') continue; // 強い指定の時だけ固定希望店舗の候補として表示する(弱い希望はマッチング時のスコアのみで考慮する)
         const driverId = resolveDriverMention(mention, driverByCode, driversForNameSearch);
         if (!driverId) continue;
-        const linked = await tryLinkFixedStore(driverId, store_id, r + 1, store_name, `内容(AIが「${mention.name_hint || mention.employee_code}」への強い希望と判定)`);
-        if (linked) fixedDriverLinks++;
+        if (suggestFixedStoreLink(driverId, store_id, r + 1, store_name, `内容(AIが「${mention.name_hint || mention.employee_code}」への強い希望と判定)`)) fixedStoreSuggestions++;
       }
     }
 
@@ -1864,7 +1855,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
   }
   await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, fixedDriverLinks, errors, importBatchId });
+  res.json({ success: true, imported, fixedStoreSuggestions, errors, importBatchId });
 });
 
 // ===== 店舗マスタ =====
