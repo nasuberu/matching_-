@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>マッチング管理画面</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800">
 
@@ -797,6 +799,20 @@
   <!-- マッチング・結果の表で、空き枠を右クリックした時に出す「その日に希望シフトを出しているドライバー」一覧 -->
   <div id="manual-assign-menu" class="hidden fixed z-50 bg-white rounded-lg shadow-xl border border-slate-300 text-sm max-h-72 overflow-y-auto min-w-[160px]"></div>
 
+  <!-- マッチング・結果タブの右余白に出す、東京23区の位置関係が分かる地図(手案・初回トライアル)。
+       画面に固定表示なのでスクロールしても見切れない。右上のボタンで大きさを切替・閉じられる -->
+  <div id="tokyo-map-panel" class="hidden fixed z-30 bg-white rounded-xl shadow-lg border border-slate-300 transition-all duration-200" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px)); width:240px;">
+    <div class="flex items-center justify-between px-2 py-1.5 border-b border-slate-200 bg-slate-50 rounded-t-xl">
+      <span class="text-xs font-bold text-slate-600">🗺️ 東京23区(店舗の位置)</span>
+      <div class="flex gap-1 items-center">
+        <button onclick="toggleTokyoMapSize()" class="text-xs w-5 h-5 rounded hover:bg-slate-200 font-bold" title="大きさを切り替え">⤢</button>
+        <button onclick="toggleTokyoMapPanel(false)" class="text-xs w-5 h-5 rounded hover:bg-slate-200 font-bold" title="閉じる">✕</button>
+      </div>
+    </div>
+    <div id="tokyo-map" style="height:220px; border-radius:0 0 0.75rem 0.75rem; overflow:hidden;"></div>
+  </div>
+  <button id="tokyo-map-reopen-btn" onclick="toggleTokyoMapPanel(true)" class="hidden fixed z-30 bg-white rounded-full shadow-lg border border-slate-300 px-3 py-2 text-xs font-bold hover:bg-slate-50" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px));">🗺️ 地図を表示</button>
+
   <script>
     let driversCache = [];
 
@@ -815,6 +831,60 @@
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
       if (tab === 'dashboard') loadDashboard();
       if (tab === 'help') renderHelpTopics();
+      updateTokyoMapVisibilityForTab(tab);
+    }
+
+    // ===== 東京23区マップ(マッチング・結果タブの右余白、手案・初回トライアル) =====
+    let tokyoMapInstance = null;
+    let tokyoMapExpanded = false;
+    let tokyoMapClosedByUser = false; // 閉じるボタンを押したら、タブを行き来しても閉じたままにする
+
+    // マッチング・結果タブの時だけ地図を出す(他のタブでは隠す。ユーザーが閉じていれば出さない)
+    function updateTokyoMapVisibilityForTab(tab) {
+      const onMatchesTab = tab === 'matches';
+      const show = onMatchesTab && !tokyoMapClosedByUser;
+      document.getElementById('tokyo-map-panel').classList.toggle('hidden', !show);
+      document.getElementById('tokyo-map-reopen-btn').classList.toggle('hidden', !(onMatchesTab && tokyoMapClosedByUser));
+      if (show) {
+        initTokyoMapIfNeeded();
+        setTimeout(() => { if (tokyoMapInstance) tokyoMapInstance.invalidateSize(); }, 50);
+      }
+    }
+
+    function toggleTokyoMapPanel(show) {
+      tokyoMapClosedByUser = !show;
+      document.getElementById('tokyo-map-panel').classList.toggle('hidden', !show);
+      document.getElementById('tokyo-map-reopen-btn').classList.toggle('hidden', show);
+      if (show) {
+        initTokyoMapIfNeeded();
+        setTimeout(() => { if (tokyoMapInstance) tokyoMapInstance.invalidateSize(); }, 50);
+      }
+    }
+
+    function toggleTokyoMapSize() {
+      tokyoMapExpanded = !tokyoMapExpanded;
+      const panel = document.getElementById('tokyo-map-panel');
+      const mapDiv = document.getElementById('tokyo-map');
+      panel.style.width = tokyoMapExpanded ? '420px' : '240px';
+      mapDiv.style.height = tokyoMapExpanded ? '460px' : '220px';
+      // サイズのCSSトランジションが終わってから地図の再描画サイズを合わせる(タイル欠けを防ぐ)
+      setTimeout(() => { if (tokyoMapInstance) tokyoMapInstance.invalidateSize(); }, 220);
+    }
+
+    async function initTokyoMapIfNeeded() {
+      if (tokyoMapInstance || typeof L === 'undefined') return;
+      tokyoMapInstance = L.map('tokyo-map', { zoomControl: true, attributionControl: false }).setView([35.6895, 139.6917], 11);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(tokyoMapInstance);
+      try {
+        const res = await fetch('/api/stores');
+        const data = await res.json();
+        const stores = (data.stores || []).filter(s => s.lat != null && s.lng != null);
+        for (const s of stores) {
+          L.circleMarker([s.lat, s.lng], { radius: 4, color: '#2563eb', fillColor: '#60a5fa', fillOpacity: 0.8, weight: 1 })
+            .bindTooltip(esc(s.name), { direction: 'top' })
+            .addTo(tokyoMapInstance);
+        }
+      } catch (e) { /* 地図自体は出せているので、店舗マーカーが読み込めなくても致命的ではない */ }
     }
 
     // ===== ドライバーマスタ =====
