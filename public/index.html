@@ -209,22 +209,6 @@
         <div class="space-y-3 pt-3">
 
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-          <p class="text-xs font-bold text-slate-600">📥 Excel/CSVから一括取込み(1行=1件の依頼)</p>
-          <details class="text-[10px] text-slate-400">
-            <summary class="cursor-pointer select-none text-slate-500 font-bold">形式・注意事項を見る</summary>
-            <div class="mt-1 space-y-1">
-              <p>列名の例: 店舗名・エリア・住所・依頼日・開始時刻・終了時刻・必要人数・要望(実際のファイル形式が分かれば調整します)</p>
-              <p>※ 同じ店舗・同じ依頼日・同じ開始時刻の行は上書き更新されます(1日に時間帯違いで複数依頼がある場合は別依頼として扱われます)</p>
-            </div>
-          </details>
-          <div class="flex gap-2 items-center">
-            <input id="sr-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
-            <button onclick="importStoreRequests()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
-          </div>
-          <div id="sr-import-result" class="text-xs"></div>
-        </div>
-
-        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <p class="text-xs font-bold text-slate-600">📥 週間必要枠表(曜日パターン)から一括取込み</p>
             <a href="/api/templates/store-requests-weekly.xlsx" class="text-xs bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold whitespace-nowrap">📄 ひな形をダウンロード(エリア固定とも共通)</a>
@@ -1344,20 +1328,6 @@
       if (!confirm('この店舗依頼を削除しますか？')) return;
       await fetch(`/api/store-requests/${id}`, { method: 'DELETE' });
       loadStoreRequests();
-    }
-
-    async function importStoreRequests() {
-      const fileInput = document.getElementById('sr-import-file');
-      const resultEl = document.getElementById('sr-import-result');
-      if (!fileInput.files[0]) { alert('ファイルを選択してください'); return; }
-      resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
-      const res = await fetch('/api/store-requests/import', { method: 'POST', body: form });
-      const data = await res.json();
-      renderImportResult(resultEl, data);
-      fileInput.value = '';
-      if (data.success) loadStoreRequests();
     }
 
     // 作業者がファイル欄で選んだファイルをFormDataに積む(未選択ならfalseを返す)
