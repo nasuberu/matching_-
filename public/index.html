@@ -801,8 +801,8 @@
 
   <!-- マッチング・結果タブの右余白に出す、東京23区の位置関係が分かる地図(手案・初回トライアル)。
        画面に固定表示なのでスクロールしても見切れない。右上のボタンで大きさを切替・閉じられる -->
-  <div id="tokyo-map-panel" class="hidden fixed z-30 bg-white rounded-xl shadow-lg border border-slate-300 transition-all duration-200" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px)); width:240px;">
-    <div class="flex items-center justify-between px-2 py-1.5 border-b border-slate-200 bg-slate-50 rounded-t-xl">
+  <div id="tokyo-map-panel" class="hidden fixed z-30 bg-white rounded-xl shadow-lg border border-slate-300 transition-[width,height] duration-200" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px)); width:240px;">
+    <div id="tokyo-map-handle" class="flex items-center justify-between px-2 py-1.5 border-b border-slate-200 bg-slate-50 rounded-t-xl select-none" style="cursor:move;" title="ドラッグで移動できます">
       <span class="text-xs font-bold text-slate-600">🗺️ 東京23区(店舗の位置)</span>
       <div class="flex gap-1 items-center">
         <button onclick="toggleTokyoMapSize()" class="text-xs w-5 h-5 rounded hover:bg-slate-200 font-bold" title="大きさを切り替え">⤢</button>
@@ -811,7 +811,7 @@
     </div>
     <div id="tokyo-map" style="height:220px; border-radius:0 0 0.75rem 0.75rem; overflow:hidden;"></div>
   </div>
-  <button id="tokyo-map-reopen-btn" onclick="toggleTokyoMapPanel(true)" class="hidden fixed z-30 bg-white rounded-full shadow-lg border border-slate-300 px-3 py-2 text-xs font-bold hover:bg-slate-50" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px));">🗺️ 地図を表示</button>
+  <button id="tokyo-map-reopen-btn" class="hidden fixed z-30 bg-white rounded-full shadow-lg border border-slate-300 px-3 py-2 text-xs font-bold hover:bg-slate-50 select-none" style="top:100px; right:max(8px, calc((100vw - 1152px)/2 + 8px)); cursor:move;" title="ドラッグで移動、クリックで地図を表示">🗺️ 地図を表示</button>
 
   <script>
     let driversCache = [];
@@ -838,6 +838,35 @@
     let tokyoMapInstance = null;
     let tokyoMapExpanded = false;
     let tokyoMapClosedByUser = false; // 閉じるボタンを押したら、タブを行き来しても閉じたままにする
+
+    // 地図パネル・再表示ボタンをドラッグで自由に動かせるようにする(handleElを掴んで動かす。
+    // ボタンの上から始めた場合はドラッグ扱いにしない。クリックと区別するため、実際に動いた場合だけ
+    // ドラッグ後のクリックイベントを打ち消す)
+    function makeDraggable(el, handleEl, onClickIfNotDragged) {
+      let dragging = false, moved = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+      handleEl.addEventListener('mousedown', (e) => {
+        const clickedButton = e.target.closest('button');
+        if (clickedButton && clickedButton !== handleEl) return; // ⤢/✕ボタンの上からはドラッグを始めない(ハンドル自身がボタンの場合は除く)
+        dragging = true; moved = false;
+        const rect = el.getBoundingClientRect();
+        startX = e.clientX; startY = e.clientY; startLeft = rect.left; startTop = rect.top;
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX, dy = e.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+        if (!moved) return;
+        el.style.left = `${Math.max(0, startLeft + dx)}px`;
+        el.style.top = `${Math.max(0, startTop + dy)}px`;
+        el.style.right = 'auto';
+      });
+      document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        if (!moved && onClickIfNotDragged) onClickIfNotDragged();
+      });
+    }
 
     // マッチング・結果タブの時だけ地図を出す(他のタブでは隠す。ユーザーが閉じていれば出さない)
     function updateTokyoMapVisibilityForTab(tab) {
@@ -3815,6 +3844,8 @@
       const saved = localStorage.getItem('lastTab');
       if (saved && VALID_TABS.includes(saved)) initialTab = saved;
     } catch (e) { /* プライベートブラウズ等で使えない場合は無視 */ }
+    makeDraggable(document.getElementById('tokyo-map-panel'), document.getElementById('tokyo-map-handle'), null);
+    makeDraggable(document.getElementById('tokyo-map-reopen-btn'), document.getElementById('tokyo-map-reopen-btn'), () => toggleTokyoMapPanel(true));
     switchTab(initialTab);
     loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
   </script>
