@@ -692,7 +692,11 @@ function parseUploadedSpreadsheet(buffer, filename) {
 // 見出し行+各行を配列のまま返す(通常のparseUploadedSpreadsheetは列名をキーにしたオブジェクトを返すため、
 // 「1(火)」のような日付見出しを順序どおり扱いたいこちらの用途には配列のままの形が必要)
 // sheetNameを指定すればそのシートを、未指定(またはファイル内に無い名前)なら先頭シートを読む
-function parseWideSpreadsheet(buffer, filename, sheetName) {
+// markerHeaders: 取込み対象のシートを自動判別するための目印の見出し名(例:「想定デポ」)。
+// 1つのExcelファイルに複数のシートがあり(例: 1枚目が週間必要枠表、2枚目がエリア固定の依頼、
+// 3枚目はその他のデータ)、取込み先ごとに読むべきシートが違う場合に、シート名を手で選ばなくても
+// 見出しの中身からそれらしいシートを自動で見つけるために使う。見つからなければ従来通り1枚目を使う
+function parseWideSpreadsheet(buffer, filename, sheetName, markerHeaders) {
   const ext = (filename || '').toLowerCase();
   if (ext.endsWith('.csv') || ext.endsWith('.txt')) {
     const detected = jschardet.detect(buffer) || {};
@@ -708,7 +712,14 @@ function parseWideSpreadsheet(buffer, filename, sheetName) {
     return [keys, ...objRows.map(o => keys.map(k => o[k]))];
   }
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  const targetName = (sheetName && workbook.SheetNames.includes(sheetName)) ? sheetName : workbook.SheetNames[0];
+  let targetName = (sheetName && workbook.SheetNames.includes(sheetName)) ? sheetName : null;
+  if (!targetName && markerHeaders && markerHeaders.length) {
+    targetName = workbook.SheetNames.find(name => {
+      const candidateRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false, range: 0 }).slice(0, 15);
+      return candidateRows.some(row => row.some(cell => markerHeaders.includes(String(cell ?? '').trim())));
+    });
+  }
+  if (!targetName) targetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[targetName];
   return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
 }
@@ -1173,7 +1184,7 @@ app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, re
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet);
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, ['想定デポ(候補店舗)', '想定デポ', '候補店舗']);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
@@ -1535,7 +1546,7 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
 
   let rows;
   try {
-    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet);
+    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, ['店舗名']);
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
