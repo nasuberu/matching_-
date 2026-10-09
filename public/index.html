@@ -804,9 +804,16 @@
       </details>
 
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
-        <div class="flex gap-1.5 items-center">
+        <div class="flex gap-1.5 items-center flex-wrap">
           <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
           <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
+          <select id="dash-grid-sort" onchange="renderDashboardGrid()" class="p-1.5 border rounded text-xs">
+            <option value="name_asc">名前順(あ→ん)</option>
+            <option value="name_desc">名前順(ん→あ)</option>
+            <option value="count_desc">件数が多い順</option>
+            <option value="count_asc">件数が少ない順</option>
+          </select>
+          <input id="dash-grid-search" oninput="renderDashboardGrid()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-1.5 border rounded text-xs min-w-[160px]">
           <span class="text-[10px] text-slate-400">(下の書き出しは社内確認用の生データCSVです。送付用は上の「シフト表の送付」から)</span>
         </div>
         <div class="flex gap-1.5 items-center flex-wrap">
@@ -3189,7 +3196,24 @@
       }
       const dates = [...new Set(matches.map(m => m.match_date))].sort();
       const rowKey = dashboardView === 'store' ? 'store_name' : 'driver_name';
-      const rows = [...new Set(matches.map(m => m[rowKey]))].sort((a, b) => a.localeCompare(b, 'ja'));
+      const keyword = normalizeForSearch(document.getElementById('dash-grid-search')?.value || '');
+      const sortBy = document.getElementById('dash-grid-sort')?.value || 'name_asc';
+
+      const countByRow = new Map();
+      for (const m of matches) countByRow.set(m[rowKey], (countByRow.get(m[rowKey]) || 0) + 1);
+
+      let rows = [...new Set(matches.map(m => m[rowKey]))];
+      if (keyword) rows = rows.filter(r => normalizeForSearch(r).includes(keyword));
+      if (sortBy === 'name_asc') rows.sort((a, b) => a.localeCompare(b, 'ja'));
+      else if (sortBy === 'name_desc') rows.sort((a, b) => b.localeCompare(a, 'ja'));
+      else if (sortBy === 'count_desc') rows.sort((a, b) => countByRow.get(b) - countByRow.get(a) || a.localeCompare(b, 'ja'));
+      else if (sortBy === 'count_asc') rows.sort((a, b) => countByRow.get(a) - countByRow.get(b) || a.localeCompare(b, 'ja'));
+
+      if (rows.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">条件に合うものがありません</td></tr>';
+        return;
+      }
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
         dates.map(d => `<th class="p-2 text-xs text-slate-500 sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
