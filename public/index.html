@@ -287,9 +287,8 @@
             <option value="契約終了">契約終了</option>
           </select>
           <input id="dr-email" placeholder="メールアドレス" class="p-2 border rounded text-sm">
-          <select id="dr-fixed-store" class="p-2 border rounded text-sm">
-            <option value="">固定希望店舗(なし)</option>
-          </select>
+          <input id="dr-fixed-store" type="text" list="store-datalist" placeholder="固定希望店舗(店舗名・店番で検索、空欄でなし)" class="p-2 border rounded text-sm">
+          <datalist id="store-datalist"></datalist>
           <input id="dr-insurance" placeholder="保険加入状況(例: 貨物保険加入済み)" class="p-2 border rounded text-sm md:col-span-2">
           <input id="dr-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
         </div>
@@ -784,6 +783,21 @@
 
     let fixedStoreSuggestionsCache = [];
 
+    // 固定希望店舗の検索欄(店舗マスタ一覧・編集フォーム共通)に表示する「店舗名(店番)」のラベル文字列。
+    // 店番があれば検索キーワードとして使えるよう、入力欄の表示テキストに含めておく(datalistの絞り込みは
+    // 入力欄の見た目の文字列に対して行われるため)
+    function storeOptionLabel(store) {
+      if (!store) return '';
+      return store.store_code ? `${store.name}(${store.store_code})` : store.name;
+    }
+    // 検索欄に入力/選択された文字列から、対応する店舗を探す(完全一致のみ。候補一覧から選んだ場合は必ず
+    // 一致する)。一致しなければundefinedを返し、呼び出し側は「候補にない入力」として弾く
+    function findStoreByOptionLabel(label) {
+      const trimmed = (label || '').trim();
+      if (!trimmed) return null; // 空欄=固定希望店舗なし
+      return driverFormStoresCache.find(s => storeOptionLabel(s) === trimmed);
+    }
+
     async function loadDrivers() {
       const [driversRes, storesRes, suggestionsRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores'), fetch('/api/fixed-store-suggestions')]);
       const driversData = await driversRes.json();
@@ -791,11 +805,8 @@
       driversCache = driversData.drivers || [];
       driverFormStoresCache = storesData.stores || [];
       fixedStoreSuggestionsCache = (await suggestionsRes.json()).suggestions || [];
-      const fixedStoreSelect = document.getElementById('dr-fixed-store');
-      const keepValue = fixedStoreSelect.value;
-      fixedStoreSelect.innerHTML = '<option value="">固定希望店舗(なし)</option>' +
-        driverFormStoresCache.map(s => `<option value="${s.id}">${esc(s.name)}${s.area ? `(${esc(s.area)})` : ''}</option>`).join('');
-      fixedStoreSelect.value = keepValue;
+      document.getElementById('store-datalist').innerHTML =
+        driverFormStoresCache.map(s => `<option value="${esc(storeOptionLabel(s))}">`).join('');
       renderAreaFixedStoreList();
       renderDriverList();
     }
@@ -898,10 +909,8 @@
             <td class="p-2.5">${statusBadge(d.status)}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
             <td class="p-2.5 text-xs">
-              <select onchange="updateDriverFixedStore(${d.id}, this.value)" class="p-1 border rounded text-xs w-full max-w-[150px]">
-                <option value="">(なし)</option>
-                ${driverFormStoresCache.map(s => `<option value="${s.id}" ${s.id === d.fixed_store_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-              </select>
+              <input type="text" list="store-datalist" value="${esc(storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)))}"
+                onchange="handleFixedStoreInputChange(${d.id}, this)" placeholder="検索(店舗名・店番)" class="p-1 border rounded text-xs w-full max-w-[150px]">
               ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
               ${pendingSuggestions.map(s => `
                 <div class="mt-1 bg-amber-50 border border-amber-200 rounded p-1.5 text-[10px] text-amber-800 max-w-[200px]">
@@ -1000,6 +1009,19 @@
       URL.revokeObjectURL(url);
     }
 
+    // ドライバー一覧の「固定希望店舗」検索欄に入力/選択した時に呼ばれる。候補一覧に無い文字列が
+    // 入力された場合は更新せず、元の表示に戻す(誤って変な値で上書きしてしまわないように)
+    function handleFixedStoreInputChange(driverId, inputEl) {
+      const match = findStoreByOptionLabel(inputEl.value);
+      if (match === undefined) {
+        alert('一覧に無い店舗名です。候補から選び直してください(空欄なら「なし」になります)');
+        const d = driversCache.find(x => x.id === driverId);
+        inputEl.value = d && d.fixed_store_id ? storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)) : '';
+        return;
+      }
+      updateDriverFixedStore(driverId, match ? match.id : '');
+    }
+
     // ドライバー一覧の「固定希望店舗」セルを直接編集した時に呼ばれる(他の項目には触れない専用API)
     async function updateDriverFixedStore(driverId, value) {
       const fixed_store_id = value ? parseInt(value, 10) : null;
@@ -1046,7 +1068,7 @@
       document.getElementById('dr-first-contract').value = d.first_contract_date || '';
       document.getElementById('dr-status').value = d.status || '';
       document.getElementById('dr-email').value = d.email || '';
-      document.getElementById('dr-fixed-store').value = d.fixed_store_id || '';
+      document.getElementById('dr-fixed-store').value = d.fixed_store_id ? storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)) : '';
       document.getElementById('dr-insurance').value = d.insurance_info || '';
       document.getElementById('dr-notes').value = d.notes || '';
       setAreaFixedFormValues(d);
@@ -1068,6 +1090,8 @@
     async function saveDriver() {
       const name = document.getElementById('dr-name').value.trim();
       if (!name) { alert('氏名を入力してください'); return; }
+      const fixedStoreMatch = findStoreByOptionLabel(document.getElementById('dr-fixed-store').value);
+      if (fixedStoreMatch === undefined) { alert('固定希望店舗が候補一覧にありません。候補から選び直してください(空欄なら「なし」になります)'); return; }
       const payload = {
         name,
         driver_code: document.getElementById('dr-code').value.trim(),
@@ -1078,7 +1102,7 @@
         first_contract_date: document.getElementById('dr-first-contract').value,
         status: document.getElementById('dr-status').value,
         email: document.getElementById('dr-email').value.trim(),
-        fixed_store_id: document.getElementById('dr-fixed-store').value ? parseInt(document.getElementById('dr-fixed-store').value, 10) : null,
+        fixed_store_id: fixedStoreMatch ? fixedStoreMatch.id : null,
         insurance_info: document.getElementById('dr-insurance').value.trim(),
         notes: document.getElementById('dr-notes').value.trim(),
         ...getAreaFixedFormValues()
