@@ -293,6 +293,8 @@
           <input id="dr-notes" placeholder="備考" class="p-2 border rounded text-sm md:col-span-4">
         </div>
 
+        <div id="dr-fixed-store-history" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] text-slate-500 space-y-1"></div>
+
         <details class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
           <summary class="cursor-pointer select-none text-xs font-bold text-indigo-700">🗺️ エリア固定の設定(任意)</summary>
           <div class="pt-2 space-y-2">
@@ -875,7 +877,13 @@
             <td class="p-2.5 text-xs text-slate-500">${esc(d.first_contract_date || '-')}</td>
             <td class="p-2.5">${statusBadge(d.status)}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
-            <td class="p-2.5 text-xs text-slate-500">${esc(d.fixed_store_name || '-')}${d.area_fixed_enabled ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🗺️エリア固定</span>' : ''}</td>
+            <td class="p-2.5 text-xs">
+              <select onchange="updateDriverFixedStore(${d.id}, this.value)" class="p-1 border rounded text-xs w-full max-w-[150px]">
+                <option value="">(なし)</option>
+                ${driverFormStoresCache.map(s => `<option value="${s.id}" ${s.id === d.fixed_store_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+              </select>
+              ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
+            </td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.notes || '-')}</td>
             <td class="p-2.5 whitespace-nowrap">
@@ -961,6 +969,39 @@
       URL.revokeObjectURL(url);
     }
 
+    // ドライバー一覧の「固定希望店舗」セルを直接編集した時に呼ばれる(他の項目には触れない専用API)
+    async function updateDriverFixedStore(driverId, value) {
+      const fixed_store_id = value ? parseInt(value, 10) : null;
+      const res = await fetch(`/api/drivers/${driverId}/fixed-store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fixed_store_id })
+      });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '更新に失敗しました'); }
+      loadDrivers();
+      if (editingDriverId === driverId) loadDriverFixedStoreHistory(driverId); // 編集画面を開いたままの場合は履歴も更新
+    }
+
+    // 編集中のドライバーの固定希望店舗の変更履歴を、編集フォーム内にその場で表示する(直近3ヶ月分の目安。
+    // 削除はしていないので実際にはそれ以前の分も残っている)
+    async function loadDriverFixedStoreHistory(driverId) {
+      const el = document.getElementById('dr-fixed-store-history');
+      const res = await fetch(`/api/logs/fixed-store-changes?driver_id=${driverId}`);
+      const data = await res.json();
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      const logs = (data.logs || []).filter(l => new Date(l.created_at) >= threeMonthsAgo);
+      if (logs.length === 0) {
+        el.innerHTML = '<p class="font-bold text-slate-500">📝 固定希望店舗の変更履歴(直近3ヶ月)</p><p>変更履歴はありません</p>';
+      } else {
+        const sourceLabel = { manual: '手動', auto_remarks: '備考から自動反映', auto_stable_assignment: '同じ店舗が続いたため自動反映' };
+        el.innerHTML = '<p class="font-bold text-slate-500">📝 固定希望店舗の変更履歴(直近3ヶ月)</p>' +
+          '<ul class="list-disc pl-4 space-y-0.5">' +
+          logs.map(l => `<li>${esc(l.created_at.slice(0, 16).replace('T', ' '))} ${esc(l.old_store_name || '(なし)')} → ${esc(l.new_store_name || '(なし)')} (${esc(sourceLabel[l.source] || l.source)})</li>`).join('') +
+          '</ul>';
+      }
+      el.classList.remove('hidden');
+    }
+
     function editDriver(id) {
       const d = driversCache.find(x => x.id === id);
       if (!d) return;
@@ -978,6 +1019,7 @@
       document.getElementById('dr-insurance').value = d.insurance_info || '';
       document.getElementById('dr-notes').value = d.notes || '';
       setAreaFixedFormValues(d);
+      loadDriverFixedStoreHistory(id);
       document.getElementById('dr-submit-btn').textContent = '更新する';
       document.getElementById('dr-cancel-btn').classList.remove('hidden');
       document.getElementById('dr-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -985,6 +1027,7 @@
 
     function cancelDriverEdit() {
       editingDriverId = null;
+      document.getElementById('dr-fixed-store-history').classList.add('hidden');
       ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
       setAreaFixedFormValues({});
       document.getElementById('dr-submit-btn').textContent = '＋ 登録する';

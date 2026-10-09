@@ -861,18 +861,36 @@ app.post('/api/drivers', async (req, res) => {
   res.json({ success: true, id: result.lastID });
 });
 
-// 固定希望店舗の変更履歴を返す(手動設定か、どの自動反映によるものかを確認できるようにする)
+// 固定希望店舗の変更履歴を返す(手動設定か、どの自動反映によるものかを確認できるようにする)。
+// driver_idを指定すると、そのドライバーの分だけに絞り込む(編集画面にその場で表示する用)
 app.get('/api/logs/fixed-store-changes', async (req, res) => {
+  const driverId = req.query.driver_id ? parseInt(req.query.driver_id, 10) : null;
   const rows = await dbAll(`
     SELECT l.*, d.name AS driver_name, os.name AS old_store_name, ns.name AS new_store_name
     FROM fixed_store_change_log l
     JOIN drivers d ON d.id = l.driver_id
     LEFT JOIN stores os ON os.id = l.old_store_id
     LEFT JOIN stores ns ON ns.id = l.new_store_id
+    ${driverId ? 'WHERE l.driver_id = ?' : ''}
     ORDER BY l.id DESC
     LIMIT 200
-  `);
+  `, driverId ? [driverId] : []);
   res.json({ success: true, logs: rows });
+});
+
+// ドライバーマスタ一覧から、固定希望店舗だけをその場で直接編集できるようにする専用エンドポイント。
+// (氏名など他の項目は一切触らない。/api/drivers(POST)は全項目を送る前提の更新なので、
+// この用途にそのまま使うと他の項目を空で上書きしてしまう危険があるため、別エンドポイントにしている)
+app.post('/api/drivers/:id/fixed-store', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const newFixedStoreId = req.body.fixed_store_id ? parseInt(req.body.fixed_store_id, 10) : null;
+  const existing = await dbGet('SELECT fixed_store_id FROM drivers WHERE id = ?', [id]);
+  if (!existing) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
+  if (existing.fixed_store_id !== newFixedStoreId) {
+    await dbRun('UPDATE drivers SET fixed_store_id = ? WHERE id = ?', [newFixedStoreId, id]);
+    await logFixedStoreChange(id, existing.fixed_store_id, newFixedStoreId, 'manual');
+  }
+  res.json({ success: true });
 });
 
 // 一括取込みの履歴一覧(新しい順、最大50件)。取り消し済みかどうか(undone_at)、現時点でまだ
