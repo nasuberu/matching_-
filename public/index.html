@@ -165,7 +165,12 @@
         <label class="text-xs font-bold text-slate-600">並び替え:</label>
         <select id="sm-sort" onchange="renderStoreMasterList()" class="p-1.5 border rounded text-xs">
           <option value="name">店舗名順</option>
+          <option value="store_code">店番順</option>
           <option value="area">エリア順</option>
+          <option value="address">住所順</option>
+          <option value="manager_name">店長順</option>
+          <option value="sv_name">SV順</option>
+          <option value="notes">備考順</option>
         </select>
         <input id="sm-search" oninput="renderStoreMasterList()" placeholder="🔍 店舗名・エリア・住所・店長・SVで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
         <button onclick="exportStoreMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
@@ -377,7 +382,16 @@
         <select id="dr-sort" onchange="renderDriverList()" class="p-1.5 border rounded text-xs">
           <option value="name">氏名順</option>
           <option value="driver_code">社員コード順</option>
+          <option value="company_name">会社名順</option>
+          <option value="phone">電話番号順</option>
+          <option value="vehicle_type">車両種別順</option>
+          <option value="home_address">自宅住所順</option>
+          <option value="first_contract_date">初回委託日順</option>
           <option value="status">ステータス順</option>
+          <option value="email">メール順</option>
+          <option value="fixed_store_name">固定希望店舗順</option>
+          <option value="insurance_info">保険加入状況順</option>
+          <option value="notes">備考順</option>
         </select>
         <input id="dr-search" oninput="renderDriverList()" placeholder="🔍 氏名・社員コード・会社名・住所・電話・メールで検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
         <button onclick="exportDriverMaster()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 表示中の一覧をCSVで書き出す</button>
@@ -525,6 +539,11 @@
         <select id="av-sort" onchange="renderAvailabilityCurrentView()" class="p-1.5 border rounded text-xs">
           <option value="date">希望日順</option>
           <option value="name">ドライバー名順</option>
+          <option value="desired_area">希望エリア順</option>
+          <option value="desired_store">希望店舗順</option>
+          <option value="time_start">開始時刻順</option>
+          <option value="time_end">終了時刻順</option>
+          <option value="requests">要望順</option>
         </select>
         <input id="av-search" oninput="renderAvailabilityCurrentView()" placeholder="🔍 ドライバー名・希望日・エリア・店舗で検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
       </div>
@@ -930,9 +949,15 @@
         rows = rows.filter(d => [d.name, d.driver_code, d.company_name, d.phone, d.vehicle_type, d.home_address, d.email, d.insurance_info, d.status, d.fixed_store_name, d.notes]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
+      const DRIVER_SORT_FIELDS = {
+        driver_code: true, company_name: false, phone: true, vehicle_type: false, home_address: false,
+        first_contract_date: false, status: false, email: false, fixed_store_name: false, insurance_info: false, notes: false
+      };
       return [...rows].sort((a, b) => {
-        if (sortBy === 'driver_code') return (a.driver_code || '').localeCompare(b.driver_code || '', 'ja') || a.name.localeCompare(b.name, 'ja');
-        if (sortBy === 'status') return (a.status || '').localeCompare(b.status || '', 'ja') || a.name.localeCompare(b.name, 'ja');
+        if (sortBy in DRIVER_SORT_FIELDS) {
+          const numeric = DRIVER_SORT_FIELDS[sortBy];
+          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
+        }
         return a.name.localeCompare(b.name, 'ja');
       });
     }
@@ -1175,8 +1200,12 @@
         rows = rows.filter(s => [s.name, s.store_code, s.area, s.address, s.manager_name, s.sv_name, s.notes]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
+      const STORE_SORT_FIELDS = { store_code: true, area: false, address: false, manager_name: false, sv_name: false, notes: false };
       return [...rows].sort((a, b) => {
-        if (sortBy === 'area') return (a.area || '').localeCompare(b.area || '', 'ja') || a.name.localeCompare(b.name, 'ja');
+        if (sortBy in STORE_SORT_FIELDS) {
+          const numeric = STORE_SORT_FIELDS[sortBy];
+          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja', numeric ? { numeric: true } : undefined) || a.name.localeCompare(b.name, 'ja');
+        }
         return a.name.localeCompare(b.name, 'ja');
       });
     }
@@ -1568,8 +1597,12 @@
         rows = rows.filter(a => [a.driver_name, a.desired_date, a.desired_area, a.desired_store, a.requests]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
+      const AV_SORT_FIELDS = ['desired_area', 'desired_store', 'time_start', 'time_end', 'requests'];
       return [...rows].sort((a, b) => {
         if (sortBy === 'name') return a.driver_name.localeCompare(b.driver_name, 'ja') || a.desired_date.localeCompare(b.desired_date);
+        if (AV_SORT_FIELDS.includes(sortBy)) {
+          return (a[sortBy] || '').localeCompare(b[sortBy] || '', 'ja') || a.desired_date.localeCompare(b.desired_date);
+        }
         return b.desired_date.localeCompare(a.desired_date) || a.driver_name.localeCompare(b.driver_name, 'ja');
       });
     }
