@@ -508,18 +508,20 @@
         <input id="av-search" oninput="renderAvailabilityCurrentView()" placeholder="🔍 ドライバー名・希望日・エリア・店舗で検索" class="p-1.5 border rounded text-xs flex-1 min-w-[200px]">
       </div>
 
-      <div id="av-list-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+      <div id="av-list-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="w-full text-sm">
-          <thead>
+          <thead class="sticky top-0 z-10 bg-white">
             <tr class="border-b border-slate-200 text-left text-xs text-slate-500">
-              <th class="p-2.5">ドライバー名</th>
-              <th class="p-2.5">希望日</th>
-              <th class="p-2.5">希望エリア</th>
-              <th class="p-2.5">希望店舗</th>
-              <th class="p-2.5">開始</th>
-              <th class="p-2.5">終了</th>
-              <th class="p-2.5">要望</th>
-              <th class="p-2.5"></th>
+              <th class="p-2.5 bg-white">社員コード</th>
+              <th class="p-2.5 bg-white">ドライバー名</th>
+              <th class="p-2.5 bg-white">希望日</th>
+              <th class="p-2.5 bg-white">希望エリア</th>
+              <th class="p-2.5 bg-white">希望店舗</th>
+              <th class="p-2.5 bg-white">開始</th>
+              <th class="p-2.5 bg-white">終了</th>
+              <th class="p-2.5 bg-white">要望</th>
+              <th class="p-2.5 bg-white text-right">月間希望日数</th>
+              <th class="p-2.5 bg-white"></th>
             </tr>
           </thead>
           <tbody id="availability-list"></tbody>
@@ -1480,7 +1482,7 @@
       const names = [...new Set(rows.map(a => a.driver_name))].sort((a, b) => a.localeCompare(b, 'ja'));
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">氏名</th>` +
-        dates.map(d => `<th class="p-2 text-xs text-slate-500 sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap">${esc(d.slice(5))}</th>`).join('');
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(d.slice(5))}(${WEEKDAY_JP[new Date(d + 'T00:00:00').getDay()]})</th>`).join('');
 
       body.innerHTML = names.map(name => {
         const cells = dates.map(d => {
@@ -1499,7 +1501,7 @@
 
       let rows = availabilityCache;
       if (keyword) {
-        rows = rows.filter(a => [a.driver_name, a.desired_date, a.desired_area, a.desired_store, a.requests]
+        rows = rows.filter(a => [a.driver_name, a.driver_code, a.desired_date, a.desired_area, a.desired_store, a.requests]
           .some(v => normalizeForSearch(v).includes(keyword)));
       }
       const AV_SORT_FIELDS = ['desired_area', 'desired_store', 'time_start', 'time_end', 'requests'];
@@ -1518,24 +1520,35 @@
       const rows = getVisibleAvailability();
 
       if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する希望シフトが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当する希望シフトが見つかりません' : 'まだ登録されていません'}</td></tr>`;
         return;
       }
-      tbody.innerHTML = rows.map(a => `
+      // 月間希望日数は現在の絞り込みに関係なく、全データから「このドライバーのこの月の提出日数」を数える
+      const monthlyCountByDriverMonth = new Map();
+      for (const a of availabilityCache) {
+        const key = `${a.driver_id}|${a.desired_date.slice(0, 7)}`;
+        monthlyCountByDriverMonth.set(key, (monthlyCountByDriverMonth.get(key) || 0) + 1);
+      }
+      tbody.innerHTML = rows.map(a => {
+        const monthlyCount = monthlyCountByDriverMonth.get(`${a.driver_id}|${a.desired_date.slice(0, 7)}`) || 0;
+        return `
         <tr class="border-b border-slate-100 last:border-0 align-top">
+          <td class="p-2.5 text-xs text-slate-500">${esc(a.driver_code || '-')}</td>
           <td class="p-2.5 font-bold">${esc(a.driver_name)}</td>
-          <td class="p-2.5 text-xs text-slate-500">${esc(a.desired_date)}</td>
+          <td class="p-2.5 text-xs font-bold ${dateHighlightClass(a.desired_date)}">${esc(withWeekday(a.desired_date))}</td>
           <td class="p-2.5">${esc(a.desired_area || '-')}</td>
           <td class="p-2.5">${esc(a.desired_store || '-')}</td>
           <td class="p-2.5 text-xs text-slate-500">${esc(a.time_start || '-')}</td>
           <td class="p-2.5 text-xs text-slate-500">${esc(a.time_end || '-')}</td>
           <td class="p-2.5 text-xs text-slate-500">${esc(a.requests || '-')}</td>
+          <td class="p-2.5 text-right text-xs text-slate-500 whitespace-nowrap">${monthlyCount}日</td>
           <td class="p-2.5 whitespace-nowrap">
             <button onclick="editAvailability(${a.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
             <button onclick="deleteAvailability(${a.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function editAvailability(id) {
@@ -2339,7 +2352,7 @@
         return `
           <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
             <div class="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="toggleDateGroup('${date}')">
-              <p class="font-bold text-sm text-slate-700">📅 ${withWeekday(date)} <span class="text-xs text-slate-400 font-normal">(${rows.length}件)</span></p>
+              <p class="font-bold text-sm ${dateHighlightClass(date) || 'text-slate-700'}">📅 ${withWeekday(date)} <span class="text-xs text-slate-400 font-normal">(${rows.length}件)</span></p>
               <div class="flex items-center gap-2" onclick="event.stopPropagation()">
                 ${selectableIds.length > 0 ? `
                   <label class="text-[11px] text-slate-500 flex items-center gap-1 cursor-pointer">
@@ -2438,7 +2451,7 @@
       }
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
-        dates.map(d => `<th class="p-2 text-xs text-slate-500 sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
 
       const rowsHtml = [];
       for (const storeName of storeNames) {
@@ -2478,7 +2491,7 @@
       for (const a of availability) availByDriverDate.set(`${a.driver_id}|${a.desired_date}`, a);
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">ドライバー</th>` +
-        dates.map(d => `<th class="p-2 text-xs text-slate-500 sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = driverIdsSorted.map(driverId => {
         const cells = dates.map(d => {
@@ -2729,6 +2742,42 @@
       return `${dateStr}(${WEEKDAY_JP[d.getDay()]})`;
     }
 
+    // 日本の祝日判定(固定日+ハッピーマンデー+春分/秋分の近似式+振替休日)。概算式のため、
+    // 稀に公式発表と1日ずれる可能性があるが、画面を見やすくする目的の色分けなので実用上問題ない
+    function isJapaneseHoliday(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00');
+      const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+      function nthMonday(month, n) {
+        const first = new Date(y, month - 1, 1);
+        const firstMonday = 1 + ((8 - first.getDay()) % 7);
+        return firstMonday + (n - 1) * 7;
+      }
+      const shunbun = Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+      const shubun = Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+      const fixed = new Set(['1-1', '2-11', '2-23', '4-29', '5-3', '5-4', '5-5', '8-11', '11-3', '11-23', `3-${shunbun}`, `9-${shubun}`]);
+      const movable = new Set([`1-${nthMonday(1, 2)}`, `7-${nthMonday(7, 3)}`, `9-${nthMonday(9, 3)}`, `10-${nthMonday(10, 2)}`]);
+      const key = `${m}-${day}`;
+      if (fixed.has(key) || movable.has(key)) return true;
+      // 振替休日: 祝日が日曜なら、その次の平日(まだ祝日でない日)が休日になる
+      if (d.getDay() === 1) {
+        const prev = new Date(d); prev.setDate(d.getDate() - 1);
+        if (prev.getDay() === 0) {
+          const pKey = `${prev.getMonth() + 1}-${prev.getDate()}`;
+          if (fixed.has(pKey) || movable.has(pKey)) return true;
+        }
+      }
+      return false;
+    }
+
+    // 日付を色分けするためのCSSクラスを返す(日曜/祝日は赤、土曜は青、平日は空)
+    function dateHighlightClass(dateStr) {
+      if (!dateStr) return '';
+      const dow = new Date(dateStr + 'T00:00:00').getDay();
+      if (dow === 0 || isJapaneseHoliday(dateStr)) return 'text-red-600';
+      if (dow === 6) return 'text-blue-600';
+      return '';
+    }
+
     // ===== ダッシュボード =====
     let dashboardMatchesCache = [];
     let dashboardStoreRequestsCache = [];
@@ -2909,7 +2958,7 @@
       }
       tbody.innerHTML = rows.map(r => `
         <tr class="border-b border-slate-100">
-          <td class="p-1.5 whitespace-nowrap">${esc(withWeekday(r.date))}</td>
+          <td class="p-1.5 font-bold whitespace-nowrap ${dateHighlightClass(r.date)}">${esc(withWeekday(r.date))}</td>
           <td class="p-1.5 text-slate-500 whitespace-nowrap">${esc(r.driver_code || '-')}</td>
           <td class="p-1.5 font-bold whitespace-nowrap">${esc(r.driver_name)}</td>
           <td class="p-1.5 whitespace-nowrap">${esc(r.shift || '-')}</td>
@@ -3140,7 +3189,7 @@
       }
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border-b border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${dashboardView === 'store' ? '店舗' : 'ドライバー'}</th>` +
-        dates.map(d => `<th class="p-2 text-xs text-slate-500 sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap">${esc(withWeekday(d))}</th>`).join('');
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 bg-white border-b border-slate-200 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'}">${esc(withWeekday(d))}</th>`).join('');
 
       body.innerHTML = rows.map(rowName => {
         const cells = dates.map(d => {

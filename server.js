@@ -998,7 +998,7 @@ app.delete('/api/drivers/:id', async (req, res) => {
 // ===== ドライバーの希望シフト =====
 app.get('/api/driver-availability', async (req, res) => {
   const rows = await dbAll(`
-    SELECT a.*, d.name AS driver_name, d.phone AS driver_phone
+    SELECT a.*, d.name AS driver_name, d.phone AS driver_phone, d.driver_code AS driver_code
     FROM driver_availability a JOIN drivers d ON d.id = a.driver_id
     WHERE a.archived_month IS NULL
     ORDER BY a.desired_date DESC, a.id DESC
