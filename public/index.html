@@ -826,6 +826,7 @@
     let driversCache = [];
 
     function switchTab(tab) {
+      try { localStorage.setItem('lastTab', tab); } catch (e) { /* プライベートブラウズ等で使えない場合は無視 */ }
       ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard', 'help'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
@@ -3421,7 +3422,13 @@
       `).join('');
     }
 
-    switchTab('matches');
+    const VALID_TABS = ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard', 'help'];
+    let initialTab = 'matches';
+    try {
+      const saved = localStorage.getItem('lastTab');
+      if (saved && VALID_TABS.includes(saved)) initialTab = saved;
+    } catch (e) { /* プライベートブラウズ等で使えない場合は無視 */ }
+    switchTab(initialTab);
     loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
   </script>
 </body>
