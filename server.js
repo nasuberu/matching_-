@@ -2113,6 +2113,16 @@ app.post('/api/store-requests/:id/gap-dismiss', async (req, res) => {
   res.json({ success: true });
 });
 
+// 同じ行(店舗の同じ「N人目」枠)にまたがる複数の穴を、まとめて対応なし設定/解除する
+app.post('/api/store-requests/gap-dismiss-batch', async (req, res) => {
+  const { request_ids, dismissed } = req.body || {};
+  if (!Array.isArray(request_ids) || request_ids.length === 0) return res.status(400).json({ success: false, message: 'request_idsは1件以上の配列で指定してください' });
+  for (const id of request_ids) {
+    await dbRun('UPDATE store_requests SET gap_dismissed = ? WHERE id = ?', [dismissed ? 1 : 0, id]);
+  }
+  res.json({ success: true });
+});
+
 // 店舗からのExcel依頼を取り込む想定。列名は実際の形式が分かり次第STORE_ALIASESに追記する
 app.post('/api/store-requests/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
@@ -3758,6 +3768,24 @@ app.get('/api/export/shift-by-store', async (req, res) => {
     byStore.get(key).rows.push(m);
   }
 
+  // 「対応なし」に設定した(=手配を諦めた)時間の穴を、店舗ごとにまとめておき、シフト表に
+  // 「この時間帯は手配できていません」と明記できるようにする。穴がその後埋まって解消済みなら出さない
+  const dismissedRequests = await dbAll(`
+    SELECT id, store_name, request_date, time_start, time_end
+    FROM store_requests WHERE gap_dismissed = 1 AND archived_month IS NULL
+  `);
+  const gapNoteByStore = new Map(); // 店舗名 -> [{date, start, end}, ...]
+  for (const r of dismissedRequests) {
+    const rms = await dbAll(
+      `SELECT time_start, time_end, status FROM matches WHERE store_request_id = ? AND archived_month IS NULL`,
+      [r.id]
+    );
+    const gaps = computeTimeGaps(r.time_start, r.time_end, rms.filter(m => m.status !== '欠勤'));
+    if (gaps.length === 0) continue;
+    if (!gapNoteByStore.has(r.store_name)) gapNoteByStore.set(r.store_name, []);
+    for (const g of gaps) gapNoteByStore.get(r.store_name).push({ date: r.request_date, start: g.start, end: g.end });
+  }
+
   const wb = XLSX.utils.book_new();
   const usedNames = new Set();
   for (const info of byStore.values()) {
@@ -3767,6 +3795,12 @@ app.get('/api/export/shift-by-store', async (req, res) => {
       ['日付', '曜日', '開始', '終了', '担当ドライバー', '電話番号', 'ステータス'],
       ...info.rows.map(m => [m.match_date, weekdayLabelOf(m.match_date), m.time_start || '', m.time_end || '', m.driver_name, m.driver_phone || '-', m.status])
     ];
+    const gapNotes = (gapNoteByStore.get(info.name) || []).sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
+    if (gapNotes.length > 0) {
+      aoa.push([], ['⚠️ 手配できていない時間帯(ご了承ください)']);
+      aoa.push(['日付', '曜日', '時間帯']);
+      for (const g of gapNotes) aoa.push([g.date, weekdayLabelOf(g.date), `${g.start}〜${g.end}`]);
+    }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 8 }];
     XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(info.name, usedNames));

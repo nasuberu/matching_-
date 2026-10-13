@@ -3021,6 +3021,15 @@
       loadMatches();
     }
 
+    // 表(店舗別)の行のチェック「この行の穴をまとめて対応なしにする」から呼ばれる。
+    // その行(同じ「N人目」枠)にまたがる穴を一括で対応なし/解除する
+    async function toggleRowGapDismissBulk(requestIds, dismissed) {
+      await fetch('/api/store-requests/gap-dismiss-batch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_ids: requestIds, dismissed })
+      });
+      loadMatches();
+    }
+
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
     // 店舗依頼の時間を薄く表示する(「-」ではなく、何時から何時まで何人ほしいかが一目で分かるように)
     function renderMatchesStoreTable(matches, storeRequests) {
@@ -3107,13 +3116,25 @@
         const sv = svByStoreName.get(storeName) || '-';
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
           const rowLabel = `${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
+          // この行(同じ「N人目」枠)にまたがる穴の依頼idを集めておき、まとめて対応なしにできるようにする
+          const rowGapRequestIds = new Set();
+          let rowGapDismissedCount = 0;
           const cells = dates.map(d => {
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return emptyCellHtml(d);
+            if (slot.gapInfo) {
+              rowGapRequestIds.add(slot.requestId);
+              if (slot.gapInfo.dismissed) rowGapDismissedCount++;
+            }
             if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d, true, slot.gapWarning, slot.gapDismissed, slot.gapInfo);
             return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId, slot.isGap, slot.gapDismissed, slot.gapInfo);
           }).join('');
-          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
+          const rowBulkDismissHtml = rowGapRequestIds.size > 0 ? `
+            <label class="flex items-center gap-1 font-normal text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
+              <input type="checkbox" ${rowGapDismissedCount === rowGapRequestIds.size ? 'checked' : ''} onchange="toggleRowGapDismissBulk([${[...rowGapRequestIds].join(',')}], this.checked)">
+              この行の穴(${rowGapRequestIds.size}件)をまとめて対応なしにする
+            </label>` : '';
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}${rowBulkDismissHtml}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
       }
       body.innerHTML = rowsHtml.join('');
