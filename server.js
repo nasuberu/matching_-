@@ -376,6 +376,34 @@ db.serialize(() => {
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
 });
 
+// 「時間の穴」機能を追加する前に作られたマッチングは、matches.time_start/time_endがまだ空のままなので、
+// (computeTimeGapsのフォールバックにより)店舗依頼の時間を完全にカバーしていると誤認識されてしまう
+// (例: 実際は9:00〜10:00が未カバーなのに、警告が出ない)。起動のたびに、担当者本人がその日に
+// 出した希望シフトの時間を遡って設定し直す(無ければ店舗依頼の時間のまま=今まで通り)。
+// 対象(time_start IS NULL)が無ければ何もしない
+async function backfillMatchTimes() {
+  try {
+    const rows = await dbAll(`
+      SELECT m.id, m.driver_id, m.match_date, s.time_start AS store_time_start, s.time_end AS store_time_end
+      FROM matches m JOIN store_requests s ON s.id = m.store_request_id
+      WHERE m.time_start IS NULL OR m.time_end IS NULL
+    `);
+    if (rows.length === 0) return;
+    const availRows = await dbAll('SELECT driver_id, desired_date, time_start, time_end FROM driver_availability');
+    const availByKey = new Map(availRows.map(a => [`${a.driver_id}|${a.desired_date}`, a]));
+    for (const r of rows) {
+      const av = availByKey.get(`${r.driver_id}|${r.match_date}`);
+      const ts = (av && av.time_start) || r.store_time_start;
+      const te = (av && av.time_end) || r.store_time_end;
+      await dbRun('UPDATE matches SET time_start = ?, time_end = ? WHERE id = ?', [ts, te, r.id]);
+    }
+    console.log(`🕐 既存マッチング${rows.length}件の時間情報を補完しました(時間の穴の検知を正しく行うため)`);
+  } catch (e) {
+    console.error('既存マッチングの時間情報の補完に失敗しました:', e);
+  }
+}
+backfillMatchTimes();
+
 // driver_store_preferences の preference が旧スキーマ(good/ng の2択)のままなら、
 // NG〜1〜5〜OKの7段階スケールに移行する(SQLiteはCHECK制約を直接変更できないためテーブルを作り直す)
 function migratePreferenceScale() {

@@ -2950,10 +2950,17 @@
       const pinnedIds = new Set(pinned.map(c => c.driver_id));
       candidates = [...pinned, ...candidates.filter(c => !pinnedIds.has(c.driver_id))];
 
+      // 既に誰か入っている枠を右クリックした場合(選び直す場合)は、入れ替えだけでなく
+      // 「割当てを解除する(誰も入れない状態に戻す)」も選べるようにする
+      const unassignButton = replaceMatchId ? `
+        <button onclick="unassignMatch(${replaceMatchId})" class="block w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-b border-slate-100 whitespace-nowrap font-bold">
+          ❌ 割当てを解除する(誰も入れない状態に戻す)
+        </button>` : '';
+
       if (candidates.length === 0) {
-        menu.innerHTML = `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません</div>`;
+        menu.innerHTML = unassignButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません</div>`;
       } else {
-        menu.innerHTML = `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${replaceMatchId ? '(選び直す)' : ''}</div>` +
+        menu.innerHTML = unassignButton + `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${replaceMatchId ? '(選び直す)' : ''}</div>` +
           candidates.map(a => `
             <button onclick="assignDriverToRequest(${storeRequestId}, ${a.driver_id}${replaceMatchId ? `, ${replaceMatchId}` : ''})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
               ${pinnedIds.has(a.driver_id) ? '🕐 ' : ''}${esc(a.driver_name)} <span class="text-slate-400">${esc(a.time_start || '')}〜${esc(a.time_end || '')}${a.visit_count > 0 ? ` ・この店舗${a.visit_count}回目` : ''}</span>
@@ -2985,6 +2992,14 @@
       // 直近に選んだ人として先頭に記録しておく(最大2人まで保持)
       recentManualPicks = [driverId, ...recentManualPicks.filter(id => id !== driverId)].slice(0, 2);
       loadMatches();
+    }
+
+    // 右クリックメニューの「❌ 割当てを解除する」から呼ばれる。入れ替えではなく、その枠を
+    // 誰もいない状態に戻す(確定・完了していても解除できる。候補に戻したい場合は改めて割り当て直す)
+    async function unassignMatch(matchId) {
+      document.getElementById('manual-assign-menu').classList.add('hidden');
+      clearActiveManualAssignCell();
+      await deleteMatch(matchId);
     }
 
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
