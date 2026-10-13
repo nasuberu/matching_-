@@ -133,7 +133,7 @@
       </div>
 
       <div id="matches-list" class="space-y-2"></div>
-      <div id="matches-table-wrap" tabindex="0" onkeydown="handleMatchesTableKeydown(event)" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh] focus:outline-none focus:ring-2 focus:ring-blue-400">
+      <div id="matches-table-wrap" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="text-sm border-separate" style="border-spacing:0">
           <thead><tr id="matches-table-header"></tr></thead>
           <tbody id="matches-table-body"></tbody>
@@ -2638,27 +2638,6 @@
       document.getElementById('match-view-table-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'table' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
       document.getElementById('match-view-list-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'list' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
       renderMatchesList();
-    }
-
-    // マッチング・結果の表(店舗別/ドライバー別)を、クリックしてフォーカスした状態で矢印キー等でも
-    // スクロールできるようにする(日付列が多く横に長いため、キーボードでも操作できると見やすい)。
-    // セル選択やEnterでの割当てまでは踏み込まず、あくまでスクロールの補助に留める
-    // (操作性を崩さない範囲、かつ既存の右クリック操作と競合しない範囲でのおすすめ対応)
-    function handleMatchesTableKeydown(event) {
-      const el = event.currentTarget;
-      const COL_STEP = 130, ROW_STEP = 40;
-      switch (event.key) {
-        case 'ArrowRight': el.scrollLeft += COL_STEP; break;
-        case 'ArrowLeft': el.scrollLeft -= COL_STEP; break;
-        case 'ArrowDown': el.scrollTop += ROW_STEP; break;
-        case 'ArrowUp': el.scrollTop -= ROW_STEP; break;
-        case 'PageDown': el.scrollTop += el.clientHeight; break;
-        case 'PageUp': el.scrollTop -= el.clientHeight; break;
-        case 'Home': el.scrollLeft = 0; break;
-        case 'End': el.scrollLeft = el.scrollWidth; break;
-        default: return; // 対象外のキーはページの通常動作のままにする
-      }
-      event.preventDefault();
     }
 
     function switchMatchesTableRowMode(mode) {
