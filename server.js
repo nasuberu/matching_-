@@ -11,6 +11,7 @@ const ExcelJS = require('exceljs'); // 罫線等のセル装飾が必要なひ�
 const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 const Anthropic = require('@anthropic-ai/sdk');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 4001;
@@ -63,6 +64,68 @@ if (AUTH_USER && AUTH_PASS) {
   console.log('🔒 ベーシック認証が有効です');
 }
 
+// ===== 利用者ログイン(利用者マスタに登録したログインID・パスワードでの個別アカウント認証) =====
+// 権限の区分けはせず「ログインできるかどうか」のみ。社内の少人数利用のため、ログインしたら
+// 長期間(180日)はセッションを保持する。パスワードはcrypto.scryptでソルト付きハッシュ化して保存する
+const SESSION_COOKIE_NAME = 'matching_session';
+const SESSION_MAX_AGE_SEC = 60 * 60 * 24 * 180;
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, hashHex] = stored.split(':');
+  const hashBuffer = Buffer.from(hashHex, 'hex');
+  const testHash = crypto.scryptSync(password, salt, 64);
+  return hashBuffer.length === testHash.length && crypto.timingSafeEqual(hashBuffer, testHash);
+}
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  const cookies = {};
+  if (!header) return cookies;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    cookies[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return cookies;
+}
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Path=/; Max-Age=${SESSION_MAX_AGE_SEC}; SameSite=Lax`);
+}
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
+}
+async function getSessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  if (!token) return null;
+  return await dbGet(
+    'SELECT u.id, u.name, u.login_id FROM app_sessions s JOIN app_users u ON u.id = s.user_id WHERE s.token = ?',
+    [token]
+  );
+}
+
+// ログイン画面本体・ログイン/ログアウト/初回セットアップ関連のAPIだけは未ログインでもアクセスできるようにする
+const AUTH_PUBLIC_PATHS = new Set(['/login.html', '/api/auth/login', '/api/auth/logout', '/api/auth/setup-needed', '/api/auth/setup']);
+app.use(async (req, res, next) => {
+  if (AUTH_PUBLIC_PATHS.has(req.path)) return next();
+  try {
+    const user = await getSessionUser(req);
+    if (!user) {
+      if (req.path.startsWith('/api/')) return res.status(401).json({ success: false, message: 'ログインが必要です' });
+      return res.redirect('/login.html');
+    }
+    req.user = user;
+    next();
+  } catch (e) {
+    console.error('セッション確認に失敗しました:', e);
+    res.status(500).json({ success: false, message: 'サーバーエラーが発生しました' });
+  }
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -75,6 +138,28 @@ db.run('PRAGMA journal_mode = WAL');
 db.run('PRAGMA busy_timeout = 5000');
 
 db.serialize(() => {
+  // 利用者マスタ(このアプリにログインできる担当者の一覧。氏名のみを管理項目とし、
+  // ログインID・パスワードはログイン用に別途持たせる。権限の区分けはせず、ログイン可否のみ)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      login_id TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT
+    )
+  `);
+
+  // ログインセッション(トークンをCookieに持たせ、ここと突き合わせて本人確認する)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES app_users(id)
+    )
+  `);
+
   // 個人事業主ドライバーのマスタ(自宅住所を持たせ、依頼店舗までの距離をマッチング時に計算する)
   db.run(`
     CREATE TABLE IF NOT EXISTS drivers (
@@ -988,6 +1073,92 @@ function normalizeDateStr(v) {
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
   return s;
 }
+
+// ===== ログイン・利用者マスタ =====
+// 利用者が1人もいない場合だけ、初回セットアップとして最初の1人を自分で登録できるようにする
+// (このエンドポイント自体が、パスワードを誰かに教えてもらわずに最初の自分のアカウントを作る唯一の手段)
+app.get('/api/auth/setup-needed', async (req, res) => {
+  const count = await dbGet('SELECT COUNT(*) AS c FROM app_users');
+  res.json({ success: true, needed: count.c === 0 });
+});
+
+app.post('/api/auth/setup', async (req, res) => {
+  const count = await dbGet('SELECT COUNT(*) AS c FROM app_users');
+  if (count.c > 0) return res.status(403).json({ success: false, message: '利用者が既に登録されているため、初回セットアップは使えません(利用者マスタ画面から追加してください)' });
+  const { name, login_id, password } = req.body || {};
+  if (!name || !login_id || !password) return res.status(400).json({ success: false, message: '氏名・ログインID・パスワードは必須です' });
+  const result = await dbRun(
+    'INSERT INTO app_users (name, login_id, password_hash, created_at) VALUES (?, ?, ?, ?)',
+    [name, login_id, hashPassword(password), new Date().toISOString()]
+  );
+  const token = crypto.randomBytes(32).toString('hex');
+  await dbRun('INSERT INTO app_sessions (token, user_id, created_at) VALUES (?, ?, ?)', [token, result.lastID, new Date().toISOString()]);
+  setSessionCookie(res, token);
+  res.json({ success: true, user: { id: result.lastID, name, login_id } });
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { login_id, password } = req.body || {};
+  if (!login_id || !password) return res.status(400).json({ success: false, message: 'ログインIDとパスワードを入力してください' });
+  const user = await dbGet('SELECT * FROM app_users WHERE login_id = ?', [login_id]);
+  if (!user || !verifyPassword(password, user.password_hash)) {
+    return res.status(401).json({ success: false, message: 'ログインIDまたはパスワードが違います' });
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  await dbRun('INSERT INTO app_sessions (token, user_id, created_at) VALUES (?, ?, ?)', [token, user.id, new Date().toISOString()]);
+  setSessionCookie(res, token);
+  res.json({ success: true, user: { id: user.id, name: user.name, login_id: user.login_id } });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  if (token) await dbRun('DELETE FROM app_sessions WHERE token = ?', [token]);
+  clearSessionCookie(res);
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  res.json({ success: true, user: req.user || null });
+});
+
+// 利用者マスタのCRUD(パスワードのハッシュは一覧・取得のレスポンスに含めない)
+app.get('/api/users', async (req, res) => {
+  const users = await dbAll('SELECT id, name, login_id, created_at FROM app_users ORDER BY id');
+  res.json({ success: true, users });
+});
+
+app.post('/api/users', async (req, res) => {
+  const { name, login_id, password } = req.body || {};
+  if (!name || !login_id || !password) return res.status(400).json({ success: false, message: '氏名・ログインID・パスワードは必須です' });
+  const existing = await dbGet('SELECT id FROM app_users WHERE login_id = ?', [login_id]);
+  if (existing) return res.status(400).json({ success: false, message: 'このログインIDは既に使われています' });
+  const result = await dbRun(
+    'INSERT INTO app_users (name, login_id, password_hash, created_at) VALUES (?, ?, ?, ?)',
+    [name, login_id, hashPassword(password), new Date().toISOString()]
+  );
+  res.json({ success: true, id: result.lastID });
+});
+
+app.put('/api/users/:id', async (req, res) => {
+  const { name, login_id, password } = req.body || {};
+  if (!name || !login_id) return res.status(400).json({ success: false, message: '氏名・ログインIDは必須です' });
+  const dup = await dbGet('SELECT id FROM app_users WHERE login_id = ? AND id != ?', [login_id, req.params.id]);
+  if (dup) return res.status(400).json({ success: false, message: 'このログインIDは既に使われています' });
+  if (password) {
+    await dbRun('UPDATE app_users SET name=?, login_id=?, password_hash=? WHERE id=?', [name, login_id, hashPassword(password), req.params.id]);
+  } else {
+    await dbRun('UPDATE app_users SET name=?, login_id=? WHERE id=?', [name, login_id, req.params.id]);
+  }
+  res.json({ success: true });
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  const count = await dbGet('SELECT COUNT(*) AS c FROM app_users');
+  if (count.c <= 1) return res.status(400).json({ success: false, message: '利用者が1人もいなくなるとログインできなくなるため、最後の1人は削除できません' });
+  await dbRun('DELETE FROM app_users WHERE id = ?', [req.params.id]);
+  await dbRun('DELETE FROM app_sessions WHERE user_id = ?', [req.params.id]);
+  res.json({ success: true });
+});
 
 // ===== ドライバーマスタ =====
 app.get('/api/drivers', async (req, res) => {

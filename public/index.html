@@ -15,6 +15,8 @@
     <div class="flex items-center gap-2">
       <span id="header-today-display" class="text-[11px] text-slate-300"></span>
       <span class="text-[11px] text-slate-400">Ver1(試作)</span>
+      <span id="header-login-user" class="text-[11px] text-slate-300"></span>
+      <button onclick="logout()" class="text-[11px] bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded whitespace-nowrap">ログアウト</button>
     </div>
   </header>
 
@@ -27,6 +29,7 @@
     <button id="btn-nav-driver" onclick="switchTab('driver')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">🚚 ドライバーマスタ</button>
     <button id="btn-nav-preferences" onclick="switchTab('preferences')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👍🚫 店舗相性マスタ</button>
     <button id="btn-nav-history" onclick="switchTab('history')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">📜 派遣履歴</button>
+    <button id="btn-nav-users" onclick="switchTab('users')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">👤 利用者マスタ</button>
     <button id="btn-nav-help" onclick="switchTab('help')" class="px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap">❓ 使い方</button>
   </nav>
 
@@ -108,7 +111,7 @@
       </div>
 
       <div id="match-table-legend" class="hidden flex gap-3 items-center flex-wrap text-[11px] text-slate-500 bg-white p-2.5 rounded-xl border border-slate-200">
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white border border-slate-200 border-l-[3px] border-l-emerald-500"></span>確定</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-200 border border-emerald-400"></span>確定</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-700"></span>完了</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
@@ -551,6 +554,40 @@
       <div id="history-list" class="space-y-2"></div>
     </div>
 
+    <!-- 利用者マスタタブ -->
+    <div id="tab-users" class="hidden space-y-4">
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">👤 利用者を登録</summary>
+        <div class="space-y-3 pt-3">
+          <p class="text-[11px] text-slate-400">※ ここで登録した「ログインID・パスワード」でこのアプリにログインできます(権限の区分けはなく、ログインできるかどうかのみです)。パスワードは一覧に表示されません。</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <input id="us-name" placeholder="氏名 *" class="p-2 border rounded text-sm">
+            <input id="us-login-id" placeholder="ログインID *" class="p-2 border rounded text-sm">
+            <input id="us-password" type="password" placeholder="パスワード(編集時は空欄で変更なし)" class="p-2 border rounded text-sm md:col-span-2">
+          </div>
+          <div class="flex gap-2">
+            <button id="us-submit-btn" onclick="saveUser()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
+            <button id="us-cancel-btn" onclick="cancelUserEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+          </div>
+          <div id="us-result" class="text-xs"></div>
+        </div>
+      </details>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-white">
+            <tr class="border-b divide-x divide-slate-200 border-slate-200 text-left text-xs text-slate-500">
+              <th class="p-2.5">氏名</th>
+              <th class="p-2.5">ログインID</th>
+              <th class="p-2.5">登録日</th>
+              <th class="p-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="user-list"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 使い方タブ -->
     <div id="tab-help" class="hidden space-y-4">
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
@@ -782,7 +819,7 @@
         </div>
       </div>
       <div class="flex gap-3 items-center flex-wrap text-[11px] text-slate-500">
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white border border-slate-200 border-l-[3px] border-l-emerald-500"></span>確定</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-200 border border-emerald-400"></span>確定</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-700"></span>完了</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
@@ -820,7 +857,7 @@
 
     function switchTab(tab) {
       try { localStorage.setItem('lastTab', tab); } catch (e) { /* プライベートブラウズ等で使えない場合は無視 */ }
-      ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard', 'help'].forEach(t => {
+      ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'users', 'dashboard', 'help'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
@@ -831,6 +868,7 @@
       if (tab === 'driver') { loadDrivers(); }
       if (tab === 'preferences') { loadDriversForPreferenceSelect(); switchPreferenceView(prefView); }
       if (tab === 'history') { loadDriversForHistorySelect(); loadHistory(); }
+      if (tab === 'users') loadUsers();
       if (tab === 'dashboard') loadDashboard();
       if (tab === 'help') renderHelpTopics();
       updateTokyoMapVisibilityForTab(tab);
@@ -2197,6 +2235,8 @@
 
     let historyCache = [];
     let editingHistoryId = null;
+    let editingUserId = null;
+    let usersCache = [];
 
     async function loadHistory() {
       const res = await fetch('/api/dispatch-history');
@@ -2265,6 +2305,89 @@
       if (editingHistoryId === id) cancelHistoryEdit();
       await fetch(`/api/dispatch-history/${id}`, { method: 'DELETE' });
       loadHistory();
+    }
+
+    // ===== 利用者マスタ(このアプリにログインできる担当者の一覧) =====
+    async function loadUsers() {
+      const res = await fetch('/api/users');
+      const data = await res.json();
+      usersCache = data.users || [];
+      const list = document.getElementById('user-list');
+      if (usersCache.length === 0) { list.innerHTML = '<tr><td colspan="4" class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</td></tr>'; return; }
+      list.innerHTML = usersCache.map(u => `
+        <tr class="border-b border-slate-100">
+          <td class="p-2.5">${esc(u.name)}</td>
+          <td class="p-2.5">${esc(u.login_id)}</td>
+          <td class="p-2.5 text-xs text-slate-400">${esc((u.created_at || '').slice(0, 10))}</td>
+          <td class="p-2.5 text-right whitespace-nowrap">
+            <button onclick="editUser(${u.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+            <button onclick="deleteUser(${u.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function editUser(id) {
+      const u = usersCache.find(x => x.id === id);
+      if (!u) return;
+      editingUserId = id;
+      document.getElementById('us-name').value = u.name;
+      document.getElementById('us-login-id').value = u.login_id;
+      document.getElementById('us-password').value = '';
+      document.getElementById('us-submit-btn').textContent = '更新する';
+      document.getElementById('us-cancel-btn').classList.remove('hidden');
+      document.getElementById('us-result').textContent = '';
+    }
+
+    function cancelUserEdit() {
+      editingUserId = null;
+      ['us-name', 'us-login-id', 'us-password'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('us-submit-btn').textContent = '＋ 登録する';
+      document.getElementById('us-cancel-btn').classList.add('hidden');
+      document.getElementById('us-result').textContent = '';
+    }
+
+    async function saveUser() {
+      const name = document.getElementById('us-name').value.trim();
+      const login_id = document.getElementById('us-login-id').value.trim();
+      const password = document.getElementById('us-password').value;
+      const resultEl = document.getElementById('us-result');
+      if (!name || !login_id) { resultEl.innerHTML = '<span class="text-red-600">氏名・ログインIDは必須です</span>'; return; }
+      if (!editingUserId && !password) { resultEl.innerHTML = '<span class="text-red-600">新規登録時はパスワードが必須です</span>'; return; }
+      const payload = { name, login_id };
+      if (password) payload.password = password;
+      const url = editingUserId ? `/api/users/${editingUserId}` : '/api/users';
+      const method = editingUserId ? 'PUT' : 'POST';
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { resultEl.innerHTML = `<span class="text-red-600">${esc(data.message || '登録に失敗しました')}</span>`; return; }
+      cancelUserEdit();
+      loadUsers();
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('この利用者を削除すると、このIDではログインできなくなります。よろしいですか？')) return;
+      if (editingUserId === id) cancelUserEdit();
+      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '削除に失敗しました'); return; }
+      loadUsers();
+    }
+
+    async function logout() {
+      if (!confirm('ログアウトしますか？')) return;
+      await fetch('/api/auth/logout', { method: 'POST' });
+      location.href = '/login.html';
+    }
+
+    async function loadCurrentUser() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.success && data.user) {
+          document.getElementById('header-login-user').textContent = `👤 ${data.user.name}`;
+        }
+      } catch (e) { /* ヘッダー表示だけなので失敗しても致命的ではない */ }
     }
 
     async function importHistory() {
@@ -2860,7 +2983,7 @@
               <div>
                 <p class="font-bold text-sm">
                   🏬 ${esc(m.store_name)} ← 🚚 ${esc(m.driver_name)}
-                  <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '変更' ? 'bg-orange-100 text-orange-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
+                  <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${m.status === '欠勤' ? 'bg-red-100 text-red-700' : m.status === '変更' ? 'bg-orange-100 text-orange-700' : m.status === '完了' ? 'bg-slate-700 text-white' : m.status === '確定' ? 'bg-emerald-200 text-emerald-900 font-bold border border-emerald-400' : 'bg-slate-100 text-slate-600'}">${esc(m.status)}</span>
                   ${m.is_far_warning ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠️ 自宅から遠め</span>' : ''}
                   ${m.preference_flag ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">⭐ 相性${esc(m.preference_flag)}</span>` : ''}
                   ${m.experience_count > 0 ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">🧭 経験${m.experience_count}回</span>` : ''}
@@ -3561,7 +3684,7 @@
       if (status === '欠勤') return 'bg-red-100 text-red-700 border border-red-200';
       if (status === '変更') return 'bg-orange-100 text-orange-700 border border-orange-200';
       if (status === '完了') return 'bg-slate-700 text-white';
-      if (status === '確定') return 'bg-white text-slate-700 border border-slate-200 border-l-[3px] border-l-emerald-500';
+      if (status === '確定') return 'bg-emerald-200 text-emerald-900 font-bold border border-emerald-400';
       return 'bg-slate-50 text-slate-500 border border-slate-200'; // 候補
     }
 
@@ -3840,7 +3963,7 @@
       `).join('');
     }
 
-    const VALID_TABS = ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'dashboard', 'help'];
+    const VALID_TABS = ['matches', 'store', 'availability', 'storemaster', 'driver', 'preferences', 'history', 'users', 'dashboard', 'help'];
     let initialTab = 'matches';
     try {
       const saved = localStorage.getItem('lastTab');
@@ -3850,6 +3973,7 @@
     makeDraggable(document.getElementById('tokyo-map-reopen-btn'), document.getElementById('tokyo-map-reopen-btn'), () => toggleTokyoMapPanel(true));
     switchTab(initialTab);
     loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
+    loadCurrentUser(); // ヘッダーに「ログイン中: 氏名」を出す
   </script>
 </body>
 </html>

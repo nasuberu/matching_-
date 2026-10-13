@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ログイン - マッチング管理画面</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 flex items-center justify-center p-4">
+
+  <div class="w-full max-w-sm bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+    <h1 class="font-bold text-lg text-slate-800 text-center">🤝 マッチング管理画面</h1>
+
+    <!-- 通常のログインフォーム(利用者マスタに1人以上登録済みの場合) -->
+    <div id="login-view" class="hidden space-y-3">
+      <p class="text-sm font-bold text-slate-600">ログイン</p>
+      <input id="login-id" placeholder="ログインID" class="w-full p-2 border rounded text-sm" autocomplete="username">
+      <input id="login-password" type="password" placeholder="パスワード" class="w-full p-2 border rounded text-sm" autocomplete="current-password">
+      <button onclick="doLogin()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-sm">ログイン</button>
+      <p id="login-error" class="text-xs text-red-600"></p>
+    </div>
+
+    <!-- 初回セットアップフォーム(利用者マスタが空の場合。最初の1人だけここから自分で登録する) -->
+    <div id="setup-view" class="hidden space-y-3">
+      <p class="text-sm font-bold text-slate-600">初回セットアップ(最初の利用者を登録してください)</p>
+      <input id="setup-name" placeholder="氏名" class="w-full p-2 border rounded text-sm">
+      <input id="setup-id" placeholder="ログインID" class="w-full p-2 border rounded text-sm" autocomplete="username">
+      <input id="setup-password" type="password" placeholder="パスワード" class="w-full p-2 border rounded text-sm" autocomplete="new-password">
+      <button onclick="doSetup()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg text-sm">登録してログイン</button>
+      <p id="setup-error" class="text-xs text-red-600"></p>
+    </div>
+
+    <p id="loading-view" class="text-xs text-slate-400 text-center">読み込み中…</p>
+  </div>
+
+  <script>
+    async function init() {
+      try {
+        const res = await fetch('/api/auth/setup-needed');
+        const data = await res.json();
+        document.getElementById('loading-view').classList.add('hidden');
+        if (data.needed) {
+          document.getElementById('setup-view').classList.remove('hidden');
+        } else {
+          document.getElementById('login-view').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('loading-view').textContent = '読み込みに失敗しました。ページを再読み込みしてください。';
+      }
+    }
+
+    async function doLogin() {
+      const login_id = document.getElementById('login-id').value.trim();
+      const password = document.getElementById('login-password').value;
+      const errEl = document.getElementById('login-error');
+      errEl.textContent = '';
+      if (!login_id || !password) { errEl.textContent = 'ログインIDとパスワードを入力してください'; return; }
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ login_id, password })
+        });
+        const data = await res.json();
+        if (!data.success) { errEl.textContent = data.message || 'ログインに失敗しました'; return; }
+        location.href = '/';
+      } catch (e) {
+        errEl.textContent = '通信に失敗しました';
+      }
+    }
+
+    async function doSetup() {
+      const name = document.getElementById('setup-name').value.trim();
+      const login_id = document.getElementById('setup-id').value.trim();
+      const password = document.getElementById('setup-password').value;
+      const errEl = document.getElementById('setup-error');
+      errEl.textContent = '';
+      if (!name || !login_id || !password) { errEl.textContent = '氏名・ログインID・パスワードを入力してください'; return; }
+      try {
+        const res = await fetch('/api/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, login_id, password })
+        });
+        const data = await res.json();
+        if (!data.success) { errEl.textContent = data.message || '登録に失敗しました'; return; }
+        location.href = '/';
+      } catch (e) {
+        errEl.textContent = '通信に失敗しました';
+      }
+    }
+
+    // Enterキーでも送信できるようにする
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      if (!document.getElementById('login-view').classList.contains('hidden')) doLogin();
+      if (!document.getElementById('setup-view').classList.contains('hidden')) doSetup();
+    });
+
+    init();
+  </script>
+</body>
+</html>
