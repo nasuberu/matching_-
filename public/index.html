@@ -380,10 +380,8 @@
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'name', renderDriverList)">氏名 <span class="sort-arrow text-slate-300" data-field="name">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'company_name', renderDriverList)">会社名 <span class="sort-arrow text-slate-300" data-field="company_name">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'phone', renderDriverList)">電話番号 <span class="sort-arrow text-slate-300" data-field="phone">⇅</span></th>
-              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'vehicle_type', renderDriverList)">車両種別 <span class="sort-arrow text-slate-300" data-field="vehicle_type">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'home_address', renderDriverList)">自宅住所 <span class="sort-arrow text-slate-300" data-field="home_address">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'first_contract_date', renderDriverList)">初回委託日 <span class="sort-arrow text-slate-300" data-field="first_contract_date">⇅</span></th>
-              <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'status', renderDriverList)">ステータス <span class="sort-arrow text-slate-300" data-field="status">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'email', renderDriverList)">メール <span class="sort-arrow text-slate-300" data-field="email">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'fixed_store_name', renderDriverList)">固定希望店舗 <span class="sort-arrow text-slate-300" data-field="fixed_store_name">⇅</span></th>
               <th class="p-2.5 bg-white cursor-pointer select-none hover:bg-slate-100" onclick="toggleSort(drSortState, 'insurance_info', renderDriverList)">保険加入状況 <span class="sort-arrow text-slate-300" data-field="insurance_info">⇅</span></th>
@@ -1177,10 +1175,8 @@
       const tbody = document.getElementById('driver-list');
       const keyword = document.getElementById('dr-search').value.trim();
       const rows = getVisibleDrivers();
-      const statusBadge = s => s ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${s === '稼働中' ? 'bg-emerald-100 text-emerald-700' : s === '休止' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}">${esc(s)}</span>` : '-';
-
       if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="14" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="12" class="text-slate-400 text-sm p-4 text-center">${keyword ? '該当するドライバーが見つかりません' : 'まだ登録されていません'}</td></tr>`;
       } else {
         tbody.innerHTML = rows.map(d => {
         const pendingSuggestions = fixedStoreSuggestionsCache.filter(s => s.driver_id === d.id);
@@ -1191,14 +1187,12 @@
             <td class="p-2.5 font-bold whitespace-nowrap">${esc(d.name)}</td>
             <td class="p-2.5">${esc(d.company_name || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.phone || '-')}</td>
-            <td class="p-2.5">${esc(d.vehicle_type || '-')}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.home_address || '住所未登録')} ${d.home_lat == null && d.home_address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.first_contract_date || '-')}</td>
-            <td class="p-2.5">${statusBadge(d.status)}</td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.email || '-')}</td>
             <td class="p-2.5 text-xs">
               <input type="text" list="store-datalist" value="${esc(storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)))}"
-                onchange="handleFixedStoreInputChange(${d.id}, this)" placeholder="検索(店舗名・店番)" class="p-1 border rounded text-xs w-full max-w-[150px]">
+                onchange="handleFixedStoreInputChange(${d.id}, this)" placeholder="検索(店舗名・店番)" class="p-1 border rounded text-xs w-full max-w-[340px]">
               ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
               ${d.fixed_store_priority != null ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700 block mt-0.5 w-fit">優先順位${d.fixed_store_priority}</span>` : ''}
               ${pendingSuggestions.map(s => `
@@ -1213,7 +1207,7 @@
               `).join('')}
             </td>
             <td class="p-2.5 text-xs text-slate-500">${esc(d.insurance_info || '-')}</td>
-            <td class="p-2.5 text-xs text-slate-500 truncate" style="max-width:200px" title="${esc(d.notes || '')}">${esc(d.notes || '-')}</td>
+            <td class="p-2.5 text-xs text-slate-500 truncate" style="max-width:110px" title="${esc(d.notes || '')}">${esc(d.notes || '-')}</td>
             <td class="p-2.5 whitespace-nowrap">
               <button onclick="editDriver(${d.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
               <button onclick="deleteDriver(${d.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
@@ -2184,6 +2178,7 @@
             <p class="font-bold text-sm">${esc(p.driver_name)}</p>
           </div>
           <select onchange="setOrClearPreferenceByStore(${p.driver_id}, ${storeId}, ${p.preference_id || 'null'}, this.value)" class="text-xs font-bold px-2 py-1.5 rounded border ${prefBadgeClass(p.preference)}">
+            <option value=""></option>
             <option value="" ${!p.preference ? 'selected' : ''}>履歴なし</option>
             ${PREF_LEVELS.map(v => `<option value="${v}" ${p.preference === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
@@ -2280,6 +2275,7 @@
             <p class="font-bold text-sm">${esc(p.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(p.area || '')}</span></p>
           </div>
           <select onchange="setOrClearPreference(${driverId}, ${p.store_id}, ${p.preference_id || 'null'}, this.value)" class="text-xs font-bold px-2 py-1.5 rounded border ${prefBadgeClass(p.preference)}">
+            <option value=""></option>
             <option value="" ${!p.preference ? 'selected' : ''}>履歴なし</option>
             ${PREF_LEVELS.map(v => `<option value="${v}" ${p.preference === v ? 'selected' : ''}>${v}</option>`).join('')}
           </select>
