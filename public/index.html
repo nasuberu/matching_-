@@ -3047,8 +3047,12 @@
           for (const r of reqs) {
             const ms = matchesByRequestId.get(r.id) || [];
             // 時間の「穴」判定はプール需要(候補店舗ごとに時間が違い得る)には馴染まないため対象外にする。
-            // 欠勤になった枠は実際には稼働していないので、カバーしている時間には数えない
-            const gaps = r.pool_group_id ? [] : computeTimeGapsJs(r.time_start, r.time_end, ms.filter(m => m.status !== '欠勤'));
+            // 欠勤になった枠は実際には稼働していないので、カバーしている時間には数えない。
+            // m.time_start/time_endは(GET /api/matchesの仕様上)店舗依頼側の時間なので、
+            // マッチング自身が実際にカバーする時間はdriver_time_start/driver_time_endを使う
+            const gaps = r.pool_group_id ? [] : computeTimeGapsJs(r.time_start, r.time_end,
+              ms.filter(m => m.status !== '欠勤').map(m => ({ time_start: m.driver_time_start, time_end: m.driver_time_end }))
+            );
             const hasGap = gaps.length > 0;
             const count = Math.max(r.required_count || 1, ms.length);
             for (let i = 0; i < count; i++) {
