@@ -283,7 +283,7 @@
     <div id="tab-driver" class="hidden space-y-4">
       <div id="dr-duplicate-fixed-store-alert" class="hidden"></div>
       <div id="dr-fixed-store-ng-alert" class="hidden"></div>
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+      <details id="dr-register-details" class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🚚 ドライバーを登録</summary>
         <div class="space-y-3 pt-3">
         <p class="text-[11px] text-slate-400">※ 自宅住所を登録すると、マッチング時に依頼店舗までの距離を自動で計算します(国土地理院の住所検索を使用)。</p>
@@ -1347,6 +1347,7 @@
       const d = driversCache.find(x => x.id === id);
       if (!d) return;
       editingDriverId = id;
+      document.getElementById('dr-register-details').open = true; // 登録欄が畳まれていても、編集時は必ず開く
       document.getElementById('dr-name').value = d.name || '';
       document.getElementById('dr-furigana').value = d.furigana || '';
       document.getElementById('dr-code').value = d.driver_code || '';
