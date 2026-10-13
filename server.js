@@ -1143,6 +1143,7 @@ const HISTORY_ALIASES = {
 const DRIVER_MASTER_ALIASES = {
   driver_code: ['社員コード', 'ドライバーコード', '社員番号', 'driver_code'],
   name: ['氏名', '名前', 'ドライバー名', 'name'],
+  furigana: ['ふりがな', 'フリガナ', 'よみがな', 'ヨミガナ', 'furigana'],
   company_name: ['会社名', '法人名', '屋号', 'company_name'],
   fixed_store_name: ['固定希望店舗', '固定店舗', 'fixed_store_name'],
   phone: ['電話番号', '電話', 'TEL', 'phone'],
@@ -1480,6 +1481,7 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
     if (!name) { errors.push(`${i + 2}行目: 氏名が読み取れませんでした`); continue; }
 
     const driver_code = pickField(row, DRIVER_MASTER_ALIASES.driver_code) || null;
+    const furigana = pickField(row, DRIVER_MASTER_ALIASES.furigana);
     const company_name = pickField(row, DRIVER_MASTER_ALIASES.company_name);
     const phone = pickField(row, DRIVER_MASTER_ALIASES.phone);
     const vehicle_type = pickField(row, DRIVER_MASTER_ALIASES.vehicle_type);
@@ -1505,13 +1507,13 @@ app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
 
     if (existing) {
       await dbRun(
-        `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
-        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, existing.id]
+        `UPDATE drivers SET name=?, furigana=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
+        [name, furigana, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, existing.id]
       );
     } else {
       await dbRun(
-        `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, now]
+        `INSERT INTO drivers (name, furigana, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, furigana, phone, vehicle_type, home_address, lat, lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, now]
       );
     }
     imported++;
