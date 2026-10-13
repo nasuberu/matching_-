@@ -2895,19 +2895,51 @@
     // 並び順: ①直近に手動で割り当てた人(最大2人、新しい順) ②その店舗への過去の派遣実績が多い順
     // replaceMatchId: 既に「候補」が入っている枠を右クリックした場合に、その既存マッチングのidを渡す
     // (指定があれば、選び直した人でその枠を差し替える。確定・完了済みの枠はそもそもここまで来ない)
+    // 右クリックで操作中のセルを視覚的に分かるようにする(メニューを閉じたら解除)
+    let activeManualAssignCellEl = null;
+    const ACTIVE_CELL_CLASSES = ['bg-indigo-100', 'ring-2', 'ring-inset', 'ring-indigo-500'];
+    function setActiveManualAssignCell(el) {
+      clearActiveManualAssignCell();
+      activeManualAssignCellEl = el ? el.closest('td') : null;
+      if (activeManualAssignCellEl) activeManualAssignCellEl.classList.add(...ACTIVE_CELL_CLASSES);
+    }
+    function clearActiveManualAssignCell() {
+      if (activeManualAssignCellEl) activeManualAssignCellEl.classList.remove(...ACTIVE_CELL_CLASSES);
+      activeManualAssignCellEl = null;
+    }
+
+    // メニューの実際の大きさ(候補数で高さが変わる)を測ってから、画面内に収まるように位置を決める。
+    // 下にはみ出る場合はクリック位置の上に、右にはみ出る場合は左にずらして表示する
+    function positionManualAssignMenu(menu, clickX, clickY) {
+      const margin = 8;
+      const rect = menu.getBoundingClientRect();
+      let left = clickX;
+      if (left + rect.width > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - rect.width - margin);
+      let top = clickY;
+      if (top + rect.height > window.innerHeight - margin) {
+        const above = clickY - rect.height;
+        top = above >= margin ? above : Math.max(margin, window.innerHeight - rect.height - margin);
+      }
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+
     async function showManualAssignMenu(event, storeRequestId, date, replaceMatchId) {
       event.preventDefault();
       const menu = document.getElementById('manual-assign-menu');
+      setActiveManualAssignCell(event.target);
       menu.innerHTML = '<div class="p-3 text-xs text-slate-400">読み込み中...</div>';
-      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 240)}px`;
-      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
+      menu.style.left = `${event.clientX}px`;
+      menu.style.top = `${event.clientY}px`;
       menu.classList.remove('hidden');
+      positionManualAssignMenu(menu, event.clientX, event.clientY);
 
       const url = `/api/matches/manual-candidates?store_request_id=${storeRequestId}${replaceMatchId ? `&exclude_match_id=${replaceMatchId}` : ''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!data.success) {
         menu.innerHTML = `<div class="p-3 text-xs text-red-600 max-w-[220px]">${esc(data.message || '候補の取得に失敗しました')}</div>`;
+        positionManualAssignMenu(menu, event.clientX, event.clientY);
         return;
       }
       let candidates = data.candidates || [];
@@ -2928,15 +2960,20 @@
             </button>
           `).join('');
       }
+      positionManualAssignMenu(menu, event.clientX, event.clientY);
     }
 
     document.addEventListener('click', (e) => {
       const menu = document.getElementById('manual-assign-menu');
-      if (!menu.classList.contains('hidden') && !menu.contains(e.target)) menu.classList.add('hidden');
+      if (!menu.classList.contains('hidden') && !menu.contains(e.target)) {
+        menu.classList.add('hidden');
+        clearActiveManualAssignCell();
+      }
     });
 
     async function assignDriverToRequest(storeRequestId, driverId, replaceMatchId) {
       document.getElementById('manual-assign-menu').classList.add('hidden');
+      clearActiveManualAssignCell();
       const body = { store_request_id: storeRequestId, driver_id: driverId };
       if (replaceMatchId) body.replace_match_id = replaceMatchId;
       const res = await fetch('/api/matches/manual', {
