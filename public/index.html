@@ -2857,7 +2857,8 @@
     function matchCellHtml(m, label, date, allowReplace, gapWarning, gapDismissed, gapInfo) {
       // m.driver_time_start/endがこのマッチング自身の実際の時間(無ければ店舗依頼の時間と同じ=m.time_start/end)。
       // gapWarning: この依頼の希望時間をまだ誰もカバーしきれていない「穴」が残っている場合にtrue。
-      // gapDismissed: この依頼が「対応なし」登録済みの場合、警告色は出さず半透明にするだけにする。
+      // gapDismissed: この依頼が「対応なし」登録済みの場合、警告色は出さない(実際に稼働する人の
+      // セルなので半透明にはしない。半透明にするのは埋まっていない穴側の枠だけ)。
       // gapInfo: {dismissed}があれば、右クリックメニューに対応なしの切替ボタンを出す
       const ownTimeLabel = (m.driver_time_start || m.driver_time_end) ? `${esc(m.driver_time_start || '?')}〜${esc(m.driver_time_end || '?')}` : (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
       const viaRing = CREATED_VIA_RING[m.created_via] || '';
@@ -2865,7 +2866,7 @@
       const canReplace = allowReplace && m.status === '候補';
       const rightClickAttr = canReplace ? `oncontextmenu="return showManualAssignMenu(event, ${m.store_request_id}, '${date}', ${m.id}, ${!!gapInfo}, ${!!(gapInfo && gapInfo.dismissed)})"` : '';
       const gapNote = gapWarning ? ' ／ ⚠️ この依頼の希望時間をまだカバーしきれていません' : gapDismissed ? ' ／ 対応なしに設定済み(穴は残っています)' : '';
-      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)} ${gapDismissed ? 'opacity-40' : ''}">
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
           <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${canReplace ? 'cursor-context-menu' : 'cursor-default'} ${dashboardStatusColor(m.status)} ${viaRing}" ${rightClickAttr}>${gapWarning ? '⚠️ ' : ''}${esc(label)}</span>
           <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${ownTimeLabel}${viaLabel}${canReplace ? ' ／ 右クリックで変更' : ''}${gapNote}</span>
