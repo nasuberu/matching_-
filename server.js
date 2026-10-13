@@ -343,10 +343,6 @@ db.serialize(() => {
   ensureColumn('stores', 'manager_name', 'TEXT'); // 店舗担当者(店長)
   ensureColumn('stores', 'sv_name', 'TEXT');      // SV(スーパーバイザー)
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
-  // この店舗の「時間の穴」警告を、指定した年月("YYYY-MM")の間だけ表示しない(対応しないと決めた場合)。
-  // 月が変わると自動的に無効になる(年月が一致しなくなるため)。マッチング・結果画面の
-  // チェックボックスから設定する
-  ensureColumn('stores', 'gap_dismissed_until', 'TEXT');
   ensureColumn('drivers', 'driver_code', 'TEXT');          // 社員コード(ドライバーを一意に表す社内コード)
   ensureColumn('drivers', 'first_contract_date', 'TEXT');  // 初回委託日
   ensureColumn('drivers', 'status', 'TEXT');               // ステータス(稼働中/休止/契約終了)
@@ -375,6 +371,9 @@ db.serialize(() => {
   // グループ化するキー。同じpool_group_idを持つ行は「このうちどれか1件が指定人数分埋まればよい」
   // 候補店舗群として扱う(通常の店舗依頼はNULLのまま、1件=1店舗の個別需要として今まで通り扱う)
   ensureColumn('store_requests', 'pool_group_id', 'TEXT');
+  // この依頼(特定の店舗・特定の日)の「時間の穴」警告を対応しないと決めた場合のフラグ。
+  // 店舗単位・月単位ではなく、この依頼(1日分)だけに効く(マッチング・結果画面の右クリックから設定)
+  ensureColumn('store_requests', 'gap_dismissed', 'INTEGER DEFAULT 0');
   ensureColumn('driver_availability', 'import_batch_id', 'INTEGER');
   ensureColumn('drivers', 'area_fixed_batch_id', 'INTEGER');
   migratePreferenceScale(); // 相性を好き/NGの2択からNG〜1〜5〜OKの7段階スケールに移行する(旧DB向け)
@@ -2054,13 +2053,7 @@ app.post('/api/ai/parse-line-shift', async (req, res) => {
 
 // ===== 店舗からの人員要請 =====
 app.get('/api/store-requests', async (req, res) => {
-  const rows = await dbAll(`
-    SELECT sr.*, st.gap_dismissed_until
-    FROM store_requests sr
-    LEFT JOIN stores st ON st.id = sr.store_id
-    WHERE sr.archived_month IS NULL
-    ORDER BY sr.request_date DESC, sr.id DESC
-  `);
+  const rows = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date DESC, id DESC');
   res.json({ success: true, requests: rows });
 });
 
@@ -2109,6 +2102,14 @@ app.post('/api/store-requests', async (req, res) => {
 
 app.delete('/api/store-requests/:id', async (req, res) => {
   await dbRun('DELETE FROM store_requests WHERE id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+
+// この依頼(特定の店舗・特定の日)の「時間の穴」警告を対応しないことにする/元に戻す
+// (マッチング・結果画面で、穴に関するセルを右クリックして設定する。1件ずつの設定)
+app.post('/api/store-requests/:id/gap-dismiss', async (req, res) => {
+  const { dismissed } = req.body || {};
+  await dbRun('UPDATE store_requests SET gap_dismissed = ? WHERE id = ?', [dismissed ? 1 : 0, req.params.id]);
   res.json({ success: true });
 });
 
@@ -2404,18 +2405,6 @@ app.delete('/api/stores/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// この店舗の「時間の穴」警告を今月(アプリ内の「今日」基準)は表示しないようにする/元に戻す。
-// 月が変わるとgap_dismissed_untilの年月と一致しなくなるので、自動的に警告が復活する
-app.post('/api/stores/:id/gap-dismiss', async (req, res) => {
-  const { dismissed } = req.body || {};
-  if (dismissed) {
-    const today = (await getMockToday()) || new Date().toISOString().slice(0, 10);
-    await dbRun('UPDATE stores SET gap_dismissed_until = ? WHERE id = ?', [today.slice(0, 7), req.params.id]);
-  } else {
-    await dbRun('UPDATE stores SET gap_dismissed_until = NULL WHERE id = ?', [req.params.id]);
-  }
-  res.json({ success: true });
-});
 
 // 店舗マスタをCSV/Excelでまとめて取込む(初期データ投入用。店舗名が既存と一致する場合は住所等を更新する)
 app.post('/api/stores/import', upload.single('file'), async (req, res) => {
