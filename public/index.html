@@ -1012,10 +1012,11 @@
       if (duplicated.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
       const unresolvedCount = duplicated.filter(([, ds]) => isDuplicateFixedStoreGroupUnresolved(ds)).length;
+      const allResolved = unresolvedCount === 0;
       el.innerHTML = `
-        <details class="bg-amber-50 border border-amber-300 rounded-xl p-4" ${unresolvedCount > 0 ? 'open' : ''}>
-          <summary class="font-bold text-amber-800 text-sm cursor-pointer select-none">⚠️ 固定希望店舗が重複している店舗が ${duplicated.length} 件あります${unresolvedCount > 0 ? `(うち優先順位未確定 ${unresolvedCount} 件)` : ''}(クリックで開閉)</summary>
-          <p class="text-xs text-amber-700 mt-2 mb-2">同じ店舗を固定希望店舗にしているドライバーが複数います。必要人数より重複人数が多い日は、ここで決めた優先順位(1が最優先、他の人と別の数字にしてください)の高い人から割り当てます。<b>未確定(未設定・同じ数字が重複)の組が1つでもあると、自動マッチングは実行されません。</b></p>
+        <details class="${allResolved ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-300'} border rounded-xl p-4" ${unresolvedCount > 0 ? 'open' : ''}>
+          <summary class="font-bold text-sm cursor-pointer select-none ${allResolved ? 'text-slate-800' : 'text-amber-800'}">${allResolved ? '✅' : '⚠️'} 固定希望店舗が重複している店舗が ${duplicated.length} 件あります${unresolvedCount > 0 ? `(うち優先順位未確定 ${unresolvedCount} 件)` : '(すべて優先順位確定済み)'}(クリックで開閉)</summary>
+          <p class="text-xs mt-2 mb-2 ${allResolved ? 'text-slate-500' : 'text-amber-700'}">同じ店舗を固定希望店舗にしているドライバーが複数います。必要人数より重複人数が多い日は、ここで決めた優先順位(1が最優先、他の人と別の数字にしてください)の高い人から割り当てます。<b>未確定(未設定・同じ数字が重複)の組が1つでもあると、自動マッチングは実行されません。</b></p>
           <div class="max-h-80 overflow-y-auto space-y-2">
             ${duplicated.map(([storeId, ds]) => {
               const unresolved = isDuplicateFixedStoreGroupUnresolved(ds);
@@ -1163,6 +1164,7 @@
               <input type="text" list="store-datalist" value="${esc(storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)))}"
                 onchange="handleFixedStoreInputChange(${d.id}, this)" placeholder="検索(店舗名・店番)" class="p-1 border rounded text-xs w-full max-w-[150px]">
               ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
+              ${d.fixed_store_priority != null ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700 block mt-0.5 w-fit">優先順位${d.fixed_store_priority}</span>` : ''}
               ${pendingSuggestions.map(s => `
                 <div class="mt-1 bg-amber-50 border border-amber-200 rounded p-1.5 text-[10px] text-amber-800 max-w-[200px]">
                   💡「${esc(s.suggested_store_name)}」希望<br>
