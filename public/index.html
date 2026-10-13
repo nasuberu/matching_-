@@ -302,6 +302,7 @@
         <p class="text-[11px] text-slate-400 pt-1">↓ または1件ずつ手入力で登録</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input id="dr-name" placeholder="氏名 *" class="p-2 border rounded text-sm">
+          <input id="dr-furigana" placeholder="ふりがな(姓 名の間はスペースで区切る。PDFに印字)" class="p-2 border rounded text-sm">
           <input id="dr-code" placeholder="社員コード" class="p-2 border rounded text-sm">
           <input id="dr-company" placeholder="会社名(法人契約の場合)" class="p-2 border rounded text-sm">
           <input id="dr-phone" placeholder="電話番号" class="p-2 border rounded text-sm">
@@ -1347,6 +1348,7 @@
       if (!d) return;
       editingDriverId = id;
       document.getElementById('dr-name').value = d.name || '';
+      document.getElementById('dr-furigana').value = d.furigana || '';
       document.getElementById('dr-code').value = d.driver_code || '';
       document.getElementById('dr-company').value = d.company_name || '';
       document.getElementById('dr-phone').value = d.phone || '';
@@ -1368,7 +1370,7 @@
     function cancelDriverEdit() {
       editingDriverId = null;
       document.getElementById('dr-fixed-store-history').classList.add('hidden');
-      ['dr-name', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
+      ['dr-name', 'dr-furigana', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
       setAreaFixedFormValues({});
       document.getElementById('dr-submit-btn').textContent = '＋ 登録する';
       document.getElementById('dr-cancel-btn').classList.add('hidden');
@@ -1381,6 +1383,7 @@
       if (fixedStoreMatch === undefined) { alert('固定希望店舗が候補一覧にありません。候補から選び直してください(空欄なら「なし」になります)'); return; }
       const payload = {
         name,
+        furigana: document.getElementById('dr-furigana').value.trim(),
         driver_code: document.getElementById('dr-code').value.trim(),
         company_name: document.getElementById('dr-company').value.trim(),
         phone: document.getElementById('dr-phone').value.trim(),

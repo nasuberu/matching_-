@@ -344,6 +344,7 @@ db.serialize(() => {
   ensureColumn('stores', 'sv_name', 'TEXT');      // SV(スーパーバイザー)
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
   ensureColumn('drivers', 'driver_code', 'TEXT');          // 社員コード(ドライバーを一意に表す社内コード)
+  ensureColumn('drivers', 'furigana', 'TEXT');             // ふりがな(個人事業主ごとの作業依頼表PDFに印字する)
   ensureColumn('drivers', 'first_contract_date', 'TEXT');  // 初回委託日
   ensureColumn('drivers', 'status', 'TEXT');               // ステータス(稼働中/休止/契約終了)
   ensureColumn('drivers', 'email', 'TEXT');                // メールアドレス
@@ -1275,7 +1276,7 @@ app.get('/api/drivers', async (req, res) => {
 });
 
 app.post('/api/drivers', async (req, res) => {
-  const { id, name, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes,
+  const { id, name, furigana, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes,
           area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids } = req.body;
   if (!name) return res.status(400).json({ success: false, message: '氏名は必須です' });
 
@@ -1305,14 +1306,14 @@ app.post('/api/drivers', async (req, res) => {
       await logFixedStoreChange(id, existing.fixed_store_id, newFixedStoreId, 'manual');
     }
     await dbRun(
-      `UPDATE drivers SET name=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=?, area_fixed_enabled=?, area_fixed_pattern=?, area_fixed_store_ids=? WHERE id=?`,
-      [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', newFixedStoreId, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
+      `UPDATE drivers SET name=?, furigana=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=?, area_fixed_enabled=?, area_fixed_pattern=?, area_fixed_store_ids=? WHERE id=?`,
+      [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', newFixedStoreId, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
     );
     return res.json({ success: true, id });
   }
   const result = await dbRun(
-    `INSERT INTO drivers (name, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name, phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, now]
+    `INSERT INTO drivers (name, furigana, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, now]
   );
   if (fixed_store_id) await logFixedStoreChange(result.lastID, null, fixed_store_id, 'manual');
   res.json({ success: true, id: result.lastID });
@@ -3622,7 +3623,7 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
   const monthStr = `${year}-${String(month).padStart(2, '0')}`;
   const placeholders = statuses.map(() => '?').join(',');
   const matches = await dbAll(`
-    SELECT m.match_date, m.driver_id, d.name AS driver_name, d.driver_code,
+    SELECT m.match_date, m.driver_id, d.name AS driver_name, d.driver_code, d.furigana,
            s.store_name, s.time_start, s.time_end
     FROM matches m
     JOIN drivers d ON d.id = m.driver_id
@@ -3637,7 +3638,7 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
 
   const byDriver = new Map();
   for (const m of matches) {
-    if (!byDriver.has(m.driver_id)) byDriver.set(m.driver_id, { name: m.driver_name, code: m.driver_code, rows: [] });
+    if (!byDriver.has(m.driver_id)) byDriver.set(m.driver_id, { name: m.driver_name, code: m.driver_code, furigana: m.furigana || '', rows: [] });
     byDriver.get(m.driver_id).rows.push(m);
   }
 
@@ -3662,10 +3663,12 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
       await wb.xlsx.readFile(templatePath);
       const ws = wb.worksheets[0];
 
-      // ふりがな欄はドライバーマスタに読み仮名データが無いため空欄にする(テンプレート本来の
-      // 「すずき」「しょう」が他の人にも残ってしまわないように明示的にクリアする)
-      ws.getRow(6).getCell(3).value = null;
-      ws.getRow(6).getCell(4).value = null;
+      // ふりがな欄。ドライバーマスタの「ふりがな」に入力があれば、氏名と同じく半角/全角スペースで
+      // 姓・名に分けてC/Dそれぞれに入れる(スペースが無ければ姓側のCにまとめて入れる)。
+      // 未入力ならテンプレート本来の「すずき」「しょう」が他の人にも残ってしまわないよう空欄にする
+      const furiganaParts = (info.furigana || '').trim().split(/[\s　]+/).filter(Boolean);
+      ws.getRow(6).getCell(3).value = furiganaParts[0] || null;
+      ws.getRow(6).getCell(4).value = furiganaParts[1] || null;
       ws.getRow(7).getCell(2).value = `氏名　（${info.name}）　殿`;
       ws.getRow(8).getCell(4).value = info.code || '';
       const today = new Date();
