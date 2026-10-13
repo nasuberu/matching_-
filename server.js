@@ -343,6 +343,10 @@ db.serialize(() => {
   ensureColumn('stores', 'manager_name', 'TEXT'); // 店舗担当者(店長)
   ensureColumn('stores', 'sv_name', 'TEXT');      // SV(スーパーバイザー)
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
+  // この店舗の「時間の穴」警告を、指定した年月("YYYY-MM")の間だけ表示しない(対応しないと決めた場合)。
+  // 月が変わると自動的に無効になる(年月が一致しなくなるため)。マッチング・結果画面の
+  // チェックボックスから設定する
+  ensureColumn('stores', 'gap_dismissed_until', 'TEXT');
   ensureColumn('drivers', 'driver_code', 'TEXT');          // 社員コード(ドライバーを一意に表す社内コード)
   ensureColumn('drivers', 'first_contract_date', 'TEXT');  // 初回委託日
   ensureColumn('drivers', 'status', 'TEXT');               // ステータス(稼働中/休止/契約終了)
@@ -2050,7 +2054,13 @@ app.post('/api/ai/parse-line-shift', async (req, res) => {
 
 // ===== 店舗からの人員要請 =====
 app.get('/api/store-requests', async (req, res) => {
-  const rows = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date DESC, id DESC');
+  const rows = await dbAll(`
+    SELECT sr.*, st.gap_dismissed_until
+    FROM store_requests sr
+    LEFT JOIN stores st ON st.id = sr.store_id
+    WHERE sr.archived_month IS NULL
+    ORDER BY sr.request_date DESC, sr.id DESC
+  `);
   res.json({ success: true, requests: rows });
 });
 
@@ -2391,6 +2401,19 @@ app.post('/api/stores', async (req, res) => {
 app.delete('/api/stores/:id', async (req, res) => {
   await dbRun('DELETE FROM stores WHERE id = ?', [req.params.id]);
   await dbRun('DELETE FROM driver_store_preferences WHERE store_id = ?', [req.params.id]);
+  res.json({ success: true });
+});
+
+// この店舗の「時間の穴」警告を今月(アプリ内の「今日」基準)は表示しないようにする/元に戻す。
+// 月が変わるとgap_dismissed_untilの年月と一致しなくなるので、自動的に警告が復活する
+app.post('/api/stores/:id/gap-dismiss', async (req, res) => {
+  const { dismissed } = req.body || {};
+  if (dismissed) {
+    const today = (await getMockToday()) || new Date().toISOString().slice(0, 10);
+    await dbRun('UPDATE stores SET gap_dismissed_until = ? WHERE id = ?', [today.slice(0, 7), req.params.id]);
+  } else {
+    await dbRun('UPDATE stores SET gap_dismissed_until = NULL WHERE id = ?', [req.params.id]);
+  }
   res.json({ success: true });
 });
 

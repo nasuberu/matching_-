@@ -2854,16 +2854,17 @@
     const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定' };
     // allowReplace: 店舗別の表でだけtrueにする(ドライバー別の表は「誰か」ではなく「どの店舗か」の
     // 行なので、右クリックでの差し替え対象にならない)。「候補」のうちだけ差し替え可能(確定・完了は不可)
-    function matchCellHtml(m, label, date, allowReplace, gapWarning) {
+    function matchCellHtml(m, label, date, allowReplace, gapWarning, gapDismissed) {
       // m.driver_time_start/endがこのマッチング自身の実際の時間(無ければ店舗依頼の時間と同じ=m.time_start/end)。
-      // gapWarning: この依頼の希望時間をまだ誰もカバーしきれていない「穴」が残っている場合にtrue
+      // gapWarning: この依頼の希望時間をまだ誰もカバーしきれていない「穴」が残っている場合にtrue。
+      // gapDismissed: 「今月対応なし」にチェック済みの店舗の穴の場合、警告色は出さず半透明にするだけにする
       const ownTimeLabel = (m.driver_time_start || m.driver_time_end) ? `${esc(m.driver_time_start || '?')}〜${esc(m.driver_time_end || '?')}` : (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
       const viaRing = CREATED_VIA_RING[m.created_via] || '';
       const viaLabel = CREATED_VIA_LABEL[m.created_via] ? ` ／ ${CREATED_VIA_LABEL[m.created_via]}` : '';
       const canReplace = allowReplace && m.status === '候補';
       const rightClickAttr = canReplace ? `oncontextmenu="return showManualAssignMenu(event, ${m.store_request_id}, '${date}', ${m.id})"` : '';
-      const gapNote = gapWarning ? ' ／ ⚠️ この依頼の希望時間をまだカバーしきれていません' : '';
-      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
+      const gapNote = gapWarning ? ' ／ ⚠️ この依頼の希望時間をまだカバーしきれていません' : gapDismissed ? ' ／ 今月対応なしに設定済み(穴は残っています)' : '';
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)} ${gapDismissed ? 'opacity-40' : ''}">
         <span class="relative group block mb-0.5">
           <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${canReplace ? 'cursor-context-menu' : 'cursor-default'} ${dashboardStatusColor(m.status)} ${viaRing}" ${rightClickAttr}>${gapWarning ? '⚠️ ' : ''}${esc(label)}</span>
           <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${ownTimeLabel}${viaLabel}${canReplace ? ' ／ 右クリックで変更' : ''}${gapNote}</span>
@@ -2871,13 +2872,13 @@
       </td>`;
     }
 
-    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date, requestId, isGap) {
+    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date, requestId, isGap, gapDismissed) {
       const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
       // requestIdがある(=実在する店舗依頼の空き枠)場合だけ、右クリックで「その日に希望シフトを
       // 出しているドライバー」を一覧表示し、クリックで直接割り当てられるようにする
       const rightClickAttr = requestId ? `oncontextmenu="return showManualAssignMenu(event, ${requestId}, '${date}')"` : '';
-      const title = requestId ? (isGap ? '必要人数は埋まっていますが、この時間帯はまだ誰もカバーしていません。右クリックでその日に希望シフトを出しているドライバーを割り当てられます' : '右クリックでその日に希望シフトを出しているドライバーを割り当てられます') : '';
-      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
+      const title = requestId ? (isGap ? '必要人数は埋まっていますが、この時間帯はまだ誰もカバーしていません。右クリックでその日に希望シフトを出しているドライバーを割り当てられます' : gapDismissed ? '今月対応なしに設定済みです(穴は残っています)。右クリックで割り当てられます' : '右クリックでその日に希望シフトを出しているドライバーを割り当てられます') : '';
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)} ${gapDismissed ? 'opacity-40' : ''}">
         <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${isGap ? 'bg-amber-100 border border-amber-400' : 'bg-amber-50 border border-dashed border-amber-300'} text-amber-700 ${requestId ? 'cursor-context-menu' : ''}" ${rightClickAttr} title="${title}">${isGap ? '⚠️ ' : ''}${label}</span>
       </td>`;
     }
@@ -3002,6 +3003,15 @@
       await deleteMatch(matchId);
     }
 
+    // マッチング・結果(表・店舗別)の「今月対応なし」チェック。チェックすると、この店舗の
+    // 時間の穴の警告色を今月いっぱい弱める(半透明表示にする。月が変わると自動的に元に戻る)
+    async function toggleStoreGapDismiss(storeId, checked) {
+      await fetch(`/api/stores/${storeId}/gap-dismiss`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dismissed: checked })
+      });
+      loadMatches();
+    }
+
     // 行=店舗、列=日付。必要人数が2人以上の店舗依頼は行を分けて表示し、まだ埋まっていない枠には
     // 店舗依頼の時間を薄く表示する(「-」ではなく、何時から何時まで何人ほしいかが一目で分かるように)
     function renderMatchesStoreTable(matches, storeRequests) {
@@ -3022,6 +3032,10 @@
         if (m.store_code && !codeByStoreName.has(m.store_name)) codeByStoreName.set(m.store_name, m.store_code);
         if (m.store_sv_name && !svByStoreName.has(m.store_name)) svByStoreName.set(m.store_name, m.store_sv_name);
       }
+      // 時間の穴の「今月対応なし」判定用。gap_dismissed_untilが今月と一致していれば表示を弱める(月が
+      // 変われば自動的に元に戻る)。あわせて、チェックボックスを出す対象(実際に穴がある店舗)も控えておく
+      const currentYearMonth = (appTodayStr || new Date().toISOString().slice(0, 10)).slice(0, 7);
+      const storeIdByStoreName = new Map(), dismissedUntilByStoreName = new Map(), hasGapByStoreName = new Map();
 
       const requestsByStoreDate = new Map(); // "店舗名|日付" -> 店舗依頼の行配列(時間帯違いが複数あり得る)
       for (const r of storeRequests) {
@@ -3045,6 +3059,8 @@
           const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
           let slots = [];
           for (const r of reqs) {
+            if (r.store_id != null) storeIdByStoreName.set(storeName, r.store_id);
+            if (r.gap_dismissed_until !== undefined) dismissedUntilByStoreName.set(storeName, r.gap_dismissed_until || null);
             const ms = matchesByRequestId.get(r.id) || [];
             // 時間の「穴」判定はプール需要(候補店舗ごとに時間が違い得る)には馴染まないため対象外にする。
             // 欠勤になった枠は実際には稼働していないので、カバーしている時間には数えない。
@@ -3054,15 +3070,19 @@
               ms.filter(m => m.status !== '欠勤').map(m => ({ time_start: m.driver_time_start, time_end: m.driver_time_end }))
             );
             const hasGap = gaps.length > 0;
+            if (hasGap) hasGapByStoreName.set(storeName, true);
+            // 「今月対応なし」にチェックされている店舗は、穴の警告を弱めた見た目(半透明)にする
+            // (消すのではなく、見ればまだ分かるようにする。月が変わると自動的に元の警告表示に戻る)
+            const gapDismissed = hasGap && dismissedUntilByStoreName.get(storeName) === currentYearMonth;
             const count = Math.max(r.required_count || 1, ms.length);
             for (let i = 0; i < count; i++) {
               const m = ms[i] || null;
-              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap) });
+              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap && !gapDismissed), gapDismissed: !!(m && gapDismissed) });
             }
             // 必要人数自体は埋まっていても、希望時間に誰もカバーしていない穴が残っている場合は、
             // その穴を埋めるための枠をさらに追加する(右クリックで別の人を割り当てられる)
             if (hasGap && ms.length >= (r.required_count || 1)) {
-              for (const g of gaps) slots.push({ time_start: g.start, time_end: g.end, match: null, requestId: r.id, isGap: true });
+              for (const g of gaps) slots.push({ time_start: g.start, time_end: g.end, match: null, requestId: r.id, isGap: !gapDismissed, gapDismissed });
             }
           }
           if (reqs.length === 0) {
@@ -3084,15 +3104,25 @@
         const maxSlots = maxSlotsByStore.get(storeName);
         const code = codeByStoreName.get(storeName);
         const sv = svByStoreName.get(storeName) || '-';
+        const storeId = storeIdByStoreName.get(storeName);
+        const isDismissed = dismissedUntilByStoreName.get(storeName) === currentYearMonth;
+        const showDismissCheckbox = hasGapByStoreName.get(storeName) && storeId != null;
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
           const rowLabel = `${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
+          // 時間の穴が残っている店舗だけ、1行目に「今月対応なし」チェックを出す
+          // (チェックすると、その穴のセルを警告色から半透明に変える。月が変わると自動的に元に戻る)
+          const dismissCheckboxHtml = (slotIndex === 0 && showDismissCheckbox) ? `
+            <label class="flex items-center gap-1 font-normal text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
+              <input type="checkbox" ${isDismissed ? 'checked' : ''} onchange="toggleStoreGapDismiss(${storeId}, this.checked)">
+              今月対応なし(穴を半透明にする)
+            </label>` : '';
           const cells = dates.map(d => {
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return emptyCellHtml(d);
-            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d, true, slot.gapWarning);
-            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId, slot.isGap);
+            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d, true, slot.gapWarning, slot.gapDismissed);
+            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId, slot.isGap, slot.gapDismissed);
           }).join('');
-          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}${dismissCheckboxHtml}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
       }
       body.innerHTML = rowsHtml.join('');
@@ -3551,9 +3581,11 @@
     }
 
     // ===== 今日の日付(練習用、アプリ内だけの「今日」) =====
+    let appTodayStr = null; // アプリ内の「今日」(練習日付が設定されていればその日付、無ければ本当の今日)。YYYY-MM-DD
     async function loadMockToday() {
       const res = await fetch('/api/settings/mock-today');
       const data = await res.json();
+      appTodayStr = data.today;
       updateHeaderTodayDisplay(data);
 
       // ダッシュボードタブの設定パネルがまだ無い(他のタブを開いている)場合もあるので、存在チェックしてから更新する
