@@ -345,6 +345,8 @@ db.serialize(() => {
   ensureColumn('drivers', 'insurance_info', 'TEXT');        // 保険加入状況(貨物保険等のメモ)
   ensureColumn('drivers', 'company_name', 'TEXT');          // 会社名(法人として契約している個人事業主向け。個人の場合は空欄)
   ensureColumn('drivers', 'fixed_store_id', 'INTEGER REFERENCES stores(id)'); // 固定希望店舗(希望シフトで店舗未入力の日の初期値として使う)
+  // 固定希望店舗が複数ドライバーで重複した場合の優先順位(1が最優先)。同じ固定希望店舗のドライバー間でのみ意味を持つ
+  ensureColumn('drivers', 'fixed_store_priority', 'INTEGER');
   // エリア固定: 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群(想定デポ)の中から
   // 優先的に割り当てる仕組み。area_fixed_patternは{mon:"10:00-22:00", ...}形式のJSON文字列、
   // area_fixed_store_idsは候補店舗idの配列のJSON文字列
@@ -825,6 +827,37 @@ async function getEnabledTierKeys() {
   } catch (e) {
     return DEFAULT_ENABLED_TIER_KEYS;
   }
+}
+
+// 固定希望店舗が複数ドライバーで重複している組のうち、優先順位が未確定なもの(未設定のドライバーが
+// いる、または同じ数字が重複している)を返す。自動マッチング実行前のチェックと、ドライバーマスタの
+// 重複アラート表示の両方から使う
+async function findUnresolvedFixedStoreDuplicates() {
+  const drivers = await dbAll(`
+    SELECT d.id, d.name, d.fixed_store_id, d.fixed_store_priority, s.name AS store_name
+    FROM drivers d JOIN stores s ON s.id = d.fixed_store_id
+  `);
+  const byStore = new Map();
+  for (const d of drivers) {
+    if (!byStore.has(d.fixed_store_id)) byStore.set(d.fixed_store_id, []);
+    byStore.get(d.fixed_store_id).push(d);
+  }
+  const unresolved = [];
+  for (const [storeId, group] of byStore) {
+    if (group.length <= 1) continue;
+    const priorities = group.map(d => d.fixed_store_priority);
+    const hasUnset = priorities.some(p => p == null);
+    const setPriorities = priorities.filter(p => p != null);
+    const hasDuplicate = new Set(setPriorities).size !== setPriorities.length;
+    if (hasUnset || hasDuplicate) {
+      unresolved.push({
+        store_id: storeId,
+        store_name: group[0].store_name,
+        drivers: group.map(d => ({ id: d.id, name: d.name, priority: d.fixed_store_priority }))
+      });
+    }
+  }
+  return unresolved;
 }
 
 // 自動マッチングの対象を「固定希望店舗が設定されているドライバーのみ」に絞る設定(画面からON/OFFできる)。
@@ -1442,6 +1475,17 @@ app.delete('/api/drivers/:id', async (req, res) => {
   // 過去の月としてアーカイブ済みの希望シフトは、ドライバーがマスタから削除されても履歴として残す
   // (archived_month IS NULLの、現在進行中の希望シフトのみ削除する)
   await dbRun('DELETE FROM driver_availability WHERE driver_id = ? AND archived_month IS NULL', [req.params.id]);
+  res.json({ success: true });
+});
+
+// 固定希望店舗が重複しているドライバー間の優先順位をまとめて保存する(ドライバーマスタの
+// 重複アラートからの保存専用。updates: [{driver_id, priority(数値またはnull)}, ...])
+app.post('/api/drivers/fixed-store-priorities', async (req, res) => {
+  const { updates } = req.body || {};
+  if (!Array.isArray(updates) || updates.length === 0) return res.status(400).json({ success: false, message: 'updatesは1件以上の配列で指定してください' });
+  for (const u of updates) {
+    await dbRun('UPDATE drivers SET fixed_store_priority = ? WHERE id = ?', [u.priority != null && u.priority !== '' ? parseInt(u.priority, 10) : null, u.driver_id]);
+  }
   res.json({ success: true });
 });
 
@@ -2557,6 +2601,18 @@ app.get('/api/matches', async (req, res) => {
 // 距離がDIST_WARNING_KMを超える場合はマッチング自体は作るが「遠い」警告フラグを立てる(除外はしない)。
 // 既に他のマッチングで同日確定しているドライバーは対象から外す(ダブルブッキング防止)。
 app.post('/api/matches/run', async (req, res) => {
+  // 固定希望店舗が重複しているドライバーの優先順位が決まっていない組が1つでもあれば、
+  // (既存の「候補」を消す前に)ここで止める。誰を優先するか決めないまま自動マッチングすると、
+  // スコアだけで決まってしまい意図しない人が割り当てられる恐れがあるため
+  const unresolvedFixedStoreDuplicates = await findUnresolvedFixedStoreDuplicates();
+  if (unresolvedFixedStoreDuplicates.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: `固定希望店舗が重複しているドライバーの優先順位が決まっていないため、マッチングを実行しませんでした(${unresolvedFixedStoreDuplicates.length}件)。ドライバーマスタ画面の重複アラートから優先順位を設定してください。`,
+      unresolvedFixedStoreDuplicates
+    });
+  }
+
   // 「候補」だけを作り直す。「確定」「完了」は既に実際の運用(シフト確定・派遣実績)で使われているため、
   // 再実行しても絶対に消さない(以前はここで全件消していたため、実行するたびに確定済みの予定が
   // 白紙に戻ってしまう重大な不具合があった。アーカイブ済み(過去に月次クローズしたもの)は対象外)
@@ -2564,7 +2620,7 @@ app.post('/api/matches/run', async (req, res) => {
 
   const storeRequests = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date ASC');
   const availabilityRows = await dbAll(`
-    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, d.fixed_store_id, fs.name AS fixed_store_name
+    SELECT a.*, d.name AS driver_name, d.home_lat, d.home_lng, d.fixed_store_id, d.fixed_store_priority, fs.name AS fixed_store_name
     FROM driver_availability a
     JOIN drivers d ON d.id = a.driver_id
     LEFT JOIN stores fs ON fs.id = d.fixed_store_id
@@ -2688,7 +2744,17 @@ app.post('/api/matches/run', async (req, res) => {
         preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
         aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
       ).map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`)) }))
-        .sort((x, y) => y.score - x.score);
+        .sort((x, y) => {
+          // 固定希望店舗の階層だけは、重複時にドライバーマスタで決めた優先順位(1が最優先)を
+          // スコアより先に見る(/api/matches/run は優先順位が未確定だと実行自体をブロックするため、
+          // ここに来る時点でこの階層の候補は全員fixed_store_priorityが決まっているはずだが、
+          // 単独(重複なし)のドライバーはnullのままで構わないため、その場合はスコア順にフォールバックする)
+          if (tierKey === 'fixed_store') {
+            const pDiff = (x.fixed_store_priority ?? Infinity) - (y.fixed_store_priority ?? Infinity);
+            if (pDiff !== 0) return pDiff;
+          }
+          return y.score - x.score;
+        });
 
       const picked = tierCandidates.slice(0, needed);
       for (const p of picked) await insertMatch(store, p, tierKey === 'fixed_store' ? 'fixed_store_tier' : 'auto');

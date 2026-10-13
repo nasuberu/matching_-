@@ -643,6 +643,170 @@
 
     <!-- ダッシュボードタブ -->
     <div id="tab-dashboard" class="hidden space-y-4">
+      <!-- 依頼件数・希望シフト件数・マッチング件数・未マッチ・マッチング率。一番よく見る数字なので先頭に配置 -->
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📊 サマリー</summary>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 pt-3">
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <p class="text-xs text-slate-500">店舗依頼件数</p>
+            <p id="dash-stat-requests" class="text-2xl font-bold text-slate-800">0</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <p class="text-xs text-slate-500">希望シフト件数</p>
+            <p id="dash-stat-availability" class="text-2xl font-bold text-slate-800">0</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <p class="text-xs text-slate-500">マッチング件数(候補+確定+完了+欠勤)</p>
+            <p id="dash-stat-matches" class="text-2xl font-bold text-slate-800">0</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
+            <p class="text-xs text-slate-500">候補が見つからない店舗依頼</p>
+            <p id="dash-stat-unmatched" class="text-2xl font-bold text-amber-600">0</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-emerald-200">
+            <p class="text-xs text-slate-500">マッチング率(必要人数に対する充足率)</p>
+            <p id="dash-stat-fillrate" class="text-2xl font-bold text-emerald-600">0%</p>
+            <p id="dash-stat-fillrate-sub" class="text-[10px] text-slate-400">0 / 0人</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📋 マッチング結果一覧(SV確認シート形式)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">「確定」「完了」のマッチングを、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表で確認できます(提出用ファイルの「ＳＶ確認シート」と同じ列構成)。</p>
+          <div class="flex gap-2 items-center flex-wrap">
+            <input id="sv-sheet-search" oninput="renderSvSheetTable()" placeholder="氏名・店舗名で絞り込み" class="p-1.5 border rounded text-xs flex-1 min-w-[140px]">
+            <button onclick="window.open('/api/export/sv-sheet.xlsx', '_blank')" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 Excelで出力</button>
+          </div>
+          <div class="overflow-x-auto max-h-[32rem] overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日付</th><th class="p-1.5">社員番号</th><th class="p-1.5">名前(個人事業主)</th><th class="p-1.5">シフト</th><th class="p-1.5">出勤場所</th><th class="p-1.5 text-right">勤務時間</th></tr></thead>
+              <tbody id="sv-sheet-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🏬 店舗別 依頼件数</summary>
+        <div id="dash-store-ranking" class="pt-3 space-y-1.5"></div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📈 詳細データ(店舗別・ドライバー別)</summary>
+        <div class="pt-3 space-y-3">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div class="flex gap-1.5 items-center flex-wrap">
+              <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
+              <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
+              <span class="text-[11px] text-slate-400">↕ 見出しクリックで並び替え</span>
+              <input id="dash-grid-search" oninput="renderDashboardGrid()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-1.5 border rounded text-xs min-w-[160px]">
+              <span class="text-[10px] text-slate-400">(下の書き出しは社内確認用の生データCSVです。送付用は「📨 シフト表の送付」から)</span>
+            </div>
+            <div class="flex gap-1.5 items-center flex-wrap">
+              <select id="dash-export-store-select" class="p-1.5 border rounded text-xs"></select>
+              <button onclick="exportDashboardForStore()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">この店舗を書き出す</button>
+              <select id="dash-export-driver-select" class="p-1.5 border rounded text-xs"></select>
+              <button onclick="exportDashboardForDriver()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">このドライバーを書き出す</button>
+              <button onclick="exportDashboardAll()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded font-bold whitespace-nowrap">📤 全体を一括書き出す</button>
+            </div>
+          </div>
+          <div class="flex gap-3 items-center flex-wrap text-[11px] text-slate-500">
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-200 border border-emerald-400"></span>確定</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-700"></span>完了</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
+          </div>
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
+            <table class="text-sm border-separate" style="border-spacing:0">
+              <thead><tr id="dash-grid-header"></tr></thead>
+              <tbody id="dash-grid-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">👍🚫 店舗の相性 統計</summary>
+        <div class="pt-3 space-y-4">
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">評価段階ごとの件数</p>
+            <div id="dash-pref-levels" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">🚫 NGが多い店舗ランキング</p>
+            <div id="dash-pref-ng-ranking" class="space-y-1.5"></div>
+          </div>
+          <div>
+            <p class="text-xs font-bold text-slate-600 mb-2">⭐ 好き・OKが多い店舗ランキング</p>
+            <div id="dash-pref-good-ranking" class="space-y-1.5"></div>
+          </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📨 シフト表の送付</summary>
+        <div class="pt-3 space-y-2">
+        <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、先に「マッチング・結果」タブで一括確定してください。</p>
+        <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、固定希望店舗の候補としてドライバーマスタ画面に表示されます(ドライバーマスタは自動では書き換わりません。採用したい場合は画面から手動で操作してください)</p>
+        <div class="flex gap-2 items-center flex-wrap">
+          <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
+          <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
+        </div>
+        <hr class="border-slate-100">
+        <p class="text-xs text-slate-500">個人事業主さんに個別でお渡しする「作業依頼表」を、PDF(1人1枚)とExcel(1ファイル・氏名ごとにシート分け)で作成します(実際に使われているフォーマットと同じ見た目)。対象月の「確定」「完了」のマッチングがあるドライバーの分だけ作成し、デスクトップに自動でフォルダを作成して出力します。</p>
+        <details class="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <summary class="cursor-pointer select-none text-xs font-bold text-slate-600">⚙️ PDF表記の設定(依頼者・担当者・電話番号)</summary>
+          <div class="pt-2 space-y-2">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input id="pdf-header-requester-name" placeholder="依頼者(会社名)" class="p-2 border rounded text-sm">
+              <input id="pdf-header-requester-address" placeholder="依頼者(住所)" class="p-2 border rounded text-sm">
+              <input id="pdf-header-contact-name" placeholder="担当者" class="p-2 border rounded text-sm">
+              <input id="pdf-header-contact-phone" placeholder="電話番号" class="p-2 border rounded text-sm">
+            </div>
+            <button onclick="savePdfHeaderSettings()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs">💾 保存する</button>
+            <span id="pdf-header-saved-msg" class="text-xs text-emerald-600 font-bold hidden">✅ 保存しました(次回のPDF/Excel作成から反映されます)</span>
+          </div>
+        </details>
+        <div class="flex gap-2 items-center flex-wrap">
+          <input id="pdf-export-year" type="number" placeholder="年" class="p-2 border rounded text-sm w-20">
+          <span class="text-xs text-slate-500">年</span>
+          <input id="pdf-export-month" type="number" min="1" max="12" placeholder="月" class="p-2 border rounded text-sm w-16">
+          <span class="text-xs text-slate-500">月分</span>
+          <button onclick="exportDriverShiftPdfs()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📄 個人事業主ごとの作業依頼表(PDF+Excel・デスクトップに出力)</button>
+        </div>
+        <div id="pdf-export-result" class="text-xs"></div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📝 固定希望店舗の変更履歴</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">固定希望店舗がいつ・どう変わったか、手動設定か自動反映かを含めて確認できます(新しい順、最大200件)。</p>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">ドライバー</th><th class="p-1.5">変更前</th><th class="p-1.5">変更後</th><th class="p-1.5">種別</th></tr></thead>
+              <tbody id="fixed-store-log-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">📥 取込み履歴(取り消しもここから)</summary>
+        <div class="pt-3 space-y-2">
+          <p class="text-xs text-slate-500">「店舗依頼取込み」「希望シフト」「エリア固定」の一括取込みを、新しい順に最大50件表示します。間違えて取り込んだ・テストで入れた・入れ直したい場合は「取り消す」でまとめて削除できます(確定/完了のマッチングが既にある分は取り消せません)。</p>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">種類</th><th class="p-1.5">ファイル名</th><th class="p-1.5">補足</th><th class="p-1.5 text-right">取込み件数</th><th class="p-1.5 text-right">現在も有効</th><th class="p-1.5">状態</th><th class="p-1.5"></th></tr></thead>
+              <tbody id="import-batch-log-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🗓️ 今日の日付(練習用)<span id="mock-today-badge" class="hidden ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">練習日付を使用中</span></summary>
         <div class="pt-3 space-y-2">
@@ -678,159 +842,6 @@
           <div id="archive-content"></div>
         </div>
       </details>
-
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <p class="text-xs text-slate-500">店舗依頼件数</p>
-          <p id="dash-stat-requests" class="text-2xl font-bold text-slate-800">0</p>
-        </div>
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <p class="text-xs text-slate-500">希望シフト件数</p>
-          <p id="dash-stat-availability" class="text-2xl font-bold text-slate-800">0</p>
-        </div>
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <p class="text-xs text-slate-500">マッチング件数(候補+確定+完了+欠勤)</p>
-          <p id="dash-stat-matches" class="text-2xl font-bold text-slate-800">0</p>
-        </div>
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-amber-200">
-          <p class="text-xs text-slate-500">候補が見つからない店舗依頼</p>
-          <p id="dash-stat-unmatched" class="text-2xl font-bold text-amber-600">0</p>
-        </div>
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-emerald-200">
-          <p class="text-xs text-slate-500">マッチング率(必要人数に対する充足率)</p>
-          <p id="dash-stat-fillrate" class="text-2xl font-bold text-emerald-600">0%</p>
-          <p id="dash-stat-fillrate-sub" class="text-[10px] text-slate-400">0 / 0人</p>
-        </div>
-      </div>
-
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <summary class="font-bold text-slate-800 cursor-pointer select-none">🏬 店舗別 依頼件数</summary>
-        <div id="dash-store-ranking" class="pt-3 space-y-1.5"></div>
-      </details>
-
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <summary class="font-bold text-slate-800 cursor-pointer select-none">👍🚫 店舗の相性 統計</summary>
-        <div class="pt-3 space-y-4">
-          <div>
-            <p class="text-xs font-bold text-slate-600 mb-2">評価段階ごとの件数</p>
-            <div id="dash-pref-levels" class="space-y-1.5"></div>
-          </div>
-          <div>
-            <p class="text-xs font-bold text-slate-600 mb-2">🚫 NGが多い店舗ランキング</p>
-            <div id="dash-pref-ng-ranking" class="space-y-1.5"></div>
-          </div>
-          <div>
-            <p class="text-xs font-bold text-slate-600 mb-2">⭐ 好き・OKが多い店舗ランキング</p>
-            <div id="dash-pref-good-ranking" class="space-y-1.5"></div>
-          </div>
-        </div>
-      </details>
-
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
-        <h2 class="font-bold text-slate-800">📨 シフト表の送付</h2>
-        <p class="text-xs text-slate-500">「確定」済みのマッチングをもとに、個人事業主さん・店舗さんへそのまま送れる月間シフト表(Excel、1人/1店舗ごとにシート分け)を一括作成します。「候補」のままのマッチングがあれば、先に「マッチング・結果」タブで一括確定してください。</p>
-        <p class="text-xs text-slate-400">※ 確定にすると、1ヶ月間ずっと同じ店舗に割り当てられているドライバーがいれば、固定希望店舗の候補としてドライバーマスタ画面に表示されます(ドライバーマスタは自動では書き換わりません。採用したい場合は画面から手動で操作してください)</p>
-        <div class="flex gap-2 items-center flex-wrap">
-          <button onclick="exportShiftByDriver()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 個人事業主向け シフト表(Excel・全員分)</button>
-          <button onclick="exportShiftByStore()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 店舗向け シフト表(Excel・全店舗分)</button>
-        </div>
-        <hr class="border-slate-100">
-        <p class="text-xs text-slate-500">個人事業主さんに個別でお渡しする「作業依頼表」を、PDF(1人1枚)とExcel(1ファイル・氏名ごとにシート分け)で作成します(実際に使われているフォーマットと同じ見た目)。対象月の「確定」「完了」のマッチングがあるドライバーの分だけ作成し、デスクトップに自動でフォルダを作成して出力します。</p>
-        <details class="bg-slate-50 border border-slate-200 rounded-lg p-3">
-          <summary class="cursor-pointer select-none text-xs font-bold text-slate-600">⚙️ PDF表記の設定(依頼者・担当者・電話番号)</summary>
-          <div class="pt-2 space-y-2">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <input id="pdf-header-requester-name" placeholder="依頼者(会社名)" class="p-2 border rounded text-sm">
-              <input id="pdf-header-requester-address" placeholder="依頼者(住所)" class="p-2 border rounded text-sm">
-              <input id="pdf-header-contact-name" placeholder="担当者" class="p-2 border rounded text-sm">
-              <input id="pdf-header-contact-phone" placeholder="電話番号" class="p-2 border rounded text-sm">
-            </div>
-            <button onclick="savePdfHeaderSettings()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs">💾 保存する</button>
-            <span id="pdf-header-saved-msg" class="text-xs text-emerald-600 font-bold hidden">✅ 保存しました(次回のPDF/Excel作成から反映されます)</span>
-          </div>
-        </details>
-        <div class="flex gap-2 items-center flex-wrap">
-          <input id="pdf-export-year" type="number" placeholder="年" class="p-2 border rounded text-sm w-20">
-          <span class="text-xs text-slate-500">年</span>
-          <input id="pdf-export-month" type="number" min="1" max="12" placeholder="月" class="p-2 border rounded text-sm w-16">
-          <span class="text-xs text-slate-500">月分</span>
-          <button onclick="exportDriverShiftPdfs()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📄 個人事業主ごとの作業依頼表(PDF+Excel・デスクトップに出力)</button>
-        </div>
-        <div id="pdf-export-result" class="text-xs"></div>
-      </div>
-
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200" open>
-        <summary class="font-bold text-slate-800 cursor-pointer select-none">📋 マッチング結果一覧(SV確認シート形式)</summary>
-        <div class="pt-3 space-y-2">
-          <p class="text-xs text-slate-500">「確定」「完了」のマッチングを、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表で確認できます(提出用ファイルの「ＳＶ確認シート」と同じ列構成)。</p>
-          <div class="flex gap-2 items-center flex-wrap">
-            <input id="sv-sheet-search" oninput="renderSvSheetTable()" placeholder="氏名・店舗名で絞り込み" class="p-1.5 border rounded text-xs flex-1 min-w-[140px]">
-            <button onclick="window.open('/api/export/sv-sheet.xlsx', '_blank')" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-bold whitespace-nowrap">📤 Excelで出力</button>
-          </div>
-          <div class="overflow-x-auto max-h-[32rem] overflow-y-auto border border-slate-100 rounded">
-            <table class="w-full text-xs border-collapse">
-              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日付</th><th class="p-1.5">社員番号</th><th class="p-1.5">名前(個人事業主)</th><th class="p-1.5">シフト</th><th class="p-1.5">出勤場所</th><th class="p-1.5 text-right">勤務時間</th></tr></thead>
-              <tbody id="sv-sheet-body"></tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <summary class="font-bold text-slate-800 cursor-pointer select-none">📝 固定希望店舗の変更履歴</summary>
-        <div class="pt-3 space-y-2">
-          <p class="text-xs text-slate-500">固定希望店舗がいつ・どう変わったか、手動設定か自動反映かを含めて確認できます(新しい順、最大200件)。</p>
-          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
-            <table class="w-full text-xs border-collapse">
-              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">ドライバー</th><th class="p-1.5">変更前</th><th class="p-1.5">変更後</th><th class="p-1.5">種別</th></tr></thead>
-              <tbody id="fixed-store-log-body"></tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-        <summary class="font-bold text-slate-800 cursor-pointer select-none">📥 取込み履歴(取り消しもここから)</summary>
-        <div class="pt-3 space-y-2">
-          <p class="text-xs text-slate-500">「店舗依頼取込み」「希望シフト」「エリア固定」の一括取込みを、新しい順に最大50件表示します。間違えて取り込んだ・テストで入れた・入れ直したい場合は「取り消す」でまとめて削除できます(確定/完了のマッチングが既にある分は取り消せません)。</p>
-          <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
-            <table class="w-full text-xs border-collapse">
-              <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">種類</th><th class="p-1.5">ファイル名</th><th class="p-1.5">補足</th><th class="p-1.5 text-right">取込み件数</th><th class="p-1.5 text-right">現在も有効</th><th class="p-1.5">状態</th><th class="p-1.5"></th></tr></thead>
-              <tbody id="import-batch-log-body"></tbody>
-            </table>
-          </div>
-        </div>
-      </details>
-
-      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between flex-wrap gap-3">
-        <div class="flex gap-1.5 items-center flex-wrap">
-          <button id="dash-view-store-btn" onclick="switchDashboardView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別</button>
-          <button id="dash-view-driver-btn" onclick="switchDashboardView('driver')" class="text-xs px-3 py-1.5 rounded font-bold">ドライバー別</button>
-          <span class="text-[11px] text-slate-400">↕ 見出しクリックで並び替え</span>
-          <input id="dash-grid-search" oninput="renderDashboardGrid()" placeholder="🔍 店舗名・ドライバー名で検索" class="p-1.5 border rounded text-xs min-w-[160px]">
-          <span class="text-[10px] text-slate-400">(下の書き出しは社内確認用の生データCSVです。送付用は上の「シフト表の送付」から)</span>
-        </div>
-        <div class="flex gap-1.5 items-center flex-wrap">
-          <select id="dash-export-store-select" class="p-1.5 border rounded text-xs"></select>
-          <button onclick="exportDashboardForStore()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">この店舗を書き出す</button>
-          <select id="dash-export-driver-select" class="p-1.5 border rounded text-xs"></select>
-          <button onclick="exportDashboardForDriver()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-bold whitespace-nowrap">このドライバーを書き出す</button>
-          <button onclick="exportDashboardAll()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded font-bold whitespace-nowrap">📤 全体を一括書き出す</button>
-        </div>
-      </div>
-      <div class="flex gap-3 items-center flex-wrap text-[11px] text-slate-500">
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-emerald-200 border border-emerald-400"></span>確定</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-700"></span>完了</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-slate-50 border border-slate-200"></span>候補</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-orange-100 border border-orange-200"></span>変更</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
-      </div>
-      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
-        <table class="text-sm border-separate" style="border-spacing:0">
-          <thead><tr id="dash-grid-header"></tr></thead>
-          <tbody id="dash-grid-body"></tbody>
-        </table>
-      </div>
     </div>
 
   </main>
@@ -979,8 +990,16 @@
     }
 
     // 複数のドライバーが同じ店舗を固定希望店舗にしている場合に、ドライバーマスタ画面上部に知らせる。
-    // 重複自体はエラーではない(マッチング時はスコアで競わせて上位から必要人数分を割り当てる)が、
-    // 意図しない重複に気付けるように一覧表示しておく
+    // ここで優先順位(1が最優先)を設定できる。優先順位が未設定・重複している組が1つでもあると、
+    // 「マッチング・結果」での自動マッチングの実行自体がブロックされる(スコアだけで誰が割り当たるか
+    // 決まってしまうのを避けるため)
+    function isDuplicateFixedStoreGroupUnresolved(ds) {
+      const priorities = ds.map(d => d.fixed_store_priority);
+      if (priorities.some(p => p == null)) return true;
+      const setPriorities = priorities.filter(p => p != null);
+      return new Set(setPriorities).size !== setPriorities.length;
+    }
+
     function renderDuplicateFixedStoreAlert() {
       const el = document.getElementById('dr-duplicate-fixed-store-alert');
       const byStore = new Map(); // store_id -> [driver, ...]
@@ -992,18 +1011,41 @@
       const duplicated = [...byStore.entries()].filter(([, ds]) => ds.length > 1);
       if (duplicated.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
       el.classList.remove('hidden');
+      const unresolvedCount = duplicated.filter(([, ds]) => isDuplicateFixedStoreGroupUnresolved(ds)).length;
       el.innerHTML = `
-        <details class="bg-amber-50 border border-amber-300 rounded-xl p-4">
-          <summary class="font-bold text-amber-800 text-sm cursor-pointer select-none">⚠️ 固定希望店舗が重複している店舗が ${duplicated.length} 件あります(クリックで開閉)</summary>
-          <p class="text-xs text-amber-700 mt-2 mb-2">エラーではありません(マッチング時はスコアの高い人から必要人数分を割り当てます)。意図しない重複が無いかご確認ください。</p>
-          <div class="max-h-52 overflow-y-auto space-y-1">
-            ${duplicated.map(([storeId, ds]) => `
-              <div class="bg-white rounded px-2 py-1.5 border border-amber-100 text-xs">
-                🏬 ${esc(ds[0].fixed_store_name || '(店舗名不明)')}: ${ds.map(d => esc(d.name)).join('・')}
+        <details class="bg-amber-50 border border-amber-300 rounded-xl p-4" ${unresolvedCount > 0 ? 'open' : ''}>
+          <summary class="font-bold text-amber-800 text-sm cursor-pointer select-none">⚠️ 固定希望店舗が重複している店舗が ${duplicated.length} 件あります${unresolvedCount > 0 ? `(うち優先順位未確定 ${unresolvedCount} 件)` : ''}(クリックで開閉)</summary>
+          <p class="text-xs text-amber-700 mt-2 mb-2">同じ店舗を固定希望店舗にしているドライバーが複数います。必要人数より重複人数が多い日は、ここで決めた優先順位(1が最優先、他の人と別の数字にしてください)の高い人から割り当てます。<b>未確定(未設定・同じ数字が重複)の組が1つでもあると、自動マッチングは実行されません。</b></p>
+          <div class="max-h-80 overflow-y-auto space-y-2">
+            ${duplicated.map(([storeId, ds]) => {
+              const unresolved = isDuplicateFixedStoreGroupUnresolved(ds);
+              return `
+              <div class="bg-white rounded-lg px-3 py-2 border ${unresolved ? 'border-red-300' : 'border-emerald-300'} text-xs space-y-1.5">
+                <p class="font-bold">${unresolved ? '🔴 未確定' : '🟢 確定済み'} ／ 🏬 ${esc(ds[0].fixed_store_name || '(店舗名不明)')}</p>
+                ${ds.map(d => `
+                  <div class="flex items-center gap-2">
+                    <span class="flex-1">${esc(d.name)}</span>
+                    <span class="text-slate-400">優先順位</span>
+                    <input type="number" min="1" class="w-16 p-1 border rounded text-xs dup-priority-input" data-store-id="${storeId}" data-driver-id="${d.id}" value="${d.fixed_store_priority ?? ''}">
+                  </div>
+                `).join('')}
+                <button onclick="saveDuplicateFixedStorePriority(${storeId})" class="text-xs bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded font-bold">この店舗の優先順位を保存</button>
               </div>
-            `).join('')}
+            `; }).join('')}
           </div>
         </details>`;
+    }
+
+    async function saveDuplicateFixedStorePriority(storeId) {
+      const inputs = [...document.querySelectorAll(`.dup-priority-input[data-store-id="${storeId}"]`)];
+      const updates = inputs.map(inp => ({ driver_id: parseInt(inp.dataset.driverId, 10), priority: inp.value.trim() ? parseInt(inp.value, 10) : null }));
+      if (updates.some(u => u.priority == null)) { alert('全員の優先順位を入力してください'); return; }
+      const priorities = updates.map(u => u.priority);
+      if (new Set(priorities).size !== priorities.length) { alert('優先順位が重複しています。それぞれ別の数字にしてください'); return; }
+      const res = await fetch('/api/drivers/fixed-store-priorities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }) });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '保存に失敗しました'); return; }
+      loadDrivers();
     }
 
     async function loadDrivers() {
@@ -2452,7 +2494,18 @@
     async function runMatching() {
       const res = await fetch('/api/matches/run', { method: 'POST' });
       const data = await res.json();
-      if (!data.success) { alert('マッチングに失敗しました: ' + (data.message || '')); return; }
+      if (!data.success) {
+        if (data.unresolvedFixedStoreDuplicates && data.unresolvedFixedStoreDuplicates.length > 0) {
+          const detail = data.unresolvedFixedStoreDuplicates.map(g =>
+            `🏬 ${g.store_name}: ${g.drivers.map(d => `${d.name}(${d.priority != null ? `優先順位${d.priority}` : '未設定'})`).join('・')}`
+          ).join('\n');
+          alert(`⚠️ マッチングを実行しませんでした\n\n${data.message}\n\n${detail}\n\nこのあと「ドライバーマスタ」タブに移動します。`);
+          switchTab('driver');
+          return;
+        }
+        alert('マッチングに失敗しました: ' + (data.message || ''));
+        return;
+      }
       alert(`✅ ${data.created}件のマッチング候補を作成しました${data.unmatched_requests > 0 ? `\n⚠️ ${data.unmatched_requests}件の店舗依頼は候補が見つかりませんでした(下の一覧で確認できます)` : ''}`);
       loadMatches();
     }
