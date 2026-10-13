@@ -278,6 +278,7 @@
     <!-- ドライバーマスタタブ -->
     <div id="tab-driver" class="hidden space-y-4">
       <div id="dr-duplicate-fixed-store-alert" class="hidden"></div>
+      <div id="dr-fixed-store-ng-alert" class="hidden"></div>
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🚚 ドライバーを登録</summary>
         <div class="space-y-3 pt-3">
@@ -1050,7 +1051,9 @@
     }
 
     async function loadDrivers() {
-      const [driversRes, storesRes, suggestionsRes] = await Promise.all([fetch('/api/drivers'), fetch('/api/stores'), fetch('/api/fixed-store-suggestions')]);
+      const [driversRes, storesRes, suggestionsRes, ngConflictsRes] = await Promise.all([
+        fetch('/api/drivers'), fetch('/api/stores'), fetch('/api/fixed-store-suggestions'), fetch('/api/drivers/fixed-store-ng-conflicts')
+      ]);
       const driversData = await driversRes.json();
       const storesData = await storesRes.json();
       driversCache = driversData.drivers || [];
@@ -1059,8 +1062,41 @@
       document.getElementById('store-datalist').innerHTML =
         driverFormStoresCache.map(s => `<option value="${esc(storeOptionLabel(s))}">`).join('');
       renderDuplicateFixedStoreAlert();
+      renderFixedStoreNgConflictAlert((await ngConflictsRes.json()).conflicts || []);
       renderAreaFixedStoreList();
       renderDriverList();
+    }
+
+    // 固定希望店舗なのに相性でNGにしている(矛盾した)組み合わせを警告する。自動マッチングでは
+    // NGが必ず優先されるため、このままだと該当ドライバーはその店舗には絶対に割り当てられない
+    function renderFixedStoreNgConflictAlert(conflicts) {
+      const el = document.getElementById('dr-fixed-store-ng-alert');
+      if (conflicts.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      el.innerHTML = `
+        <details class="bg-red-50 border border-red-300 rounded-xl p-4" open>
+          <summary class="font-bold text-red-800 text-sm cursor-pointer select-none">🚫 固定希望店舗なのに相性がNGになっている組み合わせが ${conflicts.length} 件あります(クリックで開閉)</summary>
+          <p class="text-xs text-red-700 mt-2 mb-2">自動マッチングではNGが必ず優先されるため、このままだとこのドライバーはこの店舗には絶対に割り当てられません(優先順位を設定しても無効です)。固定希望店舗が正しいならNGを解除、NGが正しいなら固定希望店舗を外してください。</p>
+          <div class="max-h-60 overflow-y-auto space-y-1.5">
+            ${conflicts.map(c => `
+              <div class="bg-white rounded-lg px-3 py-2 border border-red-100 text-xs flex items-center gap-2 flex-wrap">
+                <span class="flex-1">${esc(c.driver_name)} ⇔ 🏬 ${esc(c.store_name)}(固定希望店舗なのにNG)</span>
+                <button onclick="resolveFixedStoreNgConflict('preference', ${c.preference_id})" class="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded font-bold whitespace-nowrap">NGを解除</button>
+                <button onclick="resolveFixedStoreNgConflict('fixed_store', ${c.driver_id})" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded font-bold whitespace-nowrap">固定希望店舗を外す</button>
+              </div>
+            `).join('')}
+          </div>
+        </details>`;
+    }
+
+    async function resolveFixedStoreNgConflict(action, id) {
+      if (action === 'preference') {
+        await fetch(`/api/driver-store-preferences/${id}`, { method: 'DELETE' });
+      } else {
+        await updateDriverFixedStore(id, '');
+        return; // updateDriverFixedStoreが内部でloadDrivers()まで呼ぶ
+      }
+      loadDrivers();
     }
 
     // 固定希望店舗の候補を採用/却下する(ドライバーマスタ一覧の💡バッジから呼ばれる)

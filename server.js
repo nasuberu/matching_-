@@ -1489,6 +1489,21 @@ app.post('/api/drivers/fixed-store-priorities', async (req, res) => {
   res.json({ success: true });
 });
 
+// 固定希望店舗なのに、その店舗を相性でNGに設定している矛盾した組み合わせを一覧で返す。
+// 自動マッチングではNGが必ず優先される(固定希望店舗・優先順位があっても除外される)ため、
+// 入力ミスや運用上の矛盾に気付けるよう、ドライバーマスタ画面に警告として表示する
+app.get('/api/drivers/fixed-store-ng-conflicts', async (req, res) => {
+  const rows = await dbAll(`
+    SELECT d.id AS driver_id, d.name AS driver_name, d.fixed_store_id AS store_id, s.name AS store_name, p.id AS preference_id
+    FROM drivers d
+    JOIN driver_store_preferences p ON p.driver_id = d.id AND p.store_id = d.fixed_store_id
+    JOIN stores s ON s.id = d.fixed_store_id
+    WHERE p.preference = 'NG'
+    ORDER BY d.name ASC
+  `);
+  res.json({ success: true, conflicts: rows });
+});
+
 // ===== ドライバーの希望シフト =====
 app.get('/api/driver-availability', async (req, res) => {
   const rows = await dbAll(`
