@@ -3716,7 +3716,7 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
       }
 
       const safeName = info.name.replace(/[\\/:*?"<>|]/g, '');
-      const fileStem = `★${month}月HML個人事業主作業依頼表_${info.code || ''}${safeName}`;
+      const fileStem = `${month}月_${safeName}_シフト`;
       const xlsxPath = path.join(workDir, `${fileStem}.xlsx`);
       await wb.xlsx.writeFile(xlsxPath);
       generatedFiles.push(xlsxPath);
