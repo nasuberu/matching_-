@@ -2666,8 +2666,10 @@
       const requests = reqData.requests || [];
       const matches = matchData.matches || [];
       const matchedIds = new Set(matches.map(m => m.store_request_id));
+      // 「対応なし」登録済みのものは、表(店舗別)側で半透明表示して確認できるので、ここの一覧・
+      // ナビの数字バッジからは除外する(対応するまで何度も同じ警告を出し続けないようにするため)
       unmatchedAlertCache = requests
-        .filter(r => !matchedIds.has(r.id))
+        .filter(r => !matchedIds.has(r.id) && !r.gap_dismissed)
         .sort((a, b) => a.request_date.localeCompare(b.request_date));
       renderUnmatchedAlert();
       updateNavBadge('matches', unmatchedAlertCache.length);
@@ -3081,6 +3083,8 @@
             const gaps = r.pool_group_id ? [] : computeTimeGapsJs(r.time_start, r.time_end,
               ms.filter(m => m.status !== '欠勤').map(m => ({ time_start: m.driver_time_start, time_end: m.driver_time_end }))
             );
+            // ms(有効なマッチング)が1件も無い日も、店舗の希望時間まるごとが1つの穴として検出される
+            // (候補が見つからない=誰も割り当たっていない日も、この仕組みで「対応なし」にできる)
             const hasGap = gaps.length > 0;
             // この依頼(1日分)が「対応なし」登録済みなら、穴の警告を弱めた見た目(半透明)にする
             // (消すのではなく、見ればまだ分かるようにする。右クリックのメニューから設定・解除する)
@@ -3088,7 +3092,9 @@
             const count = Math.max(r.required_count || 1, ms.length);
             for (let i = 0; i < count; i++) {
               const m = ms[i] || null;
-              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap && !gapDismissed), gapDismissed: !!(m && gapDismissed), gapInfo: (m && hasGap) ? { dismissed: gapDismissed } : null });
+              // gapDismissedは依頼単位のフラグ(filled/placeholderどちらにも渡す)。実際に半透明になる
+              // のはplaceholderCellHtml側だけ(matchCellHtmlは稼働中の人のセルなので常に通常表示)
+              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap && !gapDismissed), gapDismissed: !!(hasGap && gapDismissed), gapInfo: hasGap ? { dismissed: gapDismissed } : null });
             }
             // 必要人数自体は埋まっていても、希望時間に誰もカバーしていない穴が残っている場合は、
             // その穴を埋めるための枠をさらに追加する(右クリックで別の人を割り当てられる)
