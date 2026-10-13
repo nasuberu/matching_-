@@ -2854,27 +2854,31 @@
     const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定' };
     // allowReplace: 店舗別の表でだけtrueにする(ドライバー別の表は「誰か」ではなく「どの店舗か」の
     // 行なので、右クリックでの差し替え対象にならない)。「候補」のうちだけ差し替え可能(確定・完了は不可)
-    function matchCellHtml(m, label, date, allowReplace) {
-      const timeLabel = (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
+    function matchCellHtml(m, label, date, allowReplace, gapWarning) {
+      // m.driver_time_start/endがこのマッチング自身の実際の時間(無ければ店舗依頼の時間と同じ=m.time_start/end)。
+      // gapWarning: この依頼の希望時間をまだ誰もカバーしきれていない「穴」が残っている場合にtrue
+      const ownTimeLabel = (m.driver_time_start || m.driver_time_end) ? `${esc(m.driver_time_start || '?')}〜${esc(m.driver_time_end || '?')}` : (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
       const viaRing = CREATED_VIA_RING[m.created_via] || '';
       const viaLabel = CREATED_VIA_LABEL[m.created_via] ? ` ／ ${CREATED_VIA_LABEL[m.created_via]}` : '';
       const canReplace = allowReplace && m.status === '候補';
       const rightClickAttr = canReplace ? `oncontextmenu="return showManualAssignMenu(event, ${m.store_request_id}, '${date}', ${m.id})"` : '';
+      const gapNote = gapWarning ? ' ／ ⚠️ この依頼の希望時間をまだカバーしきれていません' : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
-          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${canReplace ? 'cursor-context-menu' : 'cursor-default'} ${dashboardStatusColor(m.status)} ${viaRing}" ${rightClickAttr}>${esc(label)}</span>
-          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${timeLabel}${viaLabel}${canReplace ? ' ／ 右クリックで変更' : ''}</span>
+          <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${canReplace ? 'cursor-context-menu' : 'cursor-default'} ${dashboardStatusColor(m.status)} ${viaRing}" ${rightClickAttr}>${gapWarning ? '⚠️ ' : ''}${esc(label)}</span>
+          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${ownTimeLabel}${viaLabel}${canReplace ? ' ／ 右クリックで変更' : ''}${gapNote}</span>
         </span>
       </td>`;
     }
 
-    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date, requestId) {
+    function placeholderCellHtml(timeStart, timeEnd, fallbackLabel, date, requestId, isGap) {
       const label = (timeStart || timeEnd) ? `${esc(timeStart || '?')}〜${esc(timeEnd || '?')}` : fallbackLabel;
       // requestIdがある(=実在する店舗依頼の空き枠)場合だけ、右クリックで「その日に希望シフトを
       // 出しているドライバー」を一覧表示し、クリックで直接割り当てられるようにする
       const rightClickAttr = requestId ? `oncontextmenu="return showManualAssignMenu(event, ${requestId}, '${date}')"` : '';
+      const title = requestId ? (isGap ? '必要人数は埋まっていますが、この時間帯はまだ誰もカバーしていません。右クリックでその日に希望シフトを出しているドライバーを割り当てられます' : '右クリックでその日に希望シフトを出しているドライバーを割り当てられます') : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
-        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700 ${requestId ? 'cursor-context-menu' : ''}" ${rightClickAttr} title="${requestId ? '右クリックでその日に希望シフトを出しているドライバーを割り当てられます' : ''}">${label}</span>
+        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${isGap ? 'bg-amber-100 border border-amber-400' : 'bg-amber-50 border border-dashed border-amber-300'} text-amber-700 ${requestId ? 'cursor-context-menu' : ''}" ${rightClickAttr} title="${title}">${isGap ? '⚠️ ' : ''}${label}</span>
       </td>`;
     }
 
@@ -2990,8 +2994,20 @@
           let slots = [];
           for (const r of reqs) {
             const ms = matchesByRequestId.get(r.id) || [];
+            // 時間の「穴」判定はプール需要(候補店舗ごとに時間が違い得る)には馴染まないため対象外にする。
+            // 欠勤になった枠は実際には稼働していないので、カバーしている時間には数えない
+            const gaps = r.pool_group_id ? [] : computeTimeGapsJs(r.time_start, r.time_end, ms.filter(m => m.status !== '欠勤'));
+            const hasGap = gaps.length > 0;
             const count = Math.max(r.required_count || 1, ms.length);
-            for (let i = 0; i < count; i++) slots.push({ time_start: r.time_start, time_end: r.time_end, match: ms[i] || null, requestId: r.id });
+            for (let i = 0; i < count; i++) {
+              const m = ms[i] || null;
+              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap) });
+            }
+            // 必要人数自体は埋まっていても、希望時間に誰もカバーしていない穴が残っている場合は、
+            // その穴を埋めるための枠をさらに追加する(右クリックで別の人を割り当てられる)
+            if (hasGap && ms.length >= (r.required_count || 1)) {
+              for (const g of gaps) slots.push({ time_start: g.start, time_end: g.end, match: null, requestId: r.id, isGap: true });
+            }
           }
           if (reqs.length === 0) {
             // 店舗依頼データが絞り込みで見えない・未登録などの場合でも、マッチ自体は出す
@@ -3017,8 +3033,8 @@
           const cells = dates.map(d => {
             const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return emptyCellHtml(d);
-            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d, true);
-            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId);
+            if (slot.match) return matchCellHtml(slot.match, slot.match.driver_name, d, true, slot.gapWarning);
+            return placeholderCellHtml(slot.time_start, slot.time_end, '未定', d, slot.requestId, slot.isGap);
           }).join('');
           rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
@@ -3363,6 +3379,36 @@
       if (dow === 0 || isJapaneseHoliday(dateStr)) return 'bg-red-50';
       if (dow === 6) return 'bg-blue-50';
       return '';
+    }
+
+    // 店舗依頼の希望時間に「穴」(誰もカバーしていない時間帯)が無いか調べる(サーバー側
+    // computeTimeGapsと同じロジック)。matchesは{time_start,time_end}を持つ配列(欠勤は除いて渡すこと)
+    function parseTimeToMinutesJs(t) {
+      if (!t) return null;
+      const m = String(t).trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    }
+    function minutesToTimeStrJs(min) {
+      return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    }
+    function computeTimeGapsJs(storeTimeStart, storeTimeEnd, matches) {
+      const storeStart = parseTimeToMinutesJs(storeTimeStart);
+      const storeEnd = parseTimeToMinutesJs(storeTimeEnd);
+      if (storeStart == null || storeEnd == null || storeEnd <= storeStart) return [];
+      const intervals = matches
+        .map(m => [parseTimeToMinutesJs(m.time_start) ?? storeStart, parseTimeToMinutesJs(m.time_end) ?? storeEnd])
+        .filter(([s, e]) => e > s)
+        .sort((a, b) => a[0] - b[0]);
+      const gaps = [];
+      let cursor = storeStart;
+      for (const [s, e] of intervals) {
+        if (s > cursor) gaps.push([cursor, Math.min(s, storeEnd)]);
+        cursor = Math.max(cursor, e);
+        if (cursor >= storeEnd) break;
+      }
+      if (cursor < storeEnd) gaps.push([cursor, storeEnd]);
+      return gaps.filter(([s, e]) => e > s).map(([s, e]) => ({ start: minutesToTimeStrJs(s), end: minutesToTimeStrJs(e) }));
     }
 
     // ===== ダッシュボード =====

@@ -335,6 +335,11 @@ db.serialize(() => {
   // 'auto'(自動マッチングで作成)か'manual'(マッチング・結果画面の空き枠右クリックから手動で割り当て)かの区別。
   // 画面側で色分けして見分けられるようにするために使う
   ensureColumn('matches', 'created_via', "TEXT DEFAULT 'auto'");
+  // このマッチングが実際にカバーする時間(担当者自身の希望時間。無ければ店舗依頼の時間をそのまま使う)。
+  // 店舗依頼の時間を1人でカバーしきれない場合に、複数人のマッチングで時間を分担しているかどうかの
+  // 判定(時間の「穴」検知)に使う
+  ensureColumn('matches', 'time_start', 'TEXT');
+  ensureColumn('matches', 'time_end', 'TEXT');
   ensureColumn('stores', 'manager_name', 'TEXT'); // 店舗担当者(店長)
   ensureColumn('stores', 'sv_name', 'TEXT');      // SV(スーパーバイザー)
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
@@ -924,6 +929,40 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   const dLng = (lng2 - lng1) * Math.PI / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// "HH:MM"形式の時刻を分に変換する(不正な形式はnullを返す)
+function parseTimeToMinutes(t) {
+  if (!t) return null;
+  const m = String(t).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+function minutesToTimeStr(min) {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+// 店舗依頼の希望時間帯(storeTimeStart〜storeTimeEnd)のうち、既存マッチング(それぞれ自身の
+// time_start/time_endを持つ。無ければ店舗の時間でカバーしているとみなし、今まで通りの前提に合わせる)
+// でまだカバーされていない「穴」の時間帯を返す([{start,end}, ...]、無ければ空配列)。
+// 店舗の時間が未設定・不正(終了が開始以前等)の場合は判定できないため空配列を返す
+function computeTimeGaps(storeTimeStart, storeTimeEnd, matches) {
+  const storeStart = parseTimeToMinutes(storeTimeStart);
+  const storeEnd = parseTimeToMinutes(storeTimeEnd);
+  if (storeStart == null || storeEnd == null || storeEnd <= storeStart) return [];
+  const intervals = matches
+    .map(m => [parseTimeToMinutes(m.time_start) ?? storeStart, parseTimeToMinutes(m.time_end) ?? storeEnd])
+    .filter(([s, e]) => e > s)
+    .sort((a, b) => a[0] - b[0]);
+  const gaps = [];
+  let cursor = storeStart;
+  for (const [s, e] of intervals) {
+    if (s > cursor) gaps.push([cursor, Math.min(s, storeEnd)]);
+    cursor = Math.max(cursor, e);
+    if (cursor >= storeEnd) break;
+  }
+  if (cursor < storeEnd) gaps.push([cursor, storeEnd]);
+  return gaps.filter(([s, e]) => e > s).map(([s, e]) => ({ start: minutesToTimeStr(s), end: minutesToTimeStr(e) }));
 }
 
 // シンプルなCSVパーサー(RFC4180ベース。ダブルクォートで囲まれたフィールド内のカンマ・改行・""に対応)。
@@ -2595,7 +2634,8 @@ app.post('/api/dispatch-history/import', upload.single('file'), async (req, res)
 // ===== マッチング =====
 app.get('/api/matches', async (req, res) => {
   const rows = await dbAll(`
-    SELECT m.*, d.name AS driver_name, d.phone AS driver_phone, d.home_address, d.driver_code,
+    SELECT m.*, m.time_start AS driver_time_start, m.time_end AS driver_time_end,
+           d.name AS driver_name, d.phone AS driver_phone, d.home_address, d.driver_code,
            s.store_name, s.area, s.address AS store_address, s.time_start, s.time_end, s.requests AS store_requests,
            st.store_code AS store_code, st.sv_name AS store_sv_name
     FROM matches m
@@ -2731,8 +2771,8 @@ app.post('/api/matches/run', async (req, res) => {
   async function insertMatch(store, p, createdVia) {
     const isFar = p.distance != null && p.distance > DIST_WARNING_KM;
     await dbRun(
-      `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count, created_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount, createdVia || 'auto']
+      `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count, created_via, time_start, time_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [store.id, p.driver_id, store.request_date, p.distance, isFar ? 1 : 0, '候補', now, p.score, p.preference, p.experienceCount, createdVia || 'auto', p.time_start || store.time_start, p.time_end || store.time_end]
     );
     assignedDriverIdsByDate[store.request_date].add(p.driver_id);
     filledCountByRequestId[store.id] = (filledCountByRequestId[store.id] || 0) + 1;
@@ -2986,20 +3026,42 @@ app.post('/api/matches/manual', async (req, res) => {
     [...siblingIds, replace_match_id || 0]
   );
   if (filled.c >= (storeReq.required_count || 1)) {
-    return res.status(400).json({ success: false, message: 'この店舗依頼は既に必要人数が埋まっています' });
+    // 必要人数自体は埋まっていても、店舗依頼の希望時間に「穴」(誰もカバーしていない時間帯)が
+    // 残っている場合は、その穴を埋めるための追加の割当てとして許可する(プール需要は対象外。
+    // 候補店舗ごとに時間が異なり得るため、時間の穴という考え方が馴染まないため)
+    let gapAllows = false;
+    if (!storeReq.pool_group_id) {
+      const existingForGap = await dbAll(
+        `SELECT time_start, time_end FROM matches WHERE store_request_id = ? AND status IN ('候補', '確定', '完了') AND archived_month IS NULL AND id != ?`,
+        [store_request_id, replace_match_id || 0]
+      );
+      gapAllows = computeTimeGaps(storeReq.time_start, storeReq.time_end, existingForGap).length > 0;
+    }
+    if (!gapAllows) {
+      return res.status(400).json({ success: false, message: 'この店舗依頼は既に必要人数が埋まっています' });
+    }
   }
 
   if (replaceTarget) {
     await dbRun(`DELETE FROM matches WHERE id = ?`, [replace_match_id]);
   }
 
+  // このマッチングが実際にカバーする時間は、担当者本人がその日に出した希望シフトの時間を使う
+  // (無ければ店舗依頼の時間をそのままカバーするとみなす、今まで通りの前提にフォールバックする)
+  const driverAvailability = await dbGet(
+    'SELECT time_start, time_end FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
+    [driver_id, storeReq.request_date]
+  );
+  const matchTimeStart = (driverAvailability && driverAvailability.time_start) || storeReq.time_start;
+  const matchTimeEnd = (driverAvailability && driverAvailability.time_end) || storeReq.time_end;
+
   const hasCoords = driver.home_lat != null && driver.home_lng != null && storeReq.lat != null && storeReq.lng != null;
   const distance = hasCoords ? haversineKm(driver.home_lat, driver.home_lng, storeReq.lat, storeReq.lng) : null;
   const isFar = distance != null && distance > DIST_WARNING_KM;
   const now = new Date().toISOString();
   const result = await dbRun(
-    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, created_via) VALUES (?, ?, ?, ?, ?, '候補', ?, 'manual')`,
-    [store_request_id, driver_id, storeReq.request_date, distance, isFar ? 1 : 0, now]
+    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, created_via, time_start, time_end) VALUES (?, ?, ?, ?, ?, '候補', ?, 'manual', ?, ?)`,
+    [store_request_id, driver_id, storeReq.request_date, distance, isFar ? 1 : 0, now, matchTimeStart, matchTimeEnd]
   );
   res.json({ success: true, id: result.lastID });
 });
