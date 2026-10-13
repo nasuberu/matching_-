@@ -87,6 +87,10 @@
         <div id="match-table-row-mode-controls" class="flex gap-1.5 items-center">
           <button id="match-table-row-store-btn" onclick="switchMatchesTableRowMode('store')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">店舗別</button>
           <button id="match-table-row-driver-btn" onclick="switchMatchesTableRowMode('driver')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">ドライバー別</button>
+          <label id="match-sort-complete-wrap" class="flex items-center gap-1 text-xs text-slate-500 ml-1">
+            <input type="checkbox" id="match-sort-complete-checkbox" onchange="toggleSortCompleteStoresToBottom(this.checked)">
+            ✅ 埋まった店舗を下へ
+          </label>
         </div>
         <span id="match-status-filter-wrap">
           <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
@@ -2661,7 +2665,16 @@
       matchesTableRowMode = mode;
       document.getElementById('match-table-row-store-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'store' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
       document.getElementById('match-table-row-driver-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'driver' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('match-sort-complete-wrap').classList.toggle('hidden', mode !== 'store'); // ドライバー別では「店舗」の概念が無いので出さない
       renderMatchesList();
+    }
+
+    // 「✅ 埋まった店舗を下へ」。この依頼だけ全部埋まっている(候補ゼロ・時間の穴が残っていない、
+    // または対応なし登録済み)店舗を、表の下の方へまとめて送る(セッション中だけ有効)
+    let sortCompleteStoresToBottom = false;
+    function toggleSortCompleteStoresToBottom(checked) {
+      sortCompleteStoresToBottom = checked;
+      renderMatchesTable();
     }
 
     async function loadMatches() {
@@ -3086,11 +3099,15 @@
         matchesByRequestId.get(m.store_request_id).push(m);
       }
 
-      // 店舗・日付ごとに「必要枠(時間帯+埋まっているならそのマッチ)」のリストを作り、店舗ごとの最大枠数を行数にする
+      // 店舗・日付ごとに「必要枠(時間帯+埋まっているならそのマッチ)」のリストを作り、店舗ごとの最大枠数を行数にする。
+      // あわせて、その店舗の依頼が(表示中の範囲で)全部埋まっているかどうかも調べておく
+      // (候補ゼロ・時間の穴が残っている枠が1つでもあれば未完了。対応なし登録済みは完了扱いにする)
       const slotsByStoreDate = new Map();
       const maxSlotsByStore = new Map();
+      const storeCompleteByName = new Map();
       for (const storeName of storeNames) {
         let maxSlots = 1;
+        storeCompleteByName.set(storeName, true);
         for (const d of dates) {
           const key = `${storeName}|${d}`;
           const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
@@ -3110,6 +3127,9 @@
             // この依頼(1日分)が「対応なし」登録済みなら、穴の警告を弱めた見た目(半透明)にする
             // (消すのではなく、見ればまだ分かるようにする。右クリックのメニューから設定・解除する)
             const gapDismissed = hasGap && !!r.gap_dismissed;
+            // この依頼が未解決(候補ゼロ・時間の穴のいずれか)かつ対応なし登録もされていなければ、
+            // その店舗はまだ「全部埋まっている」とは言えない
+            if (hasGap && !gapDismissed) storeCompleteByName.set(storeName, false);
             const count = Math.max(r.required_count || 1, ms.length);
             for (let i = 0; i < count; i++) {
               const m = ms[i] || null;
@@ -3137,13 +3157,23 @@
         `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 z-10 bg-white border border-slate-300 whitespace-nowrap">SV</th>` +
         dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-300 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
+      // 「✅ 埋まった店舗を下へ」がONの時だけ、全部埋まっている店舗を下の方へまとめる
+      // (グループ内の並びは今まで通り五十音順を維持する)
+      const renderStoreNames = sortCompleteStoresToBottom
+        ? [...storeNames].sort((a, b) => {
+            const ca = storeCompleteByName.get(a) ? 1 : 0, cb = storeCompleteByName.get(b) ? 1 : 0;
+            return ca !== cb ? ca - cb : a.localeCompare(b, 'ja');
+          })
+        : storeNames;
+
       const rowsHtml = [];
-      for (const storeName of storeNames) {
+      for (const storeName of renderStoreNames) {
         const maxSlots = maxSlotsByStore.get(storeName);
         const code = codeByStoreName.get(storeName);
         const sv = svByStoreName.get(storeName) || '-';
+        const isComplete = storeCompleteByName.get(storeName);
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
-          const rowLabel = `${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
+          const rowLabel = `${slotIndex === 0 && isComplete ? '✅ ' : ''}${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
           // この行(同じ「N人目」枠)にまたがる穴の依頼idを集めておき、まとめて対応なしにできるようにする
           const rowGapRequestIds = new Set();
           let rowGapDismissedCount = 0;
