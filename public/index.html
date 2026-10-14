@@ -52,6 +52,10 @@
           <input type="checkbox" id="restrict-fixed-store-checkbox" onchange="saveRestrictMatchingToFixedStore(this.checked)">
           固定希望店舗が設定されているドライバーだけを自動マッチングの対象にする(エリア固定・それ以外のドライバーは手作業で割り当てる)
         </label>
+        <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 cursor-pointer">
+          <input type="checkbox" id="area-fixed-feature-checkbox" onchange="saveAreaFixedFeatureEnabled(this.checked)">
+          🗺️ エリア固定機能を使う(OFFにすると、取込み時のエリア固定シートの自動取込み・マッチング時の考慮を止めます。ドライバーマスタに保存済みの設定自体は消えません)
+        </label>
       </div>
 
       <div id="unmatched-alert" class="hidden"></div>
@@ -338,7 +342,7 @@
 
         <div id="dr-fixed-store-history" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] text-slate-500 space-y-1"></div>
 
-        <details class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+        <details id="dr-area-fixed-details" class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
           <summary class="cursor-pointer select-none text-xs font-bold text-indigo-700">🗺️ エリア固定の設定(任意)</summary>
           <div class="pt-2 space-y-2">
             <label class="flex items-center gap-2 text-xs font-bold text-slate-700">
@@ -911,7 +915,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); }
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); loadAreaFixedFeatureEnabled(); }
       if (tab === 'store') { loadStoreRequests(); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -2734,6 +2738,27 @@
       });
     }
 
+    async function loadAreaFixedFeatureEnabled() {
+      const res = await fetch('/api/settings/area-fixed-enabled');
+      const data = await res.json();
+      document.getElementById('area-fixed-feature-checkbox').checked = !!data.enabled;
+      updateAreaFixedFormVisibility(!!data.enabled);
+    }
+
+    async function saveAreaFixedFeatureEnabled(checked) {
+      await fetch('/api/settings/area-fixed-enabled', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: checked })
+      });
+      updateAreaFixedFormVisibility(checked);
+    }
+
+    // エリア固定機能がOFFの間は、ドライバー登録フォームの「🗺️ エリア固定の設定」欄を隠す
+    // (概念ごと一旦考えないようにしたい、という目的のため)
+    function updateAreaFixedFormVisibility(enabled) {
+      const el = document.getElementById('dr-area-fixed-details');
+      if (el) el.classList.toggle('hidden', !enabled);
+    }
+
     // ===== マッチングの優先順位(階層)の設定 =====
     let tierCatalogCache = []; // [{key, label, description}, ...] カタログ全件
     let tierKeysOrder = [];    // 画面上の表示順(有効なものが先、その後に無効なもの)
@@ -4441,6 +4466,7 @@
     switchTab(initialTab);
     loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
     loadCurrentUser(); // ヘッダーに「ログイン中: 氏名」を出す
+    loadAreaFixedFeatureEnabled(); // ドライバー登録フォームの「エリア固定」欄の表示/非表示を、タブに関わらず最初から合わせておく
   </script>
 </body>
 </html>

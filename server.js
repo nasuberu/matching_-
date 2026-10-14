@@ -909,6 +909,15 @@ async function getRestrictMatchingToFixedStore() {
   return row ? row.value === '1' : false;
 }
 
+// エリア固定(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗の中から
+// 優先的に割り当てる仕組み)機能そのもののON/OFF。OFFにすると、取込み時のエリア固定シートの
+// 自動取込み・マッチング時の考慮の両方を止める(ドライバーマスタに保存済みの設定自体は消さない。
+// 画面からOFFにして、概念ごと一旦考えないようにしたい場合に使う想定)。初期値はON(従来通り)
+async function getAreaFixedFeatureEnabled() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['area_fixed_feature_enabled']);
+  return row ? row.value === '1' : true;
+}
+
 // 「今日の日付」をアプリ内だけ任意の日付として扱えるようにする設定(PC本体の時刻は変更しない)。
 // 月末の運用(来月分の取込み・マッチング確認)を本番の月末を待たずに練習・確認したい時に使う想定。
 // 現時点ではマッチングや自動完了の判定自体は「今日」を使っていないため、主に画面の日付欄の初期値や
@@ -1805,6 +1814,11 @@ app.post('/api/incoming-files/sheet-names', (req, res) => {
 const AREA_FIXED_MARKER_HEADERS = ['想定デポ(候補店舗)', '想定デポ', '候補店舗'];
 
 app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, res) => {
+  // エリア固定機能がOFFの場合は、ファイルにその表があっても取込まない(何もせず正常終了として返す。
+  // 週間必要枠表の取込みに合わせて毎回呼ばれる呼び出し元の都合に合わせ、エラーにはしない)
+  if (!(await getAreaFixedFeatureEnabled())) {
+    return res.json({ success: true, skipped: true, imported: 0, errors: [] });
+  }
   const source = getImportSource(req);
   if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
 
@@ -2806,8 +2820,9 @@ app.post('/api/matches/run', async (req, res) => {
 
   // エリア固定ドライバー(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群の中から
   // 優先的に割り当てる人)を読み込んでおく。希望シフト未提出の日だけ、このパターンから仮の候補を作る
-  // (「固定希望店舗のある人だけ」の設定がONの時は、エリア固定は対象に含めない)
-  const areaFixedRows = restrictToFixedStore ? [] : await dbAll(`
+  // (「固定希望店舗のある人だけ」の設定がONの時、またはエリア固定機能自体がOFFの時は対象に含めない)
+  const areaFixedFeatureEnabled = await getAreaFixedFeatureEnabled();
+  const areaFixedRows = (restrictToFixedStore || !areaFixedFeatureEnabled) ? [] : await dbAll(`
     SELECT id, name, home_lat, home_lng, area_fixed_pattern, area_fixed_store_ids
     FROM drivers WHERE area_fixed_enabled = 1
   `);
@@ -3003,6 +3018,18 @@ app.post('/api/settings/restrict-matching-to-fixed-store', async (req, res) => {
   const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['restrict_matching_to_fixed_store']);
   if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'restrict_matching_to_fixed_store']);
   else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['restrict_matching_to_fixed_store', value]);
+  res.json({ success: true });
+});
+
+app.get('/api/settings/area-fixed-enabled', async (req, res) => {
+  res.json({ success: true, enabled: await getAreaFixedFeatureEnabled() });
+});
+app.post('/api/settings/area-fixed-enabled', async (req, res) => {
+  const { enabled } = req.body;
+  const value = enabled ? '1' : '0';
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['area_fixed_feature_enabled']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'area_fixed_feature_enabled']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['area_fixed_feature_enabled', value]);
   res.json({ success: true });
 });
 
