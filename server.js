@@ -928,6 +928,13 @@ async function getPdfHeaderSettings() {
   try { return { ...PDF_HEADER_DEFAULTS, ...JSON.parse(row.value) }; } catch (e) { return { ...PDF_HEADER_DEFAULTS }; }
 }
 
+// 個人事業主向けPDF(作業依頼表)の一番下に記載する注記文言。テンプレート本来の文言を初期値にしてある
+const PDF_FOOTER_DEFAULT = '本発注書に係る支払い条件そのほかの取引条件は、別途締結済みの「業務委託契約書」(令和8年03月02日付け)に基づくものとします。';
+async function getPdfFooterNote() {
+  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['pdf_footer_note']);
+  return (row && row.value) ? row.value : PDF_FOOTER_DEFAULT;
+}
+
 // ドライバー×店舗の相性マップ、店舗単位・エリア単位の過去派遣回数集計をまとめて用意する
 // (自動マッチングと代替候補探しの両方で使う共通の準備処理)
 async function loadScoringContext() {
@@ -2990,6 +2997,18 @@ app.post('/api/settings/pdf-header', async (req, res) => {
   res.json({ success: true, settings: next });
 });
 
+// 個人事業主向けPDF(作業依頼表)の一番下の注記文言の設定
+app.get('/api/settings/pdf-footer', async (req, res) => {
+  res.json({ success: true, note: await getPdfFooterNote() });
+});
+app.post('/api/settings/pdf-footer', async (req, res) => {
+  const note = (req.body.note ?? PDF_FOOTER_DEFAULT) || '';
+  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['pdf_footer_note']);
+  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [note, 'pdf_footer_note']);
+  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['pdf_footer_note', note]);
+  res.json({ success: true, note });
+});
+
 // マッチング・結果の表で、空いている枠を右クリック→候補のドライバーをクリックした時に呼ばれる、
 // その場で1件だけ手動でマッチングを作る専用エンドポイント(自動マッチングの候補生成ロジックは経由しない)。
 // 同日の二重割当・必要人数を超えての割当(プール需要の合計も含む)を防ぐチェックのみ行う
@@ -3652,6 +3671,7 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
   }
 
   const pdfHeader = await getPdfHeaderSettings();
+  const pdfFooterNote = await getPdfFooterNote();
   const WEEKDAY_LABELS_JP = ['日', '月', '火', '水', '木', '金', '土'];
   const HEADER_ROW = 18, DAY_BLOCK_ROWS = 31;
   const TEMPLATE_MAX_ROW = 71, TEMPLATE_MAX_COL = 6; // ひな形の実際の範囲(B1:F71)。Excel全体コピー用
@@ -3688,6 +3708,7 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
       ws.getRow(13).getCell(2).value = `${year}年`;
       ws.getRow(14).getCell(2).value = month;
       ws.getRow(15).getCell(3).value = year;
+      ws.getRow(51).getCell(2).value = pdfFooterNote; // 一番下の注記文言(画面から変更可能)
 
       const byDate = new Map(info.rows.map(m => [m.match_date, m]));
       for (let i = 0; i < DAY_BLOCK_ROWS; i++) {
