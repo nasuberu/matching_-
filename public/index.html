@@ -280,6 +280,9 @@
         <button id="store-view-list-btn" onclick="switchStoreViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📋 リストで見る</button>
         <button id="store-view-table-btn" onclick="switchStoreViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📊 表で見る</button>
         <span id="store-table-summary" class="text-xs text-slate-500 hidden"></span>
+        <span id="store-table-legend" class="hidden text-[11px] text-slate-500">
+          <span class="inline-block w-3 h-3 rounded-sm bg-indigo-50 border border-indigo-300 align-middle mr-1"></span>🔀 = エリア固定(SV)からのプール需要(店舗自身の通常の依頼ではありません)
+        </span>
       </div>
       <div id="store-list" class="space-y-2"></div>
       <div id="store-table-wrap" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
@@ -1702,6 +1705,7 @@
       document.getElementById('store-list').classList.toggle('hidden', mode !== 'list');
       document.getElementById('store-table-wrap').classList.toggle('hidden', mode !== 'table');
       document.getElementById('store-table-summary').classList.toggle('hidden', mode !== 'table');
+      document.getElementById('store-table-legend').classList.toggle('hidden', mode !== 'table');
       if (mode === 'table') renderStoreRequestsTable();
     }
 
@@ -1775,9 +1779,13 @@
           const cells = dates.map(d => {
             const slot = (byStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
             if (!slot) return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(d)}">-</td>`;
-            const label = `${esc(slot.time_start || '?')}〜${esc(slot.time_end || '?')}${slot.required_count > 1 ? `(${slot.required_count}名)` : ''}`;
+            // pool_group_idがある枠は「エリア固定」シートから生成されたプール需要(候補店舗のどれか1つで
+            // 埋まればよい需要)で、店舗自身の通常の依頼(週間必要枠表シート)とは別物。見分けられるようにする
+            const isPool = !!slot.pool_group_id;
+            const label = `${isPool ? '🔀' : ''}${esc(slot.time_start || '?')}〜${esc(slot.time_end || '?')}${slot.required_count > 1 ? `(${slot.required_count}名)` : ''}`;
+            const title = isPool ? 'エリア固定(SVの候補店舗)から生成されたプール需要です。この店舗自身の通常の依頼ではありません' : (slot.requests || '');
             return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(d)}">
-              <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-blue-50 border border-blue-200 text-blue-700" title="${esc(slot.requests || '')}">${label}</span>
+              <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${isPool ? 'bg-indigo-50 border border-indigo-300 text-indigo-700' : 'bg-blue-50 border border-blue-200 text-blue-700'}" title="${esc(title)}">${label}</span>
             </td>`;
           }).join('');
           rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
