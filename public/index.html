@@ -512,7 +512,8 @@
           <button id="pref-view-store-btn" onclick="switchPreferenceView('store')" class="text-xs px-3 py-1.5 rounded font-bold">店舗別に見る</button>
           <button id="pref-view-all-btn" onclick="switchPreferenceView('all')" class="text-xs px-3 py-1.5 rounded font-bold">全件表示</button>
         </div>
-        <select id="pref-driver" onchange="loadPreferences()" class="p-2 border rounded text-sm w-full md:w-64"></select>
+        <input id="pref-driver" list="pref-driver-datalist" oninput="loadPreferences()" placeholder="🔍 ドライバー名・社員コードで検索" class="p-2 border rounded text-sm w-full md:w-64">
+        <datalist id="pref-driver-datalist"></datalist>
         <select id="pref-store" onchange="loadPreferencesByStore()" class="p-2 border rounded text-sm w-full md:w-64 hidden"></select>
         <input id="pref-all-search" oninput="renderAllPreferences()" placeholder="ドライバー名・店舗名で絞り込み" class="p-2 border rounded text-sm w-full md:w-64 hidden">
       </div>
@@ -2254,21 +2255,34 @@
       loadAllPreferences();
     }
 
+    // 検索欄(キーワード入力+候補一覧)に出す表示名。社員コードがあれば区別できるよう付け加える
+    function prefDriverOptionLabel(d) {
+      if (!d) return '';
+      return d.driver_code ? `${d.name}(${d.driver_code})` : d.name;
+    }
+    // 検索欄に入力/選択された文字列から、対応するドライバーを探す(完全一致のみ)
+    function findDriverByPrefLabel(label) {
+      const trimmed = (label || '').trim();
+      if (!trimmed) return null;
+      return driversCache.find(d => prefDriverOptionLabel(d) === trimmed);
+    }
+
     async function loadDriversForPreferenceSelect() {
       if (driversCache.length === 0) {
         const res = await fetch('/api/drivers');
         const data = await res.json();
         driversCache = data.drivers || [];
       }
-      const sel = document.getElementById('pref-driver');
-      const keepValue = sel.value;
-      sel.innerHTML = '<option value="">-- ドライバーを選択 --</option>' +
-        driversCache.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
-      if (keepValue) { sel.value = keepValue; loadPreferences(); }
+      const input = document.getElementById('pref-driver');
+      const keepValue = input.value;
+      document.getElementById('pref-driver-datalist').innerHTML =
+        driversCache.map(d => `<option value="${esc(prefDriverOptionLabel(d))}">`).join('');
+      if (keepValue) { input.value = keepValue; loadPreferences(); }
     }
 
     async function loadPreferences() {
-      const driverId = document.getElementById('pref-driver').value;
+      const driver = findDriverByPrefLabel(document.getElementById('pref-driver').value);
+      const driverId = driver ? driver.id : null;
       const list = document.getElementById('preferences-list');
       if (!driverId) { list.innerHTML = ''; return; }
       const res = await fetch(`/api/drivers/${driverId}/preferences`);
