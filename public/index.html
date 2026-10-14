@@ -3779,8 +3779,15 @@
       const sel = document.getElementById('archive-month-select');
       const keepValue = sel.value;
       const months = data.months || [];
-      sel.innerHTML = '<option value="">-- 過去の月を選択 --</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('');
-      if (months.includes(keepValue)) { sel.value = keepValue; loadArchiveMonth(); }
+      const activeMonths = new Set(data.activeMonths || []);
+      // 今まさに作業中の年月と同じものは、誤って「戻す」と混在してしまうため選べないようにする
+      // (消すのではなく、理由が分かるように選択不可の状態で一覧には残しておく)
+      sel.innerHTML = '<option value="">-- 過去の月を選択 --</option>' + months.map(m =>
+        activeMonths.has(m)
+          ? `<option value="${m}" disabled>${m}(今作業中のため選択不可)</option>`
+          : `<option value="${m}">${m}</option>`
+      ).join('');
+      if (months.includes(keepValue) && !activeMonths.has(keepValue)) { sel.value = keepValue; loadArchiveMonth(); }
     }
 
     async function loadArchiveMonth() {

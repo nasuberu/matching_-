@@ -3419,7 +3419,14 @@ app.get('/api/archive/months', async (req, res) => {
     UNION SELECT archived_month FROM matches WHERE archived_month IS NOT NULL
     ORDER BY archived_month DESC
   `);
-  res.json({ success: true, months: rows.map(r => r.archived_month) });
+  // 今まさに作業中(未アーカイブ)のデータがある年月も調べておく。この年月をうっかりアーカイブから
+  // 「戻す」と、今の作業データと混在してしまうため、画面側で選べないようにするのに使う
+  const activeRows = await dbAll(`
+    SELECT substr(request_date, 1, 7) AS ym FROM store_requests WHERE archived_month IS NULL
+    UNION SELECT substr(desired_date, 1, 7) FROM driver_availability WHERE archived_month IS NULL
+    UNION SELECT substr(match_date, 1, 7) FROM matches WHERE archived_month IS NULL
+  `);
+  res.json({ success: true, months: rows.map(r => r.archived_month), activeMonths: [...new Set(activeRows.map(r => r.ym))] });
 });
 
 // 指定した月にクローズされた店舗依頼・希望シフト・マッチング結果を参照専用で返す
