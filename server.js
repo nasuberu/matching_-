@@ -2124,7 +2124,13 @@ app.post('/api/ai/parse-line-shift', async (req, res) => {
 
 // ===== 店舗からの人員要請 =====
 app.get('/api/store-requests', async (req, res) => {
-  const rows = await dbAll('SELECT * FROM store_requests WHERE archived_month IS NULL ORDER BY request_date DESC, id DESC');
+  const rows = await dbAll(`
+    SELECT sr.*, st.store_code
+    FROM store_requests sr
+    LEFT JOIN stores st ON st.id = sr.store_id
+    WHERE sr.archived_month IS NULL
+    ORDER BY sr.request_date DESC, sr.id DESC
+  `);
   res.json({ success: true, requests: rows });
 });
 

@@ -1787,9 +1787,11 @@
         maxSlotsByStore.set(storeName, maxSlots);
       }
 
-      // 店番(固定幅の列)・店舗名の2列を、どちらもスクロールしても見えるよう左に固定する
-      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 whitespace-nowrap w-16">店番</th>` +
-        `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-16 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
+      // 店番・店舗名は見た目上は2列に分かれて見えるが、スクロール時の位置ズレ(隙間)を避けるため
+      // 1つの固定(sticky)セルの中をflexで区切って表示する(独立した2列のstickyにはしない)
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">
+          <div class="flex gap-2"><span class="w-12 shrink-0">店番</span><span>店舗</span></div>
+        </th>` +
         dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-300 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
 
       const rowsHtml = [];
@@ -1811,8 +1813,9 @@
             </td>`;
           }).join('');
           rowsHtml.push(`<tr>` +
-            `<td class="p-2 text-xs text-slate-500 sticky left-0 z-10 bg-white border border-slate-300 whitespace-nowrap w-16">${esc(code || '-')}</td>` +
-            `<td class="p-2 font-bold text-sm sticky left-16 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>` +
+            `<td class="p-2 text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">
+              <div class="flex gap-2"><span class="w-12 shrink-0 text-xs text-slate-500">${esc(code || '-')}</span><span class="font-bold">${esc(rowLabel)}</span></div>
+            </td>` +
             `${cells}</tr>`);
         }
       }
