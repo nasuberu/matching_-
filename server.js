@@ -345,6 +345,10 @@ db.serialize(() => {
   ensureColumn('stores', 'store_code', 'TEXT');   // 店番(店舗を一意に表す社内コード。現時点では未入力で運用)
   ensureColumn('drivers', 'driver_code', 'TEXT');          // 社員コード(ドライバーを一意に表す社内コード)
   ensureColumn('drivers', 'furigana', 'TEXT');             // ふりがな(個人事業主ごとの作業依頼表PDFに印字する)
+  // ログインのブルートフォース対策(パスワード総当たり防止)。一定回数連続で失敗したら
+  // 一時的にロックする(ログインIDごとに管理。locked_untilを過ぎれば自動的に再試行できる)
+  ensureColumn('app_users', 'failed_login_count', 'INTEGER DEFAULT 0');
+  ensureColumn('app_users', 'locked_until', 'TEXT');
   ensureColumn('drivers', 'first_contract_date', 'TEXT');  // 初回委託日
   ensureColumn('drivers', 'status', 'TEXT');               // ステータス(稼働中/休止/契約終了)
   ensureColumn('drivers', 'email', 'TEXT');                // メールアドレス
@@ -1209,12 +1213,37 @@ app.post('/api/auth/setup', async (req, res) => {
   res.json({ success: true, user: { id: result.lastID, name, login_id } });
 });
 
+// ブルートフォース対策: 連続して何回失敗したらロックするか、ロック時間はどれくらいか
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MINUTES = 15;
+
 app.post('/api/auth/login', async (req, res) => {
   const { login_id, password } = req.body || {};
   if (!login_id || !password) return res.status(400).json({ success: false, message: 'ログインIDとパスワードを入力してください' });
   const user = await dbGet('SELECT * FROM app_users WHERE login_id = ?', [login_id]);
+
+  // 既にロック中なら、パスワードを確認するまでもなく拒否する(ロック中はロック自体を延長しない)
+  if (user && user.locked_until && new Date(user.locked_until) > new Date()) {
+    const remainingMin = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+    return res.status(429).json({ success: false, message: `ログイン試行が多すぎるため、一時的にロックされています。約${remainingMin}分後に再度お試しください。` });
+  }
+
   if (!user || !verifyPassword(password, user.password_hash)) {
+    if (user) {
+      const failedCount = (user.failed_login_count || 0) + 1;
+      if (failedCount >= LOGIN_MAX_ATTEMPTS) {
+        const lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MINUTES * 60000).toISOString();
+        await dbRun('UPDATE app_users SET failed_login_count = 0, locked_until = ? WHERE id = ?', [lockedUntil, user.id]);
+        return res.status(429).json({ success: false, message: `ログインに${LOGIN_MAX_ATTEMPTS}回連続で失敗したため、${LOGIN_LOCKOUT_MINUTES}分間ロックされました。` });
+      }
+      await dbRun('UPDATE app_users SET failed_login_count = ? WHERE id = ?', [failedCount, user.id]);
+    }
     return res.status(401).json({ success: false, message: 'ログインIDまたはパスワードが違います' });
+  }
+
+  // ログイン成功時は失敗回数・ロックをリセットする
+  if (user.failed_login_count || user.locked_until) {
+    await dbRun('UPDATE app_users SET failed_login_count = 0, locked_until = NULL WHERE id = ?', [user.id]);
   }
   const token = crypto.randomBytes(32).toString('hex');
   await dbRun('INSERT INTO app_sessions (token, user_id, created_at) VALUES (?, ?, ?)', [token, user.id, new Date().toISOString()]);
