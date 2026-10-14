@@ -655,6 +655,11 @@
             </div>
           </div>
         </details>
+        <div class="pt-2 border-t border-amber-200">
+          <p class="text-xs text-slate-600 mb-2">練習が終わって最初からやり直したい時は、下のボタンで「店舗依頼」「希望シフト」「マッチング結果(確定・完了を含む)」をまとめて削除し、何も取り込んでいない状態に戻せます。ドライバーマスタ・店舗マスタ・派遣履歴・各種設定、過去にアーカイブ済みの月のデータは消えません。</p>
+          <button onclick="resetPracticeData()" class="text-xs bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1.5 rounded-lg whitespace-nowrap">🧹 店舗依頼・希望シフト・マッチング結果をまとめて削除する</button>
+          <div id="practice-reset-result" class="text-xs mt-1"></div>
+        </div>
       </div>
 
       <div id="help-topics-list" class="space-y-4"></div>
@@ -4290,6 +4295,17 @@
       { category: 'トラブルシューティング', title: 'AI解析(🤖マーク)が使えない', body:
         '.envファイルにANTHROPIC_API_KEYを設定していない場合、AI解析系の機能(LINEメッセージのAI解析、備考のAI解釈)は無効になります(必須機能ではなく、設定時のみ使える試験的な追加機能です)。.env.exampleを参考にキーを設定し、サーバーを再起動してください。' },
     ];
+
+    // 練習用データのリセット(使い方タブ)。店舗依頼・希望シフト・マッチング結果(確定・完了含む)を
+    // まとめて削除し、何も取り込んでいない状態に戻す
+    async function resetPracticeData() {
+      if (!confirm('店舗依頼・希望シフト・マッチング結果(確定・完了を含む)を全て削除し、何も取り込んでいない状態に戻します。この操作は元に戻せません。よろしいですか？')) return;
+      const res = await fetch('/api/practice-reset', { method: 'POST' });
+      const data = await res.json();
+      const el = document.getElementById('practice-reset-result');
+      if (!data.success) { el.innerHTML = '<span class="text-red-600">削除に失敗しました</span>'; return; }
+      el.innerHTML = `<span class="text-emerald-600 font-bold">✅ 削除しました(店舗依頼${data.deleted.storeRequests}件・希望シフト${data.deleted.availability}件・マッチング${data.deleted.matches}件)</span>`;
+    }
 
     function renderHelpTopics() {
       const el = document.getElementById('help-topics-list');

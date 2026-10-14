@@ -1498,6 +1498,24 @@ app.post('/api/import-batches/:id/undo', async (req, res) => {
   return res.status(400).json({ success: false, message: '未対応の取込み種類です' });
 });
 
+// 練習用: 現在作業中(未アーカイブ)の店舗依頼・希望シフト・マッチング結果をまとめて削除し、
+// 何も取り込んでいない状態に戻す(使い方タブのボタンから呼ぶ)。確定・完了済みのマッチングも
+// 含めて消す点が取込み履歴の個別取消しと異なる(練習のやり直し専用なので安全確認はせず全部消す)。
+// ドライバーマスタ・店舗マスタ・派遣履歴・各種設定・アーカイブ済みの過去月データは対象外
+app.post('/api/practice-reset', async (req, res) => {
+  const matchesResult = await dbRun(`DELETE FROM matches WHERE archived_month IS NULL`);
+  const storeRequestsResult = await dbRun(`DELETE FROM store_requests WHERE archived_month IS NULL`);
+  const availabilityResult = await dbRun(`DELETE FROM driver_availability WHERE archived_month IS NULL`);
+  await dbRun(
+    `UPDATE import_batches SET undone_at = ? WHERE undone_at IS NULL AND type IN ('store_requests_weekly', 'store_requests', 'driver_availability')`,
+    [new Date().toISOString()]
+  );
+  res.json({
+    success: true,
+    deleted: { matches: matchesResult.changes || 0, storeRequests: storeRequestsResult.changes || 0, availability: availabilityResult.changes || 0 }
+  });
+});
+
 // ドライバーマスタをCSV/Excelでまとめて取込む(初期データ投入用。社員コードが一致すればそれで、無ければ氏名で既存ドライバーと照合し上書き更新する)
 app.post('/api/drivers/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
