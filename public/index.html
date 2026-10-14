@@ -276,7 +276,18 @@
         <button onclick="saveStoreRequest()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
         </div>
       </details>
+      <div class="flex gap-1.5 items-center flex-wrap">
+        <button id="store-view-list-btn" onclick="switchStoreViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📋 リストで見る</button>
+        <button id="store-view-table-btn" onclick="switchStoreViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📊 表で見る</button>
+        <span id="store-table-summary" class="text-xs text-slate-500 hidden"></span>
+      </div>
       <div id="store-list" class="space-y-2"></div>
+      <div id="store-table-wrap" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
+        <table class="text-sm border-separate" style="border-spacing:0">
+          <thead><tr id="store-table-header"></tr></thead>
+          <tbody id="store-table-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- ドライバーマスタタブ -->
@@ -1680,23 +1691,99 @@
     }
 
     // ===== 店舗依頼 =====
+    // 店舗依頼(リスト/表)の表示切替。件数が多いと1件ずつの行では見づらく、実際に取り込んだ
+    // 件数が想定通りか確認しづらいため、店舗×日付の表でも見られるようにする
+    let storeViewMode = 'list';
+    let storeRequestsListCache = [];
+    function switchStoreViewMode(mode) {
+      storeViewMode = mode;
+      document.getElementById('store-view-list-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'list' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('store-view-table-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'table' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('store-list').classList.toggle('hidden', mode !== 'list');
+      document.getElementById('store-table-wrap').classList.toggle('hidden', mode !== 'table');
+      document.getElementById('store-table-summary').classList.toggle('hidden', mode !== 'table');
+      if (mode === 'table') renderStoreRequestsTable();
+    }
+
     async function loadStoreRequests() {
       const res = await fetch('/api/store-requests');
       const data = await res.json();
+      storeRequestsListCache = data.requests || [];
       const list = document.getElementById('store-list');
-      const rows = data.requests || [];
-      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
-      list.innerHTML = rows.map(s => `
-        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
-          <div>
-            <p class="font-bold text-sm">${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span>${s.pool_group_id ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🔀候補店舗のいずれか1つでOK</span>' : ''}</p>
-            <p class="text-xs text-slate-500">📅 ${esc(s.request_date)} ${esc(s.time_start || '')}〜${esc(s.time_end || '')} ／ 必要人数: ${s.required_count}名</p>
-            <p class="text-[11px] text-slate-400">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</p>
-            ${s.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(s.requests)}</p>` : ''}
+      const rows = storeRequestsListCache;
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; }
+      else {
+        list.innerHTML = rows.map(s => `
+          <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+            <div>
+              <p class="font-bold text-sm">${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span>${s.pool_group_id ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🔀候補店舗のいずれか1つでOK</span>' : ''}</p>
+              <p class="text-xs text-slate-500">📅 ${esc(s.request_date)} ${esc(s.time_start || '')}〜${esc(s.time_end || '')} ／ 必要人数: ${s.required_count}名</p>
+              <p class="text-[11px] text-slate-400">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</p>
+              ${s.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(s.requests)}</p>` : ''}
+            </div>
+            <button onclick="deleteStoreRequest(${s.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
           </div>
-          <button onclick="deleteStoreRequest(${s.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
-        </div>
-      `).join('');
+        `).join('');
+      }
+      if (storeViewMode === 'table') renderStoreRequestsTable();
+    }
+
+    // 行=店舗、列=日付。同じ店舗・同じ日に複数の時間帯(枠)がある場合は行を分けて表示する
+    // (マッチング・結果の表モードと同じ考え方)。実際に取り込んだ件数・必要人数の合計も
+    // 上部に出すので、想定している件数と合っているかすぐ確認できる
+    function renderStoreRequestsTable() {
+      const header = document.getElementById('store-table-header');
+      const body = document.getElementById('store-table-body');
+      const summary = document.getElementById('store-table-summary');
+      const rows = storeRequestsListCache;
+      if (rows.length === 0) {
+        header.innerHTML = '';
+        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</td></tr>';
+        summary.textContent = '依頼件数: 0件';
+        return;
+      }
+      const storeNames = [...new Set(rows.map(r => r.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      const dates = [...new Set(rows.map(r => r.request_date))].sort();
+      const totalCount = rows.reduce((sum, r) => sum + (r.required_count || 1), 0);
+      summary.textContent = `店舗数: ${storeNames.length} ／ 日付数: ${dates.length} ／ 依頼件数: ${rows.length}件(必要人数合計: ${totalCount}名)`;
+
+      const codeByStoreName = new Map();
+      for (const r of rows) if (r.store_code && !codeByStoreName.has(r.store_name)) codeByStoreName.set(r.store_name, r.store_code);
+
+      const byStoreDate = new Map(); // "店舗名|日付" -> 店舗依頼の行配列(時間帯違いが複数あり得る)
+      for (const r of rows) {
+        const key = `${r.store_name}|${r.request_date}`;
+        if (!byStoreDate.has(key)) byStoreDate.set(key, []);
+        byStoreDate.get(key).push(r);
+      }
+      const maxSlotsByStore = new Map();
+      for (const storeName of storeNames) {
+        let maxSlots = 1;
+        for (const d of dates) maxSlots = Math.max(maxSlots, (byStoreDate.get(`${storeName}|${d}`) || []).length);
+        maxSlotsByStore.set(storeName, maxSlots);
+      }
+
+      header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
+        dates.map(d => `<th class="p-2 text-xs sticky top-0 z-10 border border-slate-300 whitespace-nowrap ${dateHighlightClass(d) || 'text-slate-500'} ${dateHighlightBg(d) || 'bg-white'}">${esc(withWeekday(d))}</th>`).join('');
+
+      const rowsHtml = [];
+      for (const storeName of storeNames) {
+        const maxSlots = maxSlotsByStore.get(storeName);
+        const code = codeByStoreName.get(storeName);
+        for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
+          const rowLabel = `${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}件目)` : ''}`;
+          const cells = dates.map(d => {
+            const slot = (byStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
+            if (!slot) return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(d)}">-</td>`;
+            const label = `${esc(slot.time_start || '?')}〜${esc(slot.time_end || '?')}${slot.required_count > 1 ? `(${slot.required_count}名)` : ''}`;
+            return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(d)}">
+              <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-blue-50 border border-blue-200 text-blue-700" title="${esc(slot.requests || '')}">${label}</span>
+            </td>`;
+          }).join('');
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}</td>${cells}</tr>`);
+        }
+      }
+      body.innerHTML = rowsHtml.join('');
     }
 
     async function saveStoreRequest() {
