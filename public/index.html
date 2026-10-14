@@ -281,15 +281,15 @@
         </div>
       </details>
       <div class="flex gap-1.5 items-center flex-wrap">
-        <button id="store-view-list-btn" onclick="switchStoreViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📋 リストで見る</button>
-        <button id="store-view-table-btn" onclick="switchStoreViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📊 表で見る</button>
-        <span id="store-table-summary" class="text-xs text-slate-500 hidden"></span>
-        <span id="store-table-legend" class="hidden text-[11px] text-slate-500">
+        <button id="store-view-list-btn" onclick="switchStoreViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📋 リストで見る</button>
+        <button id="store-view-table-btn" onclick="switchStoreViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📊 表で見る</button>
+        <span id="store-table-summary" class="text-xs text-slate-500"></span>
+        <span id="store-table-legend" class="text-[11px] text-slate-500">
           <span class="inline-block w-3 h-3 rounded-sm bg-indigo-50 border border-indigo-300 align-middle mr-1"></span>🔀 = エリア固定(SV)からのプール需要(店舗自身の通常の依頼ではありません)
         </span>
       </div>
-      <div id="store-list" class="space-y-2"></div>
-      <div id="store-table-wrap" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
+      <div id="store-list" class="hidden space-y-2"></div>
+      <div id="store-table-wrap" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
         <table class="text-sm border-separate" style="border-spacing:0">
           <thead><tr id="store-table-header"></tr></thead>
           <tbody id="store-table-body"></tbody>
@@ -1700,7 +1700,7 @@
     // ===== 店舗依頼 =====
     // 店舗依頼(リスト/表)の表示切替。件数が多いと1件ずつの行では見づらく、実際に取り込んだ
     // 件数が想定通りか確認しづらいため、店舗×日付の表でも見られるようにする
-    let storeViewMode = 'list';
+    let storeViewMode = 'table'; // 件数が多いと一覧で見づらいため、デフォルトは表(店舗×日付)で表示する
     let storeRequestsListCache = [];
     function switchStoreViewMode(mode) {
       storeViewMode = mode;
