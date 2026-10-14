@@ -556,7 +556,21 @@
           <button id="hist-cancel-btn" onclick="cancelHistoryEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
         </div>
       </div>
+      <div class="flex gap-1.5">
+        <button id="hist-view-list-btn" onclick="switchHistoryViewMode('list')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📋 リストで見る</button>
+        <button id="hist-view-graph-btn" onclick="switchHistoryViewMode('graph')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-slate-100 text-slate-600">📊 グラフで見る</button>
+      </div>
       <div id="history-list" class="space-y-2"></div>
+      <div id="history-graph" class="hidden space-y-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <p class="font-bold text-slate-800 text-sm mb-2">🚚 ドライバー別 派遣回数(多い順、上位20名)</p>
+          <div id="history-graph-driver" class="space-y-1.5"></div>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <p class="font-bold text-slate-800 text-sm mb-2">🏬 店舗別 派遣回数(多い順、上位20件)</p>
+          <div id="history-graph-store" class="space-y-1.5"></div>
+        </div>
+      </div>
     </div>
 
     <!-- 利用者マスタタブ -->
@@ -2336,26 +2350,67 @@
     let editingUserId = null;
     let usersCache = [];
 
+    let historyViewMode = 'list'; // 'list'(1件ずつの行) or 'graph'(件数を横棒グラフで俯瞰)
+    function switchHistoryViewMode(mode) {
+      historyViewMode = mode;
+      document.getElementById('hist-view-list-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'list' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('hist-view-graph-btn').className = `text-xs px-3 py-1.5 rounded-lg font-bold ${mode === 'graph' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`;
+      document.getElementById('history-list').classList.toggle('hidden', mode !== 'list');
+      document.getElementById('history-graph').classList.toggle('hidden', mode !== 'graph');
+      if (mode === 'graph') renderHistoryGraph();
+    }
+
+    // 件数が多いと1件ずつの行では見づらいため、ドライバー別・店舗別の派遣回数を
+    // 横棒グラフ(棒の長さ=件数)で俯瞰できるようにする
+    function renderHistoryGraph() {
+      const byDriver = {}, byStore = {};
+      for (const h of historyCache) {
+        byDriver[h.driver_name] = (byDriver[h.driver_name] || 0) + 1;
+        const storeName = h.store_name || '(店舗不明)';
+        byStore[storeName] = (byStore[storeName] || 0) + 1;
+      }
+      const renderBars = (elId, counts) => {
+        const el = document.getElementById(elId);
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 20);
+        if (sorted.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs p-2">まだ登録されていません</p>'; return; }
+        const max = sorted[0][1];
+        el.innerHTML = sorted.map(([name, count]) => `
+          <div class="flex items-center gap-2">
+            <span class="text-xs w-36 truncate shrink-0" title="${esc(name)}">${esc(name)}</span>
+            <div class="flex-1 bg-slate-100 rounded h-4 overflow-hidden">
+              <div class="bg-blue-500 h-4" style="width:${Math.round(count / max * 100)}%"></div>
+            </div>
+            <span class="text-xs font-bold w-10 text-right shrink-0">${count}件</span>
+          </div>
+        `).join('');
+      };
+      renderBars('history-graph-driver', byDriver);
+      renderBars('history-graph-store', byStore);
+    }
+
     async function loadHistory() {
       const res = await fetch('/api/dispatch-history');
       const data = await res.json();
       historyCache = data.history || [];
       const list = document.getElementById('history-list');
       const rows = historyCache;
-      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; return; }
-      list.innerHTML = rows.map(h => `
-        <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
-          <div>
-            <p class="font-bold text-sm">${esc(h.driver_name)} → 🏬 ${esc(h.store_name || '(店舗不明)')} <span class="text-xs text-slate-400 font-normal">${esc(h.area || '')}</span></p>
-            <p class="text-xs text-slate-500">📅 ${esc(h.work_date)}</p>
-            ${h.notes ? `<p class="text-[11px] text-slate-400">${esc(h.notes)}</p>` : ''}
+      if (rows.length === 0) { list.innerHTML = '<p class="text-slate-400 text-sm p-4 text-center">まだ登録されていません</p>'; }
+      else {
+        list.innerHTML = rows.map(h => `
+          <div class="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center">
+            <div>
+              <p class="font-bold text-sm">${esc(h.driver_name)} → 🏬 ${esc(h.store_name || '(店舗不明)')} <span class="text-xs text-slate-400 font-normal">${esc(h.area || '')}</span></p>
+              <p class="text-xs text-slate-500">📅 ${esc(h.work_date)}</p>
+              ${h.notes ? `<p class="text-[11px] text-slate-400">${esc(h.notes)}</p>` : ''}
+            </div>
+            <div class="flex gap-1.5">
+              <button onclick="editHistory(${h.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+              <button onclick="deleteHistory(${h.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
+            </div>
           </div>
-          <div class="flex gap-1.5">
-            <button onclick="editHistory(${h.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
-            <button onclick="deleteHistory(${h.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
-          </div>
-        </div>
-      `).join('');
+        `).join('');
+      }
+      if (historyViewMode === 'graph') renderHistoryGraph();
     }
 
     function editHistory(id) {
