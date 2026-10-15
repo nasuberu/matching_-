@@ -3101,13 +3101,15 @@
       const ownTimeLabel = (m.driver_time_start || m.driver_time_end) ? `${esc(m.driver_time_start || '?')}〜${esc(m.driver_time_end || '?')}` : (m.time_start || m.time_end) ? `${esc(m.time_start || '?')}〜${esc(m.time_end || '?')}` : '時間未設定';
       const viaRing = CREATED_VIA_RING[m.created_via] || '';
       const viaLabel = CREATED_VIA_LABEL[m.created_via] ? ` ／ ${CREATED_VIA_LABEL[m.created_via]}` : '';
-      const canReplace = allowReplace && m.status === '候補';
-      const rightClickAttr = canReplace ? `oncontextmenu="return showManualAssignMenu(event, ${m.store_request_id}, '${date}', ${m.id}, ${!!gapInfo}, ${!!(gapInfo && gapInfo.dismissed)})"` : '';
+      // 「候補」はそのまま差し替え可能。「確定」も右クリックできるようにする(ただしクリック後に
+      // 「確定を解除して交代要員を探すか」の確認を挟む。欠勤・変更・完了は対象外)
+      const canReplace = allowReplace && (m.status === '候補' || m.status === '確定');
+      const rightClickAttr = canReplace ? `oncontextmenu="return showManualAssignMenu(event, ${m.store_request_id}, '${date}', ${m.id}, ${!!gapInfo}, ${!!(gapInfo && gapInfo.dismissed)}, '${m.status}', ${m.driver_id})"` : '';
       const gapNote = gapWarning ? ' ／ ⚠️ この依頼の希望時間をまだカバーしきれていません' : gapDismissed ? ' ／ 対応なしに設定済み(穴は残っています)' : '';
       return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
         <span class="relative group block mb-0.5">
           <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${canReplace ? 'cursor-context-menu' : 'cursor-default'} ${dashboardStatusColor(m.status)} ${viaRing}" ${rightClickAttr}>${gapWarning ? '⚠️ ' : ''}${esc(label)}</span>
-          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${ownTimeLabel}${viaLabel}${canReplace ? ' ／ 右クリックで変更' : ''}${gapNote}</span>
+          <span class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap shadow-lg z-20">${ownTimeLabel}${viaLabel}${canReplace ? (m.status === '確定' ? ' ／ 右クリックで欠勤・交代' : ' ／ 右クリックで変更') : ''}${gapNote}</span>
         </span>
       </td>`;
     }
@@ -3165,8 +3167,17 @@
       menu.style.top = `${top}px`;
     }
 
-    async function showManualAssignMenu(event, storeRequestId, date, replaceMatchId, isGapContext, gapDismissedState) {
+    async function showManualAssignMenu(event, storeRequestId, date, replaceMatchId, isGapContext, gapDismissedState, matchStatus, originalDriverId) {
       event.preventDefault();
+
+      // 確定済みの枠を右クリックした場合は、まず「確定を解除して交代要員を探すか」を確認する。
+      // OKなら、この時点で欠勤として記録してしまう(理由は後から「欠勤・変更」欄で修正可能)
+      const isConfirmedReplace = matchStatus === '確定';
+      if (isConfirmedReplace) {
+        const ok = confirm('確定済みの割当てです。確定を解除して交代要員を探しますか？\n(この枠はいったん「欠勤」として記録されます)');
+        if (!ok) return;
+      }
+
       const menu = document.getElementById('manual-assign-menu');
       setActiveManualAssignCell(event.target);
       menu.innerHTML = '<div class="p-3 text-xs text-slate-400">読み込み中...</div>';
@@ -3175,7 +3186,22 @@
       menu.classList.remove('hidden');
       positionManualAssignMenu(menu, event.clientX, event.clientY);
 
-      const url = `/api/matches/manual-candidates?store_request_id=${storeRequestId}${replaceMatchId ? `&exclude_match_id=${replaceMatchId}` : ''}`;
+      if (isConfirmedReplace) {
+        const absenceRes = await fetch(`/api/matches/${replaceMatchId}/absence`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: '表からの交代操作' })
+        });
+        const absenceData = await absenceRes.json();
+        if (!absenceData.success) {
+          menu.innerHTML = `<div class="p-3 text-xs text-red-600 max-w-[220px]">${esc(absenceData.message || '欠勤の記録に失敗しました')}</div>`;
+          positionManualAssignMenu(menu, event.clientX, event.clientY);
+          return;
+        }
+        // 元の確定セルを「欠勤」表示に反映しておく(交代候補を選ぶ前に裏側の状態は既に変わっているため)
+        loadMatches();
+      }
+
+      const url = `/api/matches/manual-candidates?store_request_id=${storeRequestId}${replaceMatchId ? `&exclude_match_id=${replaceMatchId}` : ''}${isConfirmedReplace ? `&exclude_driver_id=${originalDriverId}` : ''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!data.success) {
@@ -3192,8 +3218,10 @@
       candidates = [...pinned, ...candidates.filter(c => !pinnedIds.has(c.driver_id))];
 
       // 既に誰か入っている枠を右クリックした場合(選び直す場合)は、入れ替えだけでなく
-      // 「割当てを解除する(誰も入れない状態に戻す)」も選べるようにする
-      const unassignButton = replaceMatchId ? `
+      // 「割当てを解除する(誰も入れない状態に戻す)」も選べるようにする。ただし確定からの
+      // 交代の場合は、既に「欠勤」として記録済みなので解除ボタンは出さない(何も選ばず閉じれば
+      // そのまま「欠勤」のままになる)
+      const unassignButton = (replaceMatchId && !isConfirmedReplace) ? `
         <button onclick="unassignMatch(${replaceMatchId})" class="block w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50 border-b border-slate-100 whitespace-nowrap font-bold">
           ❌ 割当てを解除する(誰も入れない状態に戻す)
         </button>` : '';
@@ -3203,13 +3231,14 @@
         <button onclick="toggleRequestGapDismiss(${storeRequestId}, ${!gapDismissedState})" class="block w-full text-left px-3 py-2 text-xs ${gapDismissedState ? 'text-slate-600 hover:bg-slate-50' : 'text-amber-700 hover:bg-amber-50'} border-b border-slate-100 whitespace-nowrap font-bold">
           ${gapDismissedState ? '↩️ 「対応なし」を解除する(警告表示に戻す)' : '✅ この穴は対応しない(半透明にする)'}
         </button>` : '';
+      const headerSuffix = isConfirmedReplace ? '(欠勤として記録済み・交代を選ぶ)' : (replaceMatchId ? '(選び直す)' : '');
 
       if (candidates.length === 0) {
-        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません</div>`;
+        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません${isConfirmedReplace ? '(この枠は既に「欠勤」として記録されています)' : ''}</div>`;
       } else {
-        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${replaceMatchId ? '(選び直す)' : ''}</div>` +
+        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${esc(headerSuffix)}</div>` +
           candidates.map(a => `
-            <button onclick="assignDriverToRequest(${storeRequestId}, ${a.driver_id}${replaceMatchId ? `, ${replaceMatchId}` : ''})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
+            <button onclick="assignDriverToRequest(${storeRequestId}, ${a.driver_id}${replaceMatchId ? `, ${replaceMatchId}` : ''}, ${isConfirmedReplace})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
               ${pinnedIds.has(a.driver_id) ? '🕐 ' : ''}${esc(a.driver_name)} <span class="text-slate-400">${esc(a.time_start || '')}〜${esc(a.time_end || '')}${a.visit_count > 0 ? ` ・この店舗${a.visit_count}回目` : ''}</span>
             </button>
           `).join('');
@@ -3225,15 +3254,25 @@
       }
     });
 
-    async function assignDriverToRequest(storeRequestId, driverId, replaceMatchId) {
+    // viaSubstitute: true の場合、replaceMatchId は(直前に欠勤として記録済みの)元の確定マッチング。
+    // 候補の差し替えとは別の、欠勤→代替のAPI(/substitute)を使い、replaced_by_match_idで紐付ける
+    async function assignDriverToRequest(storeRequestId, driverId, replaceMatchId, viaSubstitute) {
       document.getElementById('manual-assign-menu').classList.add('hidden');
       clearActiveManualAssignCell();
-      const body = { store_request_id: storeRequestId, driver_id: driverId };
-      if (replaceMatchId) body.replace_match_id = replaceMatchId;
-      const res = await fetch('/api/matches/manual', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      let res;
+      if (viaSubstitute) {
+        res = await fetch(`/api/matches/${replaceMatchId}/substitute`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ driver_id: driverId })
+        });
+      } else {
+        const body = { store_request_id: storeRequestId, driver_id: driverId };
+        if (replaceMatchId) body.replace_match_id = replaceMatchId;
+        res = await fetch('/api/matches/manual', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      }
       const data = await res.json();
       if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
       // 直近に選んだ人として先頭に記録しておく(最大2人まで保持)

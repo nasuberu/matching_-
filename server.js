@@ -3113,11 +3113,16 @@ app.get('/api/matches/manual-candidates', async (req, res) => {
   // excludeMatchId: 右クリックした枠に既に入っている「候補」を差し替える場合、その枠自身は
   // 「既に埋まっている」扱いから除外する(今入っている人も選び直せるように候補に残す)
   const excludeMatchId = req.query.exclude_match_id ? parseInt(req.query.exclude_match_id, 10) : 0;
+  // excludeDriverId: 確定済みの枠を「欠勤」にしてから交代を探す場合に指定する。欠勤にした本人は
+  // 「既に埋まっている」扱いから外れてしまう(欠勤は稼働していない扱いのため)が、交代探しの
+  // 一覧に欠勤にした当の本人が出てきてしまうと紛らわしいので、明示的に除外する
+  const excludeDriverId = req.query.exclude_driver_id ? parseInt(req.query.exclude_driver_id, 10) : 0;
   const bookedRows = await dbAll(
     `SELECT DISTINCT driver_id FROM matches WHERE match_date = ? AND status != '欠勤' AND archived_month IS NULL AND id != ?`,
     [date, excludeMatchId]
   );
   const bookedSet = new Set(bookedRows.map(r => r.driver_id));
+  if (excludeDriverId) bookedSet.add(excludeDriverId);
   const candidates = availability.filter(a => !bookedSet.has(a.driver_id));
 
   let visitCountByDriver = new Map();
@@ -3376,7 +3381,7 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
 
   const av = await dbGet(
-    'SELECT desired_store, desired_area FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
+    'SELECT desired_store, desired_area, time_start, time_end FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL',
     [driver_id, match.match_date]
   );
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
@@ -3388,10 +3393,15 @@ app.post('/api/matches/:id/substitute', async (req, res) => {
   const scored = scoreCandidate(candidateLike, match, preferenceByDriverStore, storeVisitCount, areaVisitCount);
   const isFar = scored.distance != null && scored.distance > DIST_WARNING_KM;
 
+  // このマッチングが実際にカバーする時間は、担当者本人がその日に出した希望シフトの時間を使う
+  // (無ければ元のマッチング=欠勤者が入っていた枠の時間をそのまま引き継ぐ。/api/matches/manual と同じ考え方)
+  const matchTimeStart = (av && av.time_start) || match.time_start;
+  const matchTimeEnd = (av && av.time_end) || match.time_end;
+
   const now = new Date().toISOString();
   const result = await dbRun(
-    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [match.store_request_id, driver_id, match.match_date, scored.distance, isFar ? 1 : 0, '候補', now, scored.score, scored.preference, scored.experienceCount]
+    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, score, preference_flag, experience_count, time_start, time_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [match.store_request_id, driver_id, match.match_date, scored.distance, isFar ? 1 : 0, '候補', now, scored.score, scored.preference, scored.experienceCount, matchTimeStart, matchTimeEnd]
   );
   await dbRun('UPDATE matches SET replaced_by_match_id = ? WHERE id = ?', [result.lastID, req.params.id]);
 
