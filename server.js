@@ -12,15 +12,18 @@ const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 const Anthropic = require('@anthropic-ai/sdk');
 const crypto = require('crypto');
+const archiver = require('archiver'); // 個人事業主別シフトPDFをまとめてzipでダウンロードさせるために使う
 
 const app = express();
-const PORT = 4001;
+// ローカルPCでは今まで通り4001番・プロジェクト直下のファイルを使う。クラウド環境(Render等)では
+// PORT/DB_PATH/UPLOADS_DIRを環境変数で指定し、永続ディスクのパスを使うようにする
+const PORT = process.env.PORT || 4001;
 const DIST_WARNING_KM = 30; // これを超える距離のマッチングは「距離が遠い」として画面上で警告表示する
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // 「所定フォルダ」: 担当者から共有されたExcel/CSVをここに置いておけば、ブラウザでファイルを都度選ばなくても
 // 取込み画面から一覧表示→選択して取込みできる(uploads/フォルダをそのまま使う)
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 const INCOMING_FILE_EXTENSIONS = ['.xlsx', '.xls', '.csv', '.txt'];
 
@@ -129,7 +132,9 @@ app.use(async (req, res, next) => {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const db = new sqlite3.Database(path.join(__dirname, 'matching.db'));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'matching.db');
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const db = new sqlite3.Database(DB_PATH);
 
 // 複数プロセスから同時にこのDBファイルが開かれても書き込みが失われにくいようにする。
 // WALモードは読み取りと書き込みが競合しにくく、busy_timeoutは他プロセスが書き込み中でも
@@ -3627,10 +3632,21 @@ function findSofficePath() {
   const candidates = [
     'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
     'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
+    '/usr/bin/soffice',
+    '/usr/bin/libreoffice',
+    '/opt/libreoffice/program/soffice',
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
+  // 上記の決め打ちパスに無い場合(Linux環境でパッケージ管理経由でインストールした場合など)は、
+  // OSのコマンド検索(where/which)でPATHが通っているか確認する
+  try {
+    const finder = process.platform === 'win32' ? 'where' : 'which';
+    const result = spawnSync(finder, ['soffice'], { encoding: 'utf8' });
+    const found = (result.stdout || '').split(/\r?\n/).map(s => s.trim()).find(s => s && fs.existsSync(s));
+    if (found) return found;
+  } catch (e) { /* noop: 見つからなければ呼び出し元でnullとして扱われる */ }
   return null;
 }
 
@@ -3767,8 +3783,6 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
   const TEMPLATE_MAX_ROW = 71, TEMPLATE_MAX_COL = 6; // ひな形の実際の範囲(B1:F71)。Excel全体コピー用
   const daysInMonth = new Date(year, month, 0).getDate();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shift_pdf_'));
-  const desktopDir = path.join(os.homedir(), 'Desktop', `個人事業主シフトPDF_${year}年${String(month).padStart(2, '0')}月`);
-  fs.mkdirSync(desktopDir, { recursive: true });
 
   // PDFとは別に、全員分を1つのExcelファイル(氏名ごとにシート分け)にもまとめる
   const combinedWb = new ExcelJS.Workbook();
@@ -3857,19 +3871,48 @@ app.post('/api/export/driver-shift-pdfs', async (req, res) => {
     return res.status(400).json({ success: false, message: 'PDFを1件も作成できませんでした', errors });
   }
 
-  // LibreOfficeで一括PDF変換(1人ずつsofficeを起動するより、まとめて1回で変換した方が大幅に速い)
-  const result = spawnSync(sofficePath, ['--headless', '--norestore', '--convert-to', 'pdf', '--outdir', desktopDir, ...generatedFiles], { timeout: 300000 });
-  fs.rmSync(workDir, { recursive: true, force: true });
+  // LibreOfficeで一括PDF変換(1人ずつsofficeを起動するより、まとめて1回で変換した方が大幅に速い)。
+  // 変換後のPDFは、元のxlsxと同じworkDir内に同名(拡張子だけpdf)で出力される
+  const result = spawnSync(sofficePath, ['--headless', '--norestore', '--convert-to', 'pdf', '--outdir', workDir, ...generatedFiles], { timeout: 300000 });
   if (result.error || result.status !== 0) {
+    fs.rmSync(workDir, { recursive: true, force: true });
     return res.status(500).json({ success: false, message: 'PDF変換に失敗しました: ' + (result.error ? result.error.message : (result.stderr || '').toString()) });
   }
 
-  // 全員分まとめたExcelファイルも同じフォルダに保存する
+  // サーバーのPC(このPCでもクラウド上でも)のフォルダに直接保存するのではなく、PDF一式と
+  // 全員分まとめたExcelをzipにまとめてブラウザからダウンロードしてもらう形にする
+  // (クラウド環境ではサーバー側の「デスクトップ」を見に行くことができないため)
   const excelFileName = `個人事業主別シフト_${year}年${String(month).padStart(2, '0')}月.xlsx`;
-  const excelPath = path.join(desktopDir, excelFileName);
-  await combinedWb.xlsx.writeFile(excelPath);
+  const zipFileName = `driver_shift_pdfs_${year}${String(month).padStart(2, '0')}.zip`;
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${zipFileName}"`);
+  res.setHeader('X-Export-Count', String(generatedFiles.length));
+  if (errors.length > 0) res.setHeader('X-Export-Errors', encodeURIComponent(JSON.stringify(errors)));
+  res.setHeader('Access-Control-Expose-Headers', 'X-Export-Count, X-Export-Errors');
 
-  res.json({ success: true, count: generatedFiles.length, folder: desktopDir, excelFileName, errors });
+  // zip作成中に何かエラーが起きても(archiverのバージョン不一致など)、必ずworkDirの
+  // 一時ファイルを片付ける。レスポンスをまだ何も書き出していなければJSONエラーで返せるが、
+  // 途中まで送信済みの場合はそのまま接続を切るしかない
+  try {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('warning', (e) => console.warn('shift PDF zip warning:', e.message));
+    archive.on('error', (e) => { console.error('shift PDF zip error:', e); res.destroy(e); });
+    archive.on('end', () => fs.rmSync(workDir, { recursive: true, force: true }));
+    archive.pipe(res);
+    for (const xlsxPath of generatedFiles) {
+      const pdfPath = xlsxPath.replace(/\.xlsx$/, '.pdf');
+      if (fs.existsSync(pdfPath)) archive.file(pdfPath, { name: path.basename(pdfPath) });
+    }
+    archive.append(await combinedWb.xlsx.writeBuffer(), { name: excelFileName });
+    await archive.finalize();
+  } catch (e) {
+    console.error('shift PDF zip creation failed:', e);
+    fs.rmSync(workDir, { recursive: true, force: true });
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: 'zip作成に失敗しました: ' + e.message });
+    }
+    res.destroy(e);
+  }
 });
 
 app.get('/api/export/shift-by-store', async (req, res) => {

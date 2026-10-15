@@ -5,13 +5,18 @@
   "main": "server.js",
   "scripts": {
     "start": "node --use-system-ca server.js",
-    "dev": "nodemon --exec \"node --use-system-ca\" server.js"
+    "dev": "nodemon --exec \"node --use-system-ca\" server.js",
+    "start:cloud": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",
+    "archiver": "^7.0.1",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",

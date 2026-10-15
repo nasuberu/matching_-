@@ -1,0 +1,22 @@
+# Render(https://render.com)でのデプロイ設定(Blueprint)。
+# 「New +」→「Blueprint」でこのリポジトリを選ぶと、この内容通りにサービスが自動で作られる。
+# 永続ディスク(/data)にDB・アップロードファイルを保存するので、再デプロイやPC終了後もデータが消えない
+services:
+  - type: web
+    name: matching-service
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter # 永続ディスクを使うには無料プランでは不可(最低限のStarterプラン以上が必要)
+    region: singapore # 日本から一番近いリージョン
+    healthCheckPath: /login.html
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/matching.db
+      - key: UPLOADS_DIR
+        value: /data/uploads
+      - key: ANTHROPIC_API_KEY
+        sync: false # 備考・LINEメッセージのAI解析を使う場合のみ、Renderのダッシュボード側で値を直接入力する(任意)

@@ -4403,14 +4403,29 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ year: parseInt(year, 10), month: parseInt(month, 10) })
       });
-      const data = await res.json();
-      if (!data.success) {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '作成に失敗しました')}</span>`;
         return;
       }
-      let html = `<span class="text-emerald-600 font-bold">✅ ${data.count}人分のPDFと、まとめのExcel(${esc(data.excelFileName || '')})を作成しました</span><br><span class="text-slate-500">📁 ${esc(data.folder)}</span>`;
-      if (data.errors && data.errors.length > 0) {
-        html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 作成できなかった分(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+      // 成功時はzip本体がそのまま返ってくるので、ブラウザのダウンロードとして保存する
+      // (サーバー側の「デスクトップ」に自動保存する方式はクラウド環境では使えないため廃止した)
+      const count = res.headers.get('X-Export-Count') || '?';
+      const errorsHeader = res.headers.get('X-Export-Errors');
+      const errors = errorsHeader ? JSON.parse(decodeURIComponent(errorsHeader)) : [];
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const nameMatch = disposition.match(/filename="([^"]+)"/);
+      const fileName = nameMatch ? nameMatch[1] : `driver_shift_pdfs_${year}${String(month).padStart(2, '0')}.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+
+      let html = `<span class="text-emerald-600 font-bold">✅ ${esc(count)}人分のPDFと、まとめのExcelをzip(${esc(fileName)})でダウンロードしました</span>`;
+      if (errors.length > 0) {
+        html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 作成できなかった分(${errors.length}件):</p><ul class="list-disc pl-4">${errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
       }
       resultEl.innerHTML = html;
     }

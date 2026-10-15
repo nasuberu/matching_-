@@ -1,0 +1,10 @@
+node_modules
+matching.db
+matching.db-wal
+matching.db-shm
+uploads/
+scratchpad/
+.git
+.env
+.vscode
+.claude
