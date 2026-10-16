@@ -2905,12 +2905,16 @@ app.post('/api/matches/run', async (req, res) => {
 
     // 同じ日付の希望を持ち、この店舗をNGにしていない(かつAIが備考からNGと判定していない)ドライバーを候補にする。
     // グループに所属していても、本人が希望シフトを出していなければ候補にはならない(グループは優先順位階層
-    // (group_fixed)でスコアに反映されるだけで、希望シフト未提出の日の仮の候補までは作らない)
+    // (group_fixed)でスコアに反映されるだけで、希望シフト未提出の日の仮の候補までは作らない)。
+    // 「固定希望店舗が設定されている人だけを対象にする」がONの場合は、ここ(残り枠を埋める段階)でも
+    // 自分の固定希望店舗以外には割り当てない(1段階目で自分の固定店舗が埋まっていた/依頼が無かった
+    // 日は、他の店舗に回さずそのまま未割当てのままにする、という運用のため)
     const candidates = availability.filter(a =>
       a.desired_date === store.request_date &&
       !assignedToday.has(a.driver_id) &&
       preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
-      aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
+      aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded' &&
+      (!restrictToFixedStore || a.fixed_store_id === store.store_id)
     );
 
     const scored = candidates
