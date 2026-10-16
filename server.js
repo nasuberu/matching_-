@@ -2054,6 +2054,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
 
   let imported = 0;
   const errors = [];
+  const unregisteredDriverNames = new Set(); // 画面側で「選んで登録」できるように、重複を除いた未登録の氏名を別途集める
   const now = new Date().toISOString();
 
   for (let r = 1; r < rows.length; r++) {
@@ -2062,7 +2063,11 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
     if (!driverName) continue; // 空行はスキップ
 
     const driver = driverByName.get(driverName);
-    if (!driver) { errors.push(`${r + 1}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`); continue; }
+    if (!driver) {
+      errors.push(`${r + 1}行目: ドライバー「${driverName}」がドライバーマスタに見つかりません(先に登録してください)`);
+      unregisteredDriverNames.add(driverName);
+      continue;
+    }
     const driver_id = driver.id;
     // 希望シフト自体には店舗/エリアの列がないため、固定希望店舗が設定済みならその値を初期値として入れておく
     // (マッチングロジックは元々この値を動的にフォールバック利用していたが、一覧画面でも実態が見えるようにする)
@@ -2103,7 +2108,7 @@ app.post('/api/driver-availability/import-wide', upload.single('file'), async (r
   }
   await finalizeImportBatch(importBatchId, imported);
 
-  res.json({ success: true, imported, errors, importBatchId });
+  res.json({ success: true, imported, errors, importBatchId, unregisteredDrivers: [...unregisteredDriverNames].sort((a, b) => a.localeCompare(b, 'ja')) });
 });
 
 // LINEなどで届く自由文の希望シフトメッセージをAI(Claude)で解析する(試験的機能)。

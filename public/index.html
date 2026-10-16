@@ -2164,29 +2164,84 @@
       loadAvailability();
     }
 
+    // 取込み時に「ドライバーマスタに見つからない」ではじかれた場合、選んでその場で登録してから
+    // 同じファイルで取込みをやり直せるように、使ったファイル・年月を覚えておく
+    let pendingAvailabilityReimport = null;
+
     async function importAvailabilityWide() {
       const resultEl = document.getElementById('av-wide-import-result');
       const year = document.getElementById('av-wide-year').value;
       const month = document.getElementById('av-wide-month').value;
-      const form = new FormData();
-      if (!appendImportSource('av-wide', form)) { alert('ファイルを選択してください'); return; }
+      const fileInput = document.getElementById('av-wide-import-file');
+      const file = fileInput.files[0];
+      if (!file) { alert('ファイルを選択してください'); return; }
       if (!year || !month) { alert('対象の年月を入力してください'); return; }
+      await runAvailabilityWideImport(file, year, month, resultEl);
+      fileInput.value = '';
+    }
+
+    async function runAvailabilityWideImport(file, year, month, resultEl) {
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
+      const form = new FormData();
+      form.append('file', file);
       form.append('year', year);
       form.append('month', month);
       const res = await fetch('/api/driver-availability/import-wide', { method: 'POST', body: form });
       const data = await res.json();
       if (!data.success) {
         resultEl.innerHTML = `<span class="text-red-600 font-bold">❌ ${esc(data.message || '取込みに失敗しました')}</span>`;
-      } else {
-        let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の希望シフトを登録しました</span>`;
-        if (data.errors && data.errors.length > 0) {
-          html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 読み取れなかった行/セル(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
-        }
-        resultEl.innerHTML = html;
+        pendingAvailabilityReimport = null;
+        return;
       }
-      document.getElementById('av-wide-import-file').value = '';
-      if (data.success) loadAvailability();
+      let html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の希望シフトを登録しました</span>`;
+      if (data.errors && data.errors.length > 0) {
+        html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 読み取れなかった行/セル(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+      }
+      resultEl.innerHTML = html;
+      if (data.unregisteredDrivers && data.unregisteredDrivers.length > 0) {
+        // 同じファイル・年月を覚えておき、「選んで登録」した後にそのまま再取込みできるようにする
+        pendingAvailabilityReimport = { file, year, month, resultEl };
+        resultEl.innerHTML += renderUnregisteredDriversPanel(data.unregisteredDrivers);
+      } else {
+        pendingAvailabilityReimport = null;
+      }
+      loadAvailability();
+    }
+
+    function renderUnregisteredDriversPanel(names) {
+      return `
+        <div id="av-unregistered-panel" class="mt-2 bg-amber-50 border border-amber-300 rounded-lg p-3 space-y-2">
+          <p class="font-bold text-amber-700">⚠️ ドライバーマスタに見つからなかった氏名(${names.length}名)。新規の方だけチェックを入れて登録してください(同一人物の誤記・別の理由で登録不要な方はチェックを外してください)</p>
+          <div class="space-y-1 max-h-40 overflow-y-auto bg-white rounded border border-amber-200 p-2">
+            ${names.map((n, i) => `
+              <label class="flex items-center gap-2 text-xs">
+                <input type="checkbox" id="av-unreg-${i}" value="${esc(n)}" checked>
+                <span>${esc(n)}</span>
+              </label>
+            `).join('')}
+          </div>
+          <button onclick="registerSelectedDriversAndReimport()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs">選んだ人をドライバーマスタに登録して取込み直す</button>
+        </div>
+      `;
+    }
+
+    async function registerSelectedDriversAndReimport() {
+      const panel = document.getElementById('av-unregistered-panel');
+      if (!panel) return;
+      const checked = [...panel.querySelectorAll('input[type=checkbox]:checked')].map(el => el.value);
+      if (checked.length === 0) { alert('登録する人を選んでください(登録不要ならこのまま閉じて大丈夫です)'); return; }
+      panel.innerHTML = '<span class="text-slate-400 text-xs">登録中...</span>';
+      const results = await Promise.all(checked.map(name =>
+        fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(r => r.json())
+      ));
+      const failed = results.filter(r => !r.success);
+      if (failed.length > 0) {
+        alert(`一部の登録に失敗しました: ${failed.map(f => f.message).join(' / ')}`);
+      }
+      if (pendingAvailabilityReimport) {
+        const { file, year, month, resultEl } = pendingAvailabilityReimport;
+        await runAvailabilityWideImport(file, year, month, resultEl);
+      }
     }
 
     // ===== LINEメッセージから希望シフトを登録 =====
