@@ -1014,6 +1014,13 @@ function parseTimeToMinutes(t) {
 function minutesToTimeStr(min) {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
+// 2つの時間帯が重なっている分数を返す(不正な時刻があれば0)
+function timeOverlapMinutes(aStart, aEnd, bStart, bEnd) {
+  const s1 = parseTimeToMinutes(aStart), e1 = parseTimeToMinutes(aEnd);
+  const s2 = parseTimeToMinutes(bStart), e2 = parseTimeToMinutes(bEnd);
+  if (s1 == null || e1 == null || s2 == null || e2 == null) return 0;
+  return Math.max(0, Math.min(e1, e2) - Math.max(s1, s2));
+}
 
 // 店舗依頼の希望時間帯(storeTimeStart〜storeTimeEnd)のうち、既存マッチング(それぞれ自身の
 // time_start/time_endを持つ。無ければ店舗の時間でカバーしているとみなし、今まで通りの前提に合わせる)
@@ -2858,6 +2865,54 @@ app.post('/api/matches/run', async (req, res) => {
     filledCountByRequestId[store.id] = (filledCountByRequestId[store.id] || 0) + 1;
     if (store.pool_group_id) filledCountByPoolGroup[store.pool_group_id] = (filledCountByPoolGroup[store.pool_group_id] || 0) + 1;
     createdCount++;
+  }
+
+  // 固定希望店舗・グループの階層は「店舗(store_id)が一致するか」だけを見ており、時間帯は見ていない。
+  // そのため、同じ店舗・同じ日に時間帯の異なる依頼が複数あると、どちらの依頼に割り当てるかが
+  // 処理順(たまたま先に見つかった方)で決まってしまい、本人の希望シフト時間と全く噛み合わない
+  // 依頼に割り当てられ、逆に時間がぴったり合う方の依頼が未対応のまま残ることがあった
+  // (実際に浜松町SSで発生: 09:00-19:00希望の人が10:00-22:00の依頼に割り当てられ、09:00-19:00の
+  // 依頼は誰も居ないまま・10:00-22:00の依頼も19:00-22:00が穴になる、という事象を確認)。
+  // これを避けるため、同じ店舗・同じ日に複数の依頼がある組については、先に「本人の希望シフト時間と
+  // 一番重なりが大きい依頼」から優先的にペアにしてから、残りをいつも通りの階層処理に回す
+  const timeAwareTierKeys = enabledTierKeys.filter(k => k === 'fixed_store' || k === 'group_fixed');
+  if (timeAwareTierKeys.length > 0) {
+    const groupsByStoreDate = new Map(); // "store_id|日付" -> 店舗依頼の配列(プール需要は対象外)
+    for (const store of storeRequests) {
+      if (store.pool_group_id || !store.store_id) continue;
+      const key = `${store.store_id}|${store.request_date}`;
+      if (!groupsByStoreDate.has(key)) groupsByStoreDate.set(key, []);
+      groupsByStoreDate.get(key).push(store);
+    }
+    for (const group of groupsByStoreDate.values()) {
+      if (group.length <= 1) continue; // 依頼が1件だけなら、どちらに割り当てるか選ぶ余地が無い
+      for (const tierKey of timeAwareTierKeys) {
+        const tier = TIER_CATALOG[tierKey];
+        const pairs = [];
+        for (const store of group) {
+          if ((store.required_count || 1) - getFilledCount(store) <= 0) continue;
+          const assignedToday = assignedDriverIdsByDate[store.request_date];
+          const candidates = availability.filter(a =>
+            a.desired_date === store.request_date &&
+            !assignedToday.has(a.driver_id) &&
+            tier.test(a, store, tierCtx) &&
+            preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
+            aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
+          );
+          for (const a of candidates) {
+            pairs.push({ store, a, overlap: timeOverlapMinutes(store.time_start, store.time_end, a.time_start, a.time_end) });
+          }
+        }
+        // 重なりが大きい組み合わせから貪欲に確定させる(1人は1回、1依頼の残り必要数までしか使わない)
+        pairs.sort((x, y) => y.overlap - x.overlap);
+        for (const { store, a } of pairs) {
+          if (assignedDriverIdsByDate[store.request_date].has(a.driver_id)) continue;
+          if ((store.required_count || 1) - getFilledCount(store) <= 0) continue;
+          const scored = scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`));
+          await insertMatch(store, { ...a, ...scored }, tierKey === 'fixed_store' ? 'fixed_store_tier' : 'auto');
+        }
+      }
+    }
   }
 
   // 優先階層: 画面(マッチング設定)で有効化・並び替えされた順に、各階層に当てはまる候補を、店舗の処理順に
