@@ -1744,7 +1744,7 @@
             <p class="font-bold text-sm">${s.store_code ? `<span class="text-slate-400 font-normal">${esc(s.store_code)}</span> ` : ''}${esc(s.store_name)} <span class="text-xs text-slate-400 font-normal">${esc(s.area || '')}</span>${s.pool_group_id ? ' <span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700">🔀候補店舗のいずれか1つでOK</span>' : ''}</p>
             <p class="text-xs text-slate-500">📅 ${esc(s.request_date)} ${esc(s.time_start || '')}〜${esc(s.time_end || '')} ／ 必要人数: ${s.required_count}名</p>
             <p class="text-[11px] text-slate-400">${esc(s.address || '住所未登録')} ${s.lat == null && s.address ? '<span class="text-amber-600 font-bold">(位置取得失敗)</span>' : ''}</p>
-            ${s.requests ? `<p class="text-[11px] text-slate-400">要望: ${esc(s.requests)}</p>` : ''}
+            ${s.requests ? `<p class="text-[11px] text-slate-400" style="white-space:pre-line">要望: ${esc(s.requests)}</p>` : ''}
           </div>
           <button onclick="deleteStoreRequest(${s.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
         </div>
@@ -2062,7 +2062,7 @@
           <td class="p-2.5">${esc(a.desired_store || '-')}</td>
           <td class="p-2.5 text-xs text-slate-500">${esc(a.time_start || '-')}</td>
           <td class="p-2.5 text-xs text-slate-500">${esc(a.time_end || '-')}</td>
-          <td class="p-2.5 text-xs text-slate-500">${esc(a.requests || '-')}</td>
+          <td class="p-2.5 text-xs text-slate-500" style="white-space:pre-line">${esc(a.requests || '-')}</td>
           <td class="p-2.5 text-right text-xs text-slate-500 whitespace-nowrap">${monthlyCount}日</td>
           <td class="p-2.5 whitespace-nowrap">
             <button onclick="editAvailability(${a.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
