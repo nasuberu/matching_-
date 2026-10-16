@@ -3145,7 +3145,10 @@
       listOnlyControls.classList.toggle('hidden', isTable);
       rowModeControls.classList.toggle('hidden', !isTable);
       statusFilterWrap.classList.toggle('hidden', isTable); // 表モードは色分けで全ステータスを表すため、ステータス絞り込みは使わない
-      document.getElementById('match-bulk-bar').classList.toggle('hidden', isTable); // 表モードでは選択の概念が無いため常に隠す
+      // 表モードでは選択の概念が無いため常に隠す。リストモードでは、何も選択していなければ
+      // 表示しない(以前は無条件で表示してしまい、何も選んでいないのにバーが出る不具合があった)
+      if (isTable) document.getElementById('match-bulk-bar').classList.add('hidden');
+      else renderMatchBulkBar();
 
       if (matchesCache.length === 0) {
         const msg = '<p class="text-slate-400 text-sm p-6 text-center bg-white rounded-xl border border-slate-200">まだマッチング結果がありません。「自動マッチングを実行」を押してください</p>';
