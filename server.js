@@ -1730,7 +1730,7 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
   } catch (e) {
     return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
-  const importBatchId = await createImportBatch('driver_availability', req.file.originalname, '長形式');
+  const importBatchId = await createImportBatch('driver_availability', fixUploadedFilename(req.file.originalname), '長形式');
 
   const drivers = await dbAll(`
     SELECT d.id, d.name, fs.name AS fixed_store_name, fs.area AS fixed_store_area
@@ -1840,8 +1840,17 @@ app.get('/api/incoming-files', (req, res) => {
 
 // 各種取込みエンドポイントで、multerでのアップロードと所定フォルダ(uploads/)内のファイル名指定の
 // どちらからでも取込み元を得られるようにする共通ヘルパー。{buffer, filename}を返す。どちらも無ければnull
+// multerが受け取るアップロードファイル名(multipart/form-dataのfilename)は、ブラウザがUTF-8の
+// バイト列をそのまま送ってくる一方、multer(内部のbusboy)は仕様上それをlatin1として解釈してしまうため、
+// 日本語ファイル名が文字化けする。Latin-1は1バイト=1文字なので情報の欠落なく元のバイト列に戻せる
+// (取込み履歴のファイル名表示が文字化けしていた不具合の原因)
+function fixUploadedFilename(name) {
+  if (!name) return name;
+  try { return Buffer.from(name, 'latin1').toString('utf8'); } catch (e) { return name; }
+}
+
 function getImportSource(req) {
-  if (req.file) return { buffer: req.file.buffer, filename: req.file.originalname };
+  if (req.file) return { buffer: req.file.buffer, filename: fixUploadedFilename(req.file.originalname) };
   const fullPath = resolveIncomingFilePath(req.body.source_filename);
   if (fullPath) return { buffer: fs.readFileSync(fullPath), filename: path.basename(fullPath) };
   return null;

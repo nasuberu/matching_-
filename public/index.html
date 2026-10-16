@@ -1450,7 +1450,7 @@
         const sourceLabel = { manual: '手動', manual_from_suggestion: '候補を採用(手動)', auto_remarks: '備考から自動反映(旧仕様)', auto_pattern: '同じ店舗が続いたため自動反映(旧仕様)' };
         el.innerHTML = '<p class="font-bold text-slate-500">📝 固定希望店舗の変更履歴(直近3ヶ月)</p>' +
           '<ul class="list-disc pl-4 space-y-0.5">' +
-          logs.map(l => `<li>${esc(l.created_at.slice(0, 16).replace('T', ' '))} ${esc(l.old_store_name || '(なし)')} → ${esc(l.new_store_name || '(なし)')} (${esc(sourceLabel[l.source] || l.source)})</li>`).join('') +
+          logs.map(l => `<li>${esc(formatJst(l.created_at))} ${esc(l.old_store_name || '(なし)')} → ${esc(l.new_store_name || '(なし)')} (${esc(sourceLabel[l.source] || l.source)})</li>`).join('') +
           '</ul>';
       }
       el.classList.remove('hidden');
@@ -2737,7 +2737,7 @@
         <tr class="border-b border-slate-100">
           <td class="p-2.5">${esc(u.name)}</td>
           <td class="p-2.5">${esc(u.login_id)}</td>
-          <td class="p-2.5 text-xs text-slate-400">${esc((u.created_at || '').slice(0, 10))}</td>
+          <td class="p-2.5 text-xs text-slate-400">${esc(formatJst(u.created_at).slice(0, 10))}</td>
           <td class="p-2.5 text-right whitespace-nowrap">
             <button onclick="editUser(${u.id})" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded font-bold hover:bg-slate-200">編集</button>
             <button onclick="deleteUser(${u.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded font-bold hover:bg-red-100">削除</button>
@@ -3812,6 +3812,19 @@
       return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // サーバーに保存されている日時(created_atなど)はUTCのISO文字列のため、そのまま文字列操作で
+    // 切り出すと日本時間から9時間ずれて表示されてしまう。常に日本時間(Asia/Tokyo)に変換して表示する
+    function formatJst(isoString) {
+      if (!isoString) return '';
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
+      const parts = new Intl.DateTimeFormat('ja-JP', {
+        timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(d);
+      const get = (type) => parts.find(p => p.type === type)?.value || '';
+      return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+    }
+
     // 検索用に文字列を正規化する(大文字小文字を無視し、全角/半角スペース・連続スペースの違いを吸収する。
     // 「吉川  守人」のようにスペースの数や種類が実データ側でバラついていても検索でヒットするようにするため)
     function normalizeForSearch(str) {
@@ -4076,7 +4089,7 @@
       if (logs.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="text-slate-400 text-sm p-4 text-center">まだ変更履歴がありません</td></tr>'; return; }
       tbody.innerHTML = logs.map(l => `
         <tr class="border-b border-slate-100">
-          <td class="p-1.5 whitespace-nowrap">${esc((l.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(formatJst(l.created_at))}</td>
           <td class="p-1.5 font-bold whitespace-nowrap">${esc(l.driver_name)}</td>
           <td class="p-1.5 text-slate-400 whitespace-nowrap">${esc(l.old_store_name || '(なし)')}</td>
           <td class="p-1.5 font-bold whitespace-nowrap">${esc(l.new_store_name || '(なし)')}</td>
@@ -4100,7 +4113,7 @@
       if (batches.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-slate-400 text-sm p-4 text-center">まだ取込み履歴がありません</td></tr>'; return; }
       tbody.innerHTML = batches.map(b => `
         <tr class="border-b border-slate-100">
-          <td class="p-1.5 whitespace-nowrap">${esc((b.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td class="p-1.5 whitespace-nowrap">${esc(formatJst(b.created_at))}</td>
           <td class="p-1.5 font-bold whitespace-nowrap">${esc(IMPORT_BATCH_TYPE_LABEL[b.type] || b.type)}</td>
           <td class="p-1.5 whitespace-nowrap">${esc(b.filename || '-')}</td>
           <td class="p-1.5 text-slate-500 whitespace-nowrap">${esc(b.label || '-')}</td>
