@@ -3522,7 +3522,20 @@
         storeCompleteByName.set(storeName, true);
         for (const d of dates) {
           const key = `${storeName}|${d}`;
-          const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
+          // 時間帯が同じ依頼が複数ある場合、店舗依頼APIの並び順(IDの新しい順)がそのまま残ってしまい、
+          // たまたまマッチング済みの枠が後ろの方の行に回ってしまうことがあった(「固定希望店舗で決まった人が
+          // 1人目ではなく3人目・4人目に入る」という報告はこれが原因)。時間帯が同じ場合は、埋まっている
+          // 依頼(特に優先順位階層で決まったもの)を先に、空いている依頼を後ろに回すことで、実際に
+          // 稼働する人が若い番号に来るようにする
+          const fillRank = (r) => {
+            const ms = matchesByRequestId.get(r.id) || [];
+            if (ms.some(m => m.created_via === 'fixed_store_tier' || m.created_via === 'group_fixed_tier')) return 0;
+            if (ms.length > 0) return 1;
+            return 2;
+          };
+          const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) =>
+            (a.time_start || '').localeCompare(b.time_start || '') || fillRank(a) - fillRank(b)
+          );
           // 本来の依頼の枠(primarySlots)と、必要人数は埋まった上で時間の穴を埋めるための追加枠
           // (gapSlots)を別々に積んでから最後に連結する。1つの依頼ループの中で両方を積んでしまうと、
           // ある依頼の穴埋め行が次の依頼の枠の「間」に入り込み、本来の依頼の番号(N人目)がズレてしまうため
