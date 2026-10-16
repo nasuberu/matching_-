@@ -3658,8 +3658,8 @@
           }).join('');
           const rowBulkDismissHtml = rowGapRequestIds.size > 0 ? `
             <label class="flex items-center gap-1 font-normal text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
+              <span>この行の穴(${rowGapRequestIds.size}件)をまとめて対応なしにする</span>
               <input type="checkbox" ${rowGapDismissedCount === rowGapRequestIds.size ? 'checked' : ''} onchange="toggleRowGapDismissBulk([${[...rowGapRequestIds].join(',')}], this.checked)">
-              この行の穴(${rowGapRequestIds.size}件)をまとめて対応なしにする
             </label>` : '';
           rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">
             <div class="flex items-start gap-1.5">
