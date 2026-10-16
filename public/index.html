@@ -3326,6 +3326,17 @@
       return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(date)}">-</td>`;
     }
 
+    // マッチング・結果のドライバー別の表で、希望シフトは出しているがまだ店舗が決まっていない枠。
+    // 店舗別の表の「空き枠を右クリックしてドライバーを選ぶ」の逆方向で、右クリックすると
+    // その日まだ必要人数が埋まっていない店舗依頼を一覧表示し、選んで直接割り当てられる
+    function driverAvailabilityCellHtml(avail, driverId, date) {
+      const label = (avail.time_start || avail.time_end) ? `${esc(avail.time_start || '?')}〜${esc(avail.time_end || '?')}` : '希望あり';
+      return `<td class="p-1.5 border border-slate-300 min-w-[110px] align-top ${dateHighlightBg(date)}">
+        <span class="block text-xs px-1.5 py-0.5 rounded whitespace-nowrap bg-amber-50 border border-dashed border-amber-300 text-amber-700 cursor-context-menu"
+          oncontextmenu="return showManualAssignStoreMenu(event, ${driverId}, '${date}')" title="右クリックでこの日に空いている店舗依頼を割り当てられます">${label}</span>
+      </td>`;
+    }
+
     // 直近に手動で割り当てた人(最大2人、新しい順)。次に右クリックした時、候補の一番上に
     // 出すために使う(同じ人を連日同じ店舗に割り当てていく作業を楽にするため)
     let recentManualPicks = [];
@@ -3474,6 +3485,51 @@
       if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
       // 直近に選んだ人として先頭に記録しておく(最大2人まで保持)
       recentManualPicks = [driverId, ...recentManualPicks.filter(id => id !== driverId)].slice(0, 2);
+      loadMatches();
+    }
+
+    // ドライバー別の表で、希望シフトは出しているがまだ店舗が決まっていない枠を右クリックした時に、
+    // その日まだ必要人数が埋まっていない店舗依頼を一覧表示する(showManualAssignMenuの逆方向)
+    async function showManualAssignStoreMenu(event, driverId, date) {
+      event.preventDefault();
+      const menu = document.getElementById('manual-assign-menu');
+      setActiveManualAssignCell(event.target);
+      menu.innerHTML = '<div class="p-3 text-xs text-slate-400">読み込み中...</div>';
+      menu.style.left = `${event.clientX}px`;
+      menu.style.top = `${event.clientY}px`;
+      menu.classList.remove('hidden');
+      positionManualAssignMenu(menu, event.clientX, event.clientY);
+
+      const res = await fetch(`/api/matches/manual-store-candidates?driver_id=${driverId}&date=${date}`);
+      const data = await res.json();
+      if (!data.success) {
+        menu.innerHTML = `<div class="p-3 text-xs text-red-600 max-w-[220px]">${esc(data.message || '候補の取得に失敗しました')}</div>`;
+        positionManualAssignMenu(menu, event.clientX, event.clientY);
+        return;
+      }
+      const candidates = data.candidates || [];
+      if (candidates.length === 0) {
+        menu.innerHTML = `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に、まだ必要人数が埋まっていない店舗依頼がありません</div>`;
+      } else {
+        menu.innerHTML = `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}に空きのある店舗依頼</div>` +
+          candidates.map(c => `
+            <button onclick="assignDriverToStore(${c.store_request_id}, ${driverId})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
+              ${c.is_pool ? '🔀 ' : ''}${esc(c.store_name)} <span class="text-slate-400">${esc(c.time_start || '')}〜${esc(c.time_end || '')}${c.distance != null ? ` ・約${c.distance.toFixed(1)}km` : ''}</span>
+            </button>
+          `).join('');
+      }
+      positionManualAssignMenu(menu, event.clientX, event.clientY);
+    }
+
+    async function assignDriverToStore(storeRequestId, driverId) {
+      document.getElementById('manual-assign-menu').classList.add('hidden');
+      clearActiveManualAssignCell();
+      const res = await fetch('/api/matches/manual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_request_id: storeRequestId, driver_id: driverId })
+      });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
       loadMatches();
     }
 
@@ -3700,7 +3756,7 @@
           const m = matchByDriverDate.get(`${driverId}|${d}`);
           if (m) return matchCellHtml(m, m.store_name, d);
           const avail = availByDriverDate.get(`${driverId}|${d}`);
-          if (avail) return placeholderCellHtml(avail.time_start, avail.time_end, '希望あり', d);
+          if (avail) return driverAvailabilityCellHtml(avail, driverId, d);
           return emptyCellHtml(d);
         }).join('');
         return `<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(driverNameById.get(driverId))}</td>${cells}</tr>`;

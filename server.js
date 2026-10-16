@@ -3138,6 +3138,59 @@ app.get('/api/matches/manual-candidates', async (req, res) => {
   res.json({ success: true, candidates: result });
 });
 
+// マッチング・結果のドライバー別の表で、まだ店舗が決まっていない枠(希望シフトは出しているが
+// マッチングされていない日)を右クリックした時に、その日まだ必要人数が埋まっていない店舗依頼を
+// 一覧で返す(店舗別の表の「manual-candidates」の逆方向)
+app.get('/api/matches/manual-store-candidates', async (req, res) => {
+  const driverId = parseInt(req.query.driver_id, 10);
+  const date = req.query.date;
+  if (!driverId || !date) return res.status(400).json({ success: false, message: 'driver_id, date は必須です' });
+
+  const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [driverId]);
+  if (!driver) return res.status(404).json({ success: false, message: 'ドライバーが見つかりません' });
+
+  const storeReqs = await dbAll('SELECT * FROM store_requests WHERE request_date = ? AND archived_month IS NULL', [date]);
+  const matchCounts = await dbAll(
+    `SELECT store_request_id, COUNT(*) AS c FROM matches WHERE match_date = ? AND status IN ('候補','確定','完了') AND archived_month IS NULL GROUP BY store_request_id`,
+    [date]
+  );
+  const filledByReqId = new Map(matchCounts.map(r => [r.store_request_id, r.c]));
+  // プール需要(候補店舗のどれか1つで合計必要人数が埋まればよい需要)は、グループ単位で充足を見る
+  const filledByPoolGroup = new Map();
+  for (const s of storeReqs) {
+    if (!s.pool_group_id || filledByPoolGroup.has(s.pool_group_id)) continue;
+    const siblingIds = storeReqs.filter(x => x.pool_group_id === s.pool_group_id).map(x => x.id);
+    filledByPoolGroup.set(s.pool_group_id, siblingIds.reduce((sum, id) => sum + (filledByReqId.get(id) || 0), 0));
+  }
+
+  const ngRows = await dbAll(`SELECT store_id FROM driver_store_preferences WHERE driver_id = ? AND preference = 'NG'`, [driverId]);
+  const ngStoreIds = new Set(ngRows.map(r => r.store_id));
+
+  const openStoreReqs = storeReqs.filter(s => {
+    if (s.store_id && ngStoreIds.has(s.store_id)) return false;
+    const filled = s.pool_group_id ? (filledByPoolGroup.get(s.pool_group_id) || 0) : (filledByReqId.get(s.id) || 0);
+    return filled < (s.required_count || 1);
+  });
+
+  const av = await dbGet('SELECT desired_store, desired_area FROM driver_availability WHERE driver_id = ? AND desired_date = ? AND archived_month IS NULL', [driverId, date]);
+  const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
+  const candidateLike = {
+    driver_id: driverId, home_lat: driver.home_lat, home_lng: driver.home_lng,
+    desired_store: (av && av.desired_store) || null, desired_area: av ? av.desired_area : null
+  };
+
+  const result = openStoreReqs
+    .map(s => ({ store: s, ...scoreCandidate(candidateLike, s, preferenceByDriverStore, storeVisitCount, areaVisitCount) }))
+    .sort((x, y) => y.score - x.score)
+    .map(({ store, distance }) => ({
+      store_request_id: store.id, store_name: store.store_name,
+      time_start: store.time_start, time_end: store.time_end,
+      is_pool: !!store.pool_group_id, distance
+    }));
+
+  res.json({ success: true, candidates: result });
+});
+
 app.post('/api/matches/manual', async (req, res) => {
   const store_request_id = parseInt(req.body.store_request_id, 10);
   const driver_id = parseInt(req.body.driver_id, 10);
