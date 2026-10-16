@@ -3476,8 +3476,18 @@
       }
       let candidates = data.candidates || [];
 
-      // グループを呼び出している間は、候補をそのグループのメンバーだけに絞り込む
-      if (activeMatchGroupDriverIds) candidates = candidates.filter(c => activeMatchGroupDriverIds.has(c.driver_id));
+      // グループを呼び出している間は、候補をそのグループのメンバーだけに絞り込む。
+      // ただしメンバーが誰もその日の希望を出していない場合は、絞り込んでも0人のままになって
+      // 使えないので、自動的に全員から選べる状態に戻す(その旨をヘッダーに表示する)
+      let groupFallbackNote = '';
+      if (activeMatchGroupDriverIds) {
+        const groupFiltered = candidates.filter(c => activeMatchGroupDriverIds.has(c.driver_id));
+        if (groupFiltered.length > 0) {
+          candidates = groupFiltered;
+        } else if (candidates.length > 0) {
+          groupFallbackNote = '(グループメンバーが出勤希望でないため、全員から表示しています)';
+        }
+      }
 
       // 直近の手動割当て(最大2人)のうち、今回の候補に含まれる人を先頭に、新しい順で並べ直す
       const byId = new Map(candidates.map(c => [c.driver_id, c]));
@@ -3499,11 +3509,10 @@
         <button onclick="toggleRequestGapDismiss(${storeRequestId}, ${!gapDismissedState})" class="block w-full text-left px-3 py-2 text-xs ${gapDismissedState ? 'text-slate-600 hover:bg-slate-50' : 'text-amber-700 hover:bg-amber-50'} border-b border-slate-100 whitespace-nowrap font-bold">
           ${gapDismissedState ? '↩️ 「対応なし」を解除する(警告表示に戻す)' : '✅ この穴は対応しない(半透明にする)'}
         </button>` : '';
-      const headerSuffix = isConfirmedReplace ? '(欠勤として記録済み・交代を選ぶ)' : (replaceMatchId ? '(選び直す)' : '');
+      const headerSuffix = (isConfirmedReplace ? '(欠勤として記録済み・交代を選ぶ)' : (replaceMatchId ? '(選び直す)' : '')) + groupFallbackNote;
 
       if (candidates.length === 0) {
-        const groupNote = activeMatchGroupDriverIds ? '(呼び出し中のグループのメンバーに絞り込んでいます)' : '';
-        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません${isConfirmedReplace ? '(この枠は既に「欠勤」として記録されています)' : ''}${esc(groupNote)}</div>`;
+        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません${isConfirmedReplace ? '(この枠は既に「欠勤」として記録されています)' : ''}</div>`;
       } else {
         menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${esc(headerSuffix)}</div>` +
           candidates.map(a => `
