@@ -98,6 +98,10 @@
             </label>
             <span id="match-store-filter-count" class="text-[11px] text-blue-600 font-bold"></span>
             <button id="match-store-filter-clear-btn" onclick="clearMatchStoreFilter()" class="text-[11px] text-slate-400 hover:text-slate-600 underline">選択解除</button>
+            <select id="match-group-selector" class="p-1.5 border rounded text-xs ml-1">
+              <option value="">🧑‍🤝‍🧑 グループを呼び出す...</option>
+            </select>
+            <button id="match-group-apply-btn" onclick="applyMatchGroupFilter()" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1 rounded font-bold">呼び出す</button>
           </div>
           <span id="match-status-filter-wrap">
             <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
@@ -932,7 +936,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); }
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); loadMatchGroupSelector(); }
       if (tab === 'store') { loadStoreRequests(); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -1261,12 +1265,12 @@
       const el = document.getElementById('dg-store-list');
       if (!el) return;
       const keyword = normalizeForSearch(document.getElementById('dg-store-search').value.trim());
-      const rows = keyword ? driverFormStoresCache.filter(s => normalizeForSearch(s.name).includes(keyword)) : driverFormStoresCache;
+      const rows = keyword ? driverFormStoresCache.filter(s => normalizeForSearch(`${s.name} ${s.store_code || ''}`).includes(keyword)) : driverFormStoresCache;
       if (rows.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs col-span-full p-1">該当する店舗がありません</p>'; return; }
       el.innerHTML = rows.map(s => `
-        <label class="flex items-center gap-1 text-xs truncate" title="${esc(s.name)}">
+        <label class="flex items-center gap-1 text-xs truncate" title="${esc(storeOptionLabel(s))}">
           <input type="checkbox" value="${s.id}" ${selectedGroupStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleGroupStore(${s.id}, this.checked)">
-          ${esc(s.name)}
+          ${s.store_code ? `<span class="text-slate-400">${esc(s.store_code)}</span>` : ''} ${esc(s.name)}
         </label>
       `).join('');
     }
@@ -3048,6 +3052,8 @@
       document.getElementById('match-store-filter-wrap').classList.toggle('hidden', mode !== 'store');
       document.getElementById('match-store-filter-count').classList.toggle('hidden', mode !== 'store');
       document.getElementById('match-store-filter-clear-btn').classList.toggle('hidden', mode !== 'store');
+      document.getElementById('match-group-selector').classList.toggle('hidden', mode !== 'store');
+      document.getElementById('match-group-apply-btn').classList.toggle('hidden', mode !== 'store');
       renderMatchesList();
     }
 
@@ -3288,6 +3294,33 @@
       matchStoreFilterSelected = new Set();
       document.getElementById('match-store-filter-checkbox').checked = false;
       matchStoreFilterActive = false;
+      renderMatchesTable();
+    }
+
+    // ドライバーマスタで作ったグループを、マッチング・結果の店舗絞り込みに呼び出せるようにする
+    let matchGroupsCache = [];
+    async function loadMatchGroupSelector() {
+      const res = await fetch('/api/driver-groups');
+      const data = await res.json();
+      matchGroupsCache = data.groups || [];
+      const sel = document.getElementById('match-group-selector');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">🧑‍🤝‍🧑 グループを呼び出す...</option>' +
+        matchGroupsCache.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+    }
+    // 選んだグループに紐付いた店舗だけを絞り込み表示する(今チェックしている分はいったん解除して、
+    // グループの店舗に置き換える。呼び出した後、個別にチェックを足し引きして調整できる)
+    function applyMatchGroupFilter() {
+      const sel = document.getElementById('match-group-selector');
+      const groupId = parseInt(sel.value, 10);
+      if (!groupId) { alert('呼び出すグループを選んでください'); return; }
+      const group = matchGroupsCache.find(g => g.id === groupId);
+      if (!group) return;
+      if (group.stores.length === 0) { alert('このグループには店舗が紐付いていません'); return; }
+      matchStoreFilterSelected = new Set(group.stores.map(s => s.name));
+      matchStoreFilterActive = true;
+      document.getElementById('match-store-filter-checkbox').checked = true;
+      document.getElementById('match-store-filter-count').textContent = `(${matchStoreFilterSelected.size}件選択中)`;
       renderMatchesTable();
     }
 
