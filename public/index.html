@@ -1772,7 +1772,9 @@
         return;
       }
       const storeNames = [...new Set(rows.map(r => r.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
-      const dates = [...new Set(rows.map(r => r.request_date))].sort();
+      // 日付の列は、キーワード検索で絞り込んだ店舗だけでなく全店舗の依頼日を基準にする(検索すると
+      // その店舗に依頼が無い曜日の列ごと消えてしまっていたため、検索しても列の範囲は変わらないようにする)
+      const dates = [...new Set(storeRequestsListCache.map(r => r.request_date))].sort();
       const totalCount = rows.reduce((sum, r) => sum + (r.required_count || 1), 0);
       summary.textContent = `店舗数: ${storeNames.length} ／ 日付数: ${dates.length} ／ 依頼件数: ${rows.length}件(必要人数合計: ${totalCount}名)`;
 
