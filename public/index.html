@@ -3347,6 +3347,9 @@
     // 直近に手動で割り当てた人(最大2人、新しい順)。次に右クリックした時、候補の一番上に
     // 出すために使う(同じ人を連日同じ店舗に割り当てていく作業を楽にするため)
     let recentManualPicks = [];
+    // ドライバー別の表で、ある人を右クリックして店舗を選んだ履歴(driver_id -> 店舗名の配列、
+    // 最大2件・新しい順)。同じ人を別の日で右クリックした時、候補の一番上に出すために使う
+    let recentStorePicksByDriver = new Map();
 
     // 空いている枠(placeholderCellHtml)を右クリックした時に、その日に希望シフトを出していて
     // まだ何にも割り当てられていないドライバーを一覧表示する(クリックでそのままそこに割り当てる)。
@@ -3514,21 +3517,29 @@
         positionManualAssignMenu(menu, event.clientX, event.clientY);
         return;
       }
-      const candidates = data.candidates || [];
+      let candidates = data.candidates || [];
       if (candidates.length === 0) {
         menu.innerHTML = `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に、まだ必要人数が埋まっていない店舗依頼がありません</div>`;
       } else {
+        // このドライバーを直近に右クリックで割り当てた店舗(最大2件)のうち、今回の候補に
+        // 含まれる店舗を先頭に、新しい順で並べ直す(別の日で同じ店舗に割り当てる作業を楽にするため)
+        const recentStores = recentStorePicksByDriver.get(driverId) || [];
+        const byName = new Map(candidates.map(c => [c.store_name, c]));
+        const pinned = recentStores.filter(n => byName.has(n)).map(n => byName.get(n));
+        const pinnedNames = new Set(pinned.map(c => c.store_name));
+        candidates = [...pinned, ...candidates.filter(c => !pinnedNames.has(c.store_name))];
+
         menu.innerHTML = `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}に空きのある店舗依頼</div>` +
           candidates.map(c => `
-            <button onclick="assignDriverToStore(${c.store_request_id}, ${driverId})" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
-              ${c.is_pool ? '🔀 ' : ''}${esc(c.store_name)} <span class="text-slate-400">${esc(c.time_start || '')}〜${esc(c.time_end || '')}${c.distance != null ? ` ・約${c.distance.toFixed(1)}km` : ''}</span>
+            <button data-store-name="${esc(c.store_name)}" onclick="assignDriverToStore(${c.store_request_id}, ${driverId}, this.dataset.storeName)" class="block w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-50 last:border-0 whitespace-nowrap">
+              ${pinnedNames.has(c.store_name) ? '🕐 ' : ''}${c.is_pool ? '🔀 ' : ''}${esc(c.store_name)} <span class="text-slate-400">${esc(c.time_start || '')}〜${esc(c.time_end || '')}${c.distance != null ? ` ・約${c.distance.toFixed(1)}km` : ''}</span>
             </button>
           `).join('');
       }
       positionManualAssignMenu(menu, event.clientX, event.clientY);
     }
 
-    async function assignDriverToStore(storeRequestId, driverId) {
+    async function assignDriverToStore(storeRequestId, driverId, storeName) {
       document.getElementById('manual-assign-menu').classList.add('hidden');
       clearActiveManualAssignCell();
       const res = await fetch('/api/matches/manual', {
@@ -3537,6 +3548,11 @@
       });
       const data = await res.json();
       if (!data.success) { alert(data.message || '割り当てに失敗しました'); return; }
+      // このドライバーについて、直近に選んだ店舗として先頭に記録しておく(最大2件まで保持)
+      if (storeName) {
+        const prev = recentStorePicksByDriver.get(driverId) || [];
+        recentStorePicksByDriver.set(driverId, [storeName, ...prev.filter(n => n !== storeName)].slice(0, 2));
+      }
       loadMatches();
     }
 
