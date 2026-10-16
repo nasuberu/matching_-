@@ -1754,14 +1754,25 @@ app.post('/api/driver-availability/import', upload.single('file'), async (req, r
 });
 
 // アップロードされたExcelファイルのシート名一覧を返す(CSVは単一シート扱いで空配列)。
-// 1ファイルに複数シートがある場合に、取込み前にどのシートを使うか選べるようにするため
+// 1ファイルに複数シートがある場合に、取込み前にどのシートを使うか選べるようにするため。
+// markerを指定すると、その見出し(例:「店舗名」)を含むシートだけをcandidatesとして別途返す
+// (1つのファイルに同じ見出しを持つシートが複数あると、自動選択(findMarkerSheetNameと同じロジック)が
+// 意図しない方のシートを選んでしまうことがあるため、複数ヒットした場合は画面側で選び直せるようにする)
 app.post('/api/sheet-names', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'ファイルが必要です' });
   const ext = (req.file.originalname || '').toLowerCase();
-  if (ext.endsWith('.csv') || ext.endsWith('.txt')) return res.json({ success: true, sheets: [] });
+  if (ext.endsWith('.csv') || ext.endsWith('.txt')) return res.json({ success: true, sheets: [], candidates: [] });
   try {
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', bookSheets: true });
-    res.json({ success: true, sheets: workbook.SheetNames });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const marker = (req.body.marker || '').trim();
+    let candidates = [];
+    if (marker) {
+      candidates = workbook.SheetNames.filter(name => {
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false }).slice(0, 15);
+        return rows.some(row => row.some(cell => String(cell ?? '').trim() === marker));
+      });
+    }
+    res.json({ success: true, sheets: workbook.SheetNames, candidates });
   } catch (e) {
     res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }

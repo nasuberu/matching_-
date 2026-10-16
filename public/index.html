@@ -253,15 +253,20 @@
               <p>※ 「備考」欄に社員番号(5〜7桁の数字)らしき記載、または(AI解析が有効な場合)「できれば髙橋さん希望」のような自由な文章があれば、固定希望店舗の候補として「要確認」に表示します。どんなに強い希望の記載があってもドライバーマスタを自動で書き換えることはしません。設定したい場合はドライバーマスタの一覧から手動で行ってください(一覧の「固定希望店舗」列はその場で編集できます)</p>
               <p>※ AI解析が有効な場合、「できれば」等の弱い希望やNG(除外)の判定は、固定希望店舗には反映されませんが、自動マッチングを実行するたびにその店舗依頼のスコア(優先順位)に考慮されます</p>
               <p>※ 同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、それも自動であわせて取込みます(シートを選ぶ必要はありません。無ければ何もしません)</p>
+              <p>※ ファイル内に「店舗名」という見出しを持つシートが複数ある場合は、ファイル選択時に選択肢が表示されます。正しいシートを選んでから取込み実行してください(選ばないと先頭に見つかったシートが自動で使われます)</p>
             </div>
           </details>
           <div class="flex gap-2 items-center flex-wrap">
-            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs">
+            <input id="sr-weekly-import-file" type="file" accept=".csv,.xlsx,.xls" class="text-xs" onchange="checkWeeklySheetCandidates()">
             <input id="sr-weekly-year" type="number" value="2026" placeholder="年" class="p-1.5 border rounded text-xs w-20">
             <span class="text-xs text-slate-500">年</span>
             <input id="sr-weekly-month" type="number" min="1" max="12" placeholder="月" class="p-1.5 border rounded text-xs w-16">
             <span class="text-xs text-slate-500">月分</span>
             <button onclick="importStoreRequestsWeekly()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap">取込み実行</button>
+          </div>
+          <div id="sr-weekly-sheet-picker" class="hidden bg-amber-50 border border-amber-300 rounded-lg p-2 text-xs space-y-1">
+            <p class="font-bold text-amber-700">⚠️ 「店舗名」の見出しを持つシートが複数見つかりました。取込みに使うシートを選んでください</p>
+            <select id="sr-weekly-sheet-select" class="p-1.5 border rounded text-xs w-full"></select>
           </div>
           <div id="sr-weekly-import-result" class="text-xs"></div>
         </div>
@@ -1860,6 +1865,27 @@
       return false;
     }
 
+    // ファイル選択時に、「店舗名」の見出しを持つシートが複数あるかどうかを確認する。
+    // 1つのファイルに同じ見出しの表が複数シートに分かれていると、自動選択が意図しない方の
+    // シートを読んでしまうことがある(実際に銀座SSのデータで発生)ため、複数見つかった場合は
+    // 選択肢を表示して、取込み実行時に明示的に選んでもらう
+    async function checkWeeklySheetCandidates() {
+      const picker = document.getElementById('sr-weekly-sheet-picker');
+      const select = document.getElementById('sr-weekly-sheet-select');
+      picker.classList.add('hidden');
+      select.innerHTML = '';
+      const fileInput = document.getElementById('sr-weekly-import-file');
+      if (!fileInput.files[0]) return;
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      form.append('marker', '店舗名');
+      const res = await fetch('/api/sheet-names', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!data.success || !data.candidates || data.candidates.length <= 1) return; // 1つ以下なら今まで通り自動選択のままでよい
+      select.innerHTML = data.candidates.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
+      picker.classList.remove('hidden');
+    }
+
     async function importStoreRequestsWeekly() {
       const resultEl = document.getElementById('sr-weekly-import-result');
       const year = document.getElementById('sr-weekly-year').value;
@@ -1869,10 +1895,14 @@
       if (!year || !month) { alert('対象の年月を入力してください'); return; }
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
 
+      const sheetPicker = document.getElementById('sr-weekly-sheet-picker');
+      const selectedSheet = !sheetPicker.classList.contains('hidden') ? document.getElementById('sr-weekly-sheet-select').value : '';
+
       const weeklyForm = new FormData();
       weeklyForm.append('file', fileInput.files[0]);
       weeklyForm.append('year', year);
       weeklyForm.append('month', month);
+      if (selectedSheet) weeklyForm.append('sheet', selectedSheet);
       const res = await fetch('/api/store-requests/import-weekly', { method: 'POST', body: weeklyForm });
       const data = await res.json();
 
