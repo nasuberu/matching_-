@@ -3103,6 +3103,10 @@ app.post('/api/matches/manual', async (req, res) => {
     `SELECT COUNT(*) AS c FROM matches WHERE store_request_id IN (${siblingIds.map(() => '?').join(',')}) AND status IN ('候補', '確定', '完了') AND archived_month IS NULL AND id != ?`,
     [...siblingIds, replace_match_id || 0]
   );
+  // 必要人数自体は既に埋まっているのに追加で割り当てる場合、それは「店舗依頼が元々複数あった」
+  // のではなく「時間の穴を埋めるための追加枠」だと分かるようにしておく(表示側で、最初から
+  // 複数依頼があった場合の行と見分けがつくように、created_viaに残す)
+  let isGapFill = false;
   if (filled.c >= (storeReq.required_count || 1)) {
     // 必要人数自体は埋まっていても、店舗依頼の希望時間に「穴」(誰もカバーしていない時間帯)が
     // 残っている場合は、その穴を埋めるための追加の割当てとして許可する(プール需要は対象外。
@@ -3118,6 +3122,7 @@ app.post('/api/matches/manual', async (req, res) => {
     if (!gapAllows) {
       return res.status(400).json({ success: false, message: 'この店舗依頼は既に必要人数が埋まっています' });
     }
+    isGapFill = true;
   }
 
   if (replaceTarget) {
@@ -3138,8 +3143,8 @@ app.post('/api/matches/manual', async (req, res) => {
   const isFar = distance != null && distance > DIST_WARNING_KM;
   const now = new Date().toISOString();
   const result = await dbRun(
-    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, created_via, time_start, time_end) VALUES (?, ?, ?, ?, ?, '候補', ?, 'manual', ?, ?)`,
-    [store_request_id, driver_id, storeReq.request_date, distance, isFar ? 1 : 0, now, matchTimeStart, matchTimeEnd]
+    `INSERT INTO matches (store_request_id, driver_id, match_date, distance_km, is_far_warning, status, created_at, created_via, time_start, time_end) VALUES (?, ?, ?, ?, ?, '候補', ?, ?, ?, ?)`,
+    [store_request_id, driver_id, storeReq.request_date, distance, isFar ? 1 : 0, now, isGapFill ? 'gap_fill' : 'manual', matchTimeStart, matchTimeEnd]
   );
   res.json({ success: true, id: result.lastID });
 });
