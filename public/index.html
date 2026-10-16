@@ -1882,7 +1882,11 @@
       const res = await fetch('/api/sheet-names', { method: 'POST', body: form });
       const data = await res.json();
       if (!data.success || !data.candidates || data.candidates.length <= 1) return; // 1つ以下なら今まで通り自動選択のままでよい
-      select.innerHTML = data.candidates.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
+      // 先頭の候補を初期選択にしてしまうと、結局それが間違ったシートだった場合に気づかず
+      // そのまま取込みされてしまう(実際に発生した)。必ず自分で選んでもらうため、プレースホルダーを
+      // 選択必須にしておく(取込み実行時にもこの状態でないかを再度チェックする)
+      select.innerHTML = `<option value="" selected disabled>-- シートを選んでください --</option>` +
+        data.candidates.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('');
       picker.classList.remove('hidden');
     }
 
@@ -1896,7 +1900,9 @@
       resultEl.innerHTML = '<span class="text-slate-400">取込み中...</span>';
 
       const sheetPicker = document.getElementById('sr-weekly-sheet-picker');
-      const selectedSheet = !sheetPicker.classList.contains('hidden') ? document.getElementById('sr-weekly-sheet-select').value : '';
+      const sheetPickerShown = !sheetPicker.classList.contains('hidden');
+      const selectedSheet = sheetPickerShown ? document.getElementById('sr-weekly-sheet-select').value : '';
+      if (sheetPickerShown && !selectedSheet) { alert('「店舗名」の見出しを持つシートが複数あります。どのシートを使うか選んでから実行してください'); return; }
 
       const weeklyForm = new FormData();
       weeklyForm.append('file', fileInput.files[0]);
