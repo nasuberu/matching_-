@@ -91,6 +91,12 @@
             <input type="checkbox" id="match-sort-complete-checkbox" onchange="toggleSortCompleteStoresToBottom(this.checked)">
             ✅ 埋まった店舗を下へ
           </label>
+          <label id="match-store-filter-wrap" class="flex items-center gap-1 text-xs text-slate-500 ml-1">
+            <input type="checkbox" id="match-store-filter-checkbox" onchange="toggleMatchStoreFilterActive(this.checked)">
+            ☑️ チェックした店舗だけ表示
+          </label>
+          <span id="match-store-filter-count" class="text-[11px] text-blue-600 font-bold"></span>
+          <button onclick="clearMatchStoreFilter()" class="text-[11px] text-slate-400 hover:text-slate-600 underline">選択解除</button>
         </div>
         <span id="match-status-filter-wrap">
           <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
@@ -3257,6 +3263,27 @@
       }
     }
 
+    // マッチング・結果(店舗別の表)で、気になる店舗だけチェックして絞り込み表示できるようにする機能。
+    // 固定希望店舗やドライバーグループを設定した後、関係する店舗だけをまとめて確認したい時に使う想定
+    let matchStoreFilterSelected = new Set();
+    let matchStoreFilterActive = false;
+    function toggleMatchStoreFilterSelect(storeName, checked) {
+      if (checked) matchStoreFilterSelected.add(storeName); else matchStoreFilterSelected.delete(storeName);
+      document.getElementById('match-store-filter-count').textContent = matchStoreFilterSelected.size > 0 ? `(${matchStoreFilterSelected.size}件選択中)` : '';
+      // 同じ店舗の行が複数(1人目・2人目・未対応分など)あるので、そのすべてのチェック状態を揃える
+      document.querySelectorAll(`#matches-table-body input[data-store-name="${CSS.escape(storeName)}"]`).forEach(el => { el.checked = checked; });
+    }
+    function toggleMatchStoreFilterActive(checked) {
+      matchStoreFilterActive = checked;
+      renderMatchesTable();
+    }
+    function clearMatchStoreFilter() {
+      matchStoreFilterSelected = new Set();
+      document.getElementById('match-store-filter-checkbox').checked = false;
+      matchStoreFilterActive = false;
+      renderMatchesTable();
+    }
+
     // 決まった経緯ごとの色枠(ステータスの背景色はそのままに、追加で枠を付けて見分けられるようにする)
     const CREATED_VIA_RING = { manual: 'ring-2 ring-purple-400', fixed_store_tier: 'ring-2 ring-sky-400', group_fixed_tier: 'ring-2 ring-teal-400', gap_fill: 'ring-2 ring-amber-400' };
     const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定', group_fixed_tier: 'グループの紐付け店舗で決定', gap_fill: '時間の穴を埋めるための追加枠(店舗からの別依頼ではありません)' };
@@ -3485,10 +3512,13 @@
       const body = document.getElementById('matches-table-body');
       // 行は「実際にマッチングが1件以上ある店舗」に限る(依頼はあるが候補すら無い店舗は
       // 「⚠️ 候補が見つからない店舗依頼」の方で確認する設計のため、表が際限なく広がらないようにする)
-      const storeNames = [...new Set(matches.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      let storeNames = [...new Set(matches.map(m => m.store_name))].sort((a, b) => a.localeCompare(b, 'ja'));
+      // 「☑️ チェックした店舗だけ表示」がONの時は、チェックを付けた店舗だけに絞り込む(固定希望店舗や
+      // グループを設定した後、関係する店舗だけまとめて確認したい時に使う想定)
+      if (matchStoreFilterActive) storeNames = storeNames.filter(n => matchStoreFilterSelected.has(n));
       if (storeNames.length === 0) {
         header.innerHTML = '';
-        body.innerHTML = '<tr><td class="text-slate-400 text-sm p-4 text-center">条件に合うマッチングがありません</td></tr>';
+        body.innerHTML = `<tr><td class="text-slate-400 text-sm p-4 text-center">${matchStoreFilterActive ? '店舗が選択されていません(チェックを付けるか、絞り込みを解除してください)' : '条件に合うマッチングがありません'}</td></tr>`;
         return;
       }
       const dates = [...new Set([...matches.map(m => m.match_date), ...storeRequests.map(r => r.request_date)])].sort();
@@ -3631,7 +3661,12 @@
               <input type="checkbox" ${rowGapDismissedCount === rowGapRequestIds.size ? 'checked' : ''} onchange="toggleRowGapDismissBulk([${[...rowGapRequestIds].join(',')}], this.checked)">
               この行の穴(${rowGapRequestIds.size}件)をまとめて対応なしにする
             </label>` : '';
-          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">${esc(rowLabel)}${rowBulkDismissHtml}</td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
+          rowsHtml.push(`<tr><td class="p-2 font-bold text-sm sticky left-0 z-10 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">
+            <div class="flex items-start gap-1.5">
+              <input type="checkbox" class="mt-0.5" title="この店舗だけ表示するために選ぶ" data-store-name="${esc(storeName)}" ${matchStoreFilterSelected.has(storeName) ? 'checked' : ''} onchange="toggleMatchStoreFilterSelect(this.dataset.storeName, this.checked)">
+              <span>${esc(rowLabel)}${rowBulkDismissHtml}</span>
+            </div>
+          </td><td class="p-2 text-xs text-slate-500 bg-white border border-slate-300 whitespace-nowrap">${esc(sv)}</td>${cells}</tr>`);
         }
       }
       body.innerHTML = rowsHtml.join('');
