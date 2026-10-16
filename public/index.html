@@ -102,6 +102,7 @@
               <option value="">🧑‍🤝‍🧑 グループを呼び出す...</option>
             </select>
             <button id="match-group-apply-btn" onclick="applyMatchGroupFilter()" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1 rounded font-bold">呼び出す</button>
+            <span id="match-group-active-badge" class="text-[11px] text-teal-600 font-bold"></span>
           </div>
           <span id="match-status-filter-wrap">
             <select id="match-filter-status" onchange="renderMatchesList()" class="p-2 border rounded text-sm">
@@ -3288,17 +3289,27 @@
     }
     function toggleMatchStoreFilterActive(checked) {
       matchStoreFilterActive = checked;
+      if (!checked) clearActiveMatchGroup();
       renderMatchesTable();
     }
     function clearMatchStoreFilter() {
       matchStoreFilterSelected = new Set();
       document.getElementById('match-store-filter-checkbox').checked = false;
       matchStoreFilterActive = false;
+      clearActiveMatchGroup();
       renderMatchesTable();
     }
 
     // ドライバーマスタで作ったグループを、マッチング・結果の店舗絞り込みに呼び出せるようにする
     let matchGroupsCache = [];
+    // グループを呼び出している間、右クリックの候補一覧をそのグループのメンバーだけに絞り込む
+    // ためのdriver_idの集合(nullなら絞り込みなし=従来通り全員表示)
+    let activeMatchGroupDriverIds = null;
+    function clearActiveMatchGroup() {
+      activeMatchGroupDriverIds = null;
+      const badge = document.getElementById('match-group-active-badge');
+      if (badge) badge.textContent = '';
+    }
     async function loadMatchGroupSelector() {
       const res = await fetch('/api/driver-groups');
       const data = await res.json();
@@ -3321,6 +3332,9 @@
       matchStoreFilterActive = true;
       document.getElementById('match-store-filter-checkbox').checked = true;
       document.getElementById('match-store-filter-count').textContent = `(${matchStoreFilterSelected.size}件選択中)`;
+      // 呼び出した以降、右クリックの候補一覧もこのグループのメンバーだけに絞り込む
+      activeMatchGroupDriverIds = new Set(group.members.map(m => m.id));
+      document.getElementById('match-group-active-badge').textContent = `「${group.name}」のメンバーに絞り込み中`;
       renderMatchesTable();
     }
 
@@ -3462,6 +3476,9 @@
       }
       let candidates = data.candidates || [];
 
+      // グループを呼び出している間は、候補をそのグループのメンバーだけに絞り込む
+      if (activeMatchGroupDriverIds) candidates = candidates.filter(c => activeMatchGroupDriverIds.has(c.driver_id));
+
       // 直近の手動割当て(最大2人)のうち、今回の候補に含まれる人を先頭に、新しい順で並べ直す
       const byId = new Map(candidates.map(c => [c.driver_id, c]));
       const pinned = recentManualPicks.filter(id => byId.has(id)).map(id => byId.get(id));
@@ -3485,7 +3502,8 @@
       const headerSuffix = isConfirmedReplace ? '(欠勤として記録済み・交代を選ぶ)' : (replaceMatchId ? '(選び直す)' : '');
 
       if (candidates.length === 0) {
-        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません${isConfirmedReplace ? '(この枠は既に「欠勤」として記録されています)' : ''}</div>`;
+        const groupNote = activeMatchGroupDriverIds ? '(呼び出し中のグループのメンバーに絞り込んでいます)' : '';
+        menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-3 text-xs text-slate-400 max-w-[220px]">${esc(date)}に希望シフトを出していて、まだ空いているドライバーがいません${isConfirmedReplace ? '(この枠は既に「欠勤」として記録されています)' : ''}${esc(groupNote)}</div>`;
       } else {
         menu.innerHTML = unassignButton + gapDismissButton + `<div class="p-2 text-[11px] font-bold text-slate-500 border-b border-slate-100 sticky top-0 bg-white">${esc(date)}の希望シフト提出者${esc(headerSuffix)}</div>` +
           candidates.map(a => `
