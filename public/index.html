@@ -1807,7 +1807,7 @@
           const rowLabel = `${storeName}${maxSlots > 1 ? `(${slotIndex + 1}件目)` : ''}`;
           const cells = dates.map(d => {
             const slot = (byStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
-            if (!slot) return `<td class="p-2 border border-slate-300 text-center text-slate-300 ${dateHighlightBg(d)}">-</td>`;
+            if (!slot) return `<td class="p-2 border border-slate-300 ${dateHighlightBg(d)}"></td>`;
             // pool_group_idがある枠は「エリア固定」シートから生成されたプール需要(候補店舗のどれか1つで
             // 埋まればよい需要)で、店舗自身の通常の依頼(週間必要枠表シート)とは別物。見分けられるようにする
             const isPool = !!slot.pool_group_id;
