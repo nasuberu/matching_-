@@ -2382,8 +2382,9 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     return true;
   }
 
-  // 1周目: 同じ店舗×同じ曜日×同じ時間帯の行を合算し、必要人数を数える(1行=1人分のため)
-  const slotMap = new Map(); // "storeId|weekdayIndex|time_start|time_end" -> { count, storeName, notesSet }
+  // 1周目: 行ごとにそのまま店舗依頼の枠として扱う(同じ店舗・同じ曜日・同じ時間帯の行が複数あっても
+  // 合算はしない=「2名」のように1行にまとめず、元のシート通り複数行の店舗依頼として取り込む)
+  const slots = []; // { storeId, storeName, weekdayIndex, time_start, time_end, count(セル内の*N倍率), note, area, address, lat, lng }
   for (let r = headerRowIndex + 1; r < rows.length; r++) {
     const row = rows[r];
     const store_name = String(row[colStoreName] ?? '').trim();
@@ -2424,19 +2425,16 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
       hasAnySchedule = true;
       const time_start = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
       const time_end = `${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`;
-      // セルに「*2」「＊3」のような倍数指定があれば、その人数分を必要枠として数える(無ければ1人分)
+      // セルに「*2」「＊3」のような倍数指定があれば、その人数分を必要枠として数える(無ければ1人分。
+      // これは同じ行の中での倍率なので、これとは別に行自体が複数ある場合は合算せず別の枠として扱う)
       const multiplierMatch = cell.match(/[*＊]\s*(\d+)/);
       const multiplier = multiplierMatch ? parseInt(multiplierMatch[1], 10) : 1;
 
-      const key = `${store_id}|${w}|${time_start}|${time_end}`;
-      const entry = slotMap.get(key) || {
-        count: 0, storeName: store_name, notesSet: new Set(), weekdayIndex: w, time_start, time_end, storeId: store_id,
+      slots.push({
+        storeId: store_id, storeName: store_name, weekdayIndex: w, time_start, time_end, count: multiplier, note,
         area: storeInfo ? (storeInfo.area || '') : '', address: storeInfo ? (storeInfo.address || '') : '',
         lat: storeInfo ? storeInfo.lat : null, lng: storeInfo ? storeInfo.lng : null
-      };
-      entry.count += multiplier;
-      if (note) entry.notesSet.add(note);
-      slotMap.set(key, entry);
+      });
     }
 
     if (!hasAnySchedule && notesRaw) {
@@ -2449,30 +2447,45 @@ app.post('/api/store-requests/import-weekly', upload.single('file'), async (req,
     }
   }
 
-  // 2周目: 曜日×時間帯の枠を、対象月の実際の日付に展開して店舗依頼を作る(既存の重複防止と同じキーで上書き更新)
+  // 2周目: 曜日×時間帯の枠を、対象月の実際の日付に展開して店舗依頼を作る。
+  // 同じ店舗・同じ曜日・同じ時間帯の枠が複数行ある場合は、合算して1行の必要人数にはせず、
+  // 元のシートに出てきた順番のまま、既存の重複防止(店舗×日付×開始時刻)の行と1対1で対応づけて
+  // 上書き更新する(再取込みのたびに重複登録されないように。既存の方が多い場合、余った古い行は
+  // 既にマッチング済みの可能性があるため削除せずそのまま残す)
+  const slotGroups = new Map(); // "storeId|weekdayIndex|time_start|time_end" -> [slot, slot, ...](シート登場順)
+  for (const slot of slots) {
+    const key = `${slot.storeId}|${slot.weekdayIndex}|${slot.time_start}|${slot.time_end}`;
+    if (!slotGroups.has(key)) slotGroups.set(key, []);
+    slotGroups.get(key).push(slot);
+  }
+
   const now = new Date().toISOString();
   let imported = 0;
-  for (const entry of slotMap.values()) {
-    const jsDay = WEEKDAY_JSDAY[entry.weekdayIndex];
-    const requests = [...entry.notesSet].join(' / ');
+  for (const slotGroup of slotGroups.values()) {
+    const first = slotGroup[0];
+    const jsDay = WEEKDAY_JSDAY[first.weekdayIndex];
     for (const day of (datesByJsDay[jsDay] || [])) {
       const request_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const existing = await dbGet(
-        'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ? AND archived_month IS NULL',
-        [entry.storeId, request_date, entry.time_start]
+      const existingRows = await dbAll(
+        'SELECT id FROM store_requests WHERE store_id = ? AND request_date = ? AND time_start = ? AND archived_month IS NULL ORDER BY id',
+        [first.storeId, request_date, first.time_start]
       );
-      if (existing) {
-        await dbRun(
-          `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=?, import_batch_id=? WHERE id=?`,
-          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, entry.time_end, entry.count, requests, importBatchId, existing.id]
-        );
-      } else {
-        await dbRun(
-          `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [entry.storeName, entry.area, entry.address, entry.lat, entry.lng, request_date, entry.time_start, entry.time_end, entry.count, requests, now, entry.storeId, importBatchId]
-        );
+      for (let i = 0; i < slotGroup.length; i++) {
+        const slot = slotGroup[i];
+        const requests = slot.note || '';
+        if (existingRows[i]) {
+          await dbRun(
+            `UPDATE store_requests SET store_name=?, area=?, address=?, lat=?, lng=?, time_end=?, required_count=?, requests=?, import_batch_id=? WHERE id=?`,
+            [slot.storeName, slot.area, slot.address, slot.lat, slot.lng, slot.time_end, slot.count, requests, importBatchId, existingRows[i].id]
+          );
+        } else {
+          await dbRun(
+            `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id, import_batch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [slot.storeName, slot.area, slot.address, slot.lat, slot.lng, request_date, slot.time_start, slot.time_end, slot.count, requests, now, slot.storeId, importBatchId]
+          );
+        }
+        imported++;
       }
-      imported++;
     }
   }
   await finalizeImportBatch(importBatchId, imported);
