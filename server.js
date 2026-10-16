@@ -885,6 +885,9 @@ const TIER_CATALOG = {
   },
 };
 const DEFAULT_ENABLED_TIER_KEYS = ['fixed_store', 'group_fixed']; // 画面でまだ設定したことが無い場合の初期値
+// 階層ごとに、そこで決まったマッチングのcreated_viaに何を記録するか(画面側の色分け用)。
+// 指定の無い階層は、通常のスコアリングと見分ける必要が薄いため既定値'auto'のままにする
+const TIER_CREATED_VIA = { fixed_store: 'fixed_store_tier', group_fixed: 'group_fixed_tier' };
 
 // app_settingsに保存されている、有効化・並び替え済みの優先順位階層のキー配列を返す
 // (カタログに無いキーが混ざっていた場合は無視する。保存が無ければ初期値を返す)
@@ -2873,21 +2876,29 @@ app.post('/api/matches/run', async (req, res) => {
   // 依頼に割り当てられ、逆に時間がぴったり合う方の依頼が未対応のまま残ることがあった
   // (実際に浜松町SSで発生: 09:00-19:00希望の人が10:00-22:00の依頼に割り当てられ、09:00-19:00の
   // 依頼は誰も居ないまま・10:00-22:00の依頼も19:00-22:00が穴になる、という事象を確認)。
-  // これを避けるため、同じ店舗・同じ日に複数の依頼がある組については、先に「本人の希望シフト時間と
-  // 一番重なりが大きい依頼」から優先的にペアにしてから、残りをいつも通りの階層処理に回す
-  const timeAwareTierKeys = enabledTierKeys.filter(k => k === 'fixed_store' || k === 'group_fixed');
-  if (timeAwareTierKeys.length > 0) {
-    const groupsByStoreDate = new Map(); // "store_id|日付" -> 店舗依頼の配列(プール需要は対象外)
-    for (const store of storeRequests) {
-      if (store.pool_group_id || !store.store_id) continue;
-      const key = `${store.store_id}|${store.request_date}`;
-      if (!groupsByStoreDate.has(key)) groupsByStoreDate.set(key, []);
-      groupsByStoreDate.get(key).push(store);
-    }
-    for (const group of groupsByStoreDate.values()) {
-      if (group.length <= 1) continue; // 依頼が1件だけなら、どちらに割り当てるか選ぶ余地が無い
-      for (const tierKey of timeAwareTierKeys) {
-        const tier = TIER_CATALOG[tierKey];
+  // これを避けるため、同じ店舗・同じ日に複数の依頼がある組(storeRequestsのループより前に1回だけ
+  // 作っておく)については、この階層の番が来た時点で、先に「本人の希望シフト時間と一番重なりが
+  // 大きい依頼」から優先的にペアにしてから、残り(単独の依頼・ペアで埋まらなかった分)をいつも通りの
+  // 店舗ごとの処理に回す。この処理自体をenabledTierKeysのループの中で行うことで、他の階層
+  // (将来的に固定希望店舗より上に置かれるかもしれない階層)より先回りして取ってしまわないようにする
+  const sameStoreSameDateGroups = new Map(); // "store_id|日付" -> 店舗依頼の配列(プール需要は対象外)
+  for (const store of storeRequests) {
+    if (store.pool_group_id || !store.store_id) continue;
+    const key = `${store.store_id}|${store.request_date}`;
+    if (!sameStoreSameDateGroups.has(key)) sameStoreSameDateGroups.set(key, []);
+    sameStoreSameDateGroups.get(key).push(store);
+  }
+
+  // 優先階層: 画面(マッチング設定)で有効化・並び替えされた順に、各階層に当てはまる候補を、店舗の処理順に
+  // 関係なく全店舗を通して先に確保する。これをしないと、たまたま先に処理された別の店舗に本来優先される
+  // べき人が取られてしまうことがある
+  for (const tierKey of enabledTierKeys) {
+    const tier = TIER_CATALOG[tierKey];
+    if (!tier) continue;
+
+    if (tierKey === 'fixed_store' || tierKey === 'group_fixed') {
+      for (const group of sameStoreSameDateGroups.values()) {
+        if (group.length <= 1) continue; // 依頼が1件だけなら、どちらに割り当てるか選ぶ余地が無い
         const pairs = [];
         for (const store of group) {
           if ((store.required_count || 1) - getFilledCount(store) <= 0) continue;
@@ -2900,27 +2911,30 @@ app.post('/api/matches/run', async (req, res) => {
             aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
           );
           for (const a of candidates) {
-            pairs.push({ store, a, overlap: timeOverlapMinutes(store.time_start, store.time_end, a.time_start, a.time_end) });
+            const scored = scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`));
+            pairs.push({ store, a, scored, overlap: timeOverlapMinutes(store.time_start, store.time_end, a.time_start, a.time_end) });
           }
         }
-        // 重なりが大きい組み合わせから貪欲に確定させる(1人は1回、1依頼の残り必要数までしか使わない)
-        pairs.sort((x, y) => y.overlap - x.overlap);
-        for (const { store, a } of pairs) {
+        // 重なりが大きい組み合わせから貪欲に確定させる(1人は1回、1依頼の残り必要数までしか使わない)。
+        // 重なりが同じ場合のタイブレークは、通常の階層処理と同じ基準にする(固定希望店舗だけは
+        // 重複時の優先順位→スコア、それ以外はスコアのみ)。これが無いと、固定希望店舗の優先順位を
+        // 設定した意味が、依頼が複数ある店舗・日だけ効かなくなってしまう
+        pairs.sort((x, y) => {
+          if (y.overlap !== x.overlap) return y.overlap - x.overlap;
+          if (tierKey === 'fixed_store') {
+            const pDiff = (x.a.fixed_store_priority ?? Infinity) - (y.a.fixed_store_priority ?? Infinity);
+            if (pDiff !== 0) return pDiff;
+          }
+          return y.scored.score - x.scored.score;
+        });
+        for (const { store, a, scored } of pairs) {
           if (assignedDriverIdsByDate[store.request_date].has(a.driver_id)) continue;
           if ((store.required_count || 1) - getFilledCount(store) <= 0) continue;
-          const scored = scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`));
-          await insertMatch(store, { ...a, ...scored }, tierKey === 'fixed_store' ? 'fixed_store_tier' : 'auto');
+          await insertMatch(store, { ...a, ...scored }, TIER_CREATED_VIA[tierKey]);
         }
       }
     }
-  }
 
-  // 優先階層: 画面(マッチング設定)で有効化・並び替えされた順に、各階層に当てはまる候補を、店舗の処理順に
-  // 関係なく全店舗を通して先に確保する。これをしないと、たまたま先に処理された別の店舗に本来優先される
-  // べき人が取られてしまうことがある
-  for (const tierKey of enabledTierKeys) {
-    const tier = TIER_CATALOG[tierKey];
-    if (!tier) continue;
     for (const store of storeRequests) {
       const assignedToday = assignedDriverIdsByDate[store.request_date];
       const alreadyFilled = getFilledCount(store);
@@ -2947,7 +2961,7 @@ app.post('/api/matches/run', async (req, res) => {
         });
 
       const picked = tierCandidates.slice(0, needed);
-      for (const p of picked) await insertMatch(store, p, tierKey === 'fixed_store' ? 'fixed_store_tier' : 'auto');
+      for (const p of picked) await insertMatch(store, p, TIER_CREATED_VIA[tierKey] || 'auto');
     }
   }
 

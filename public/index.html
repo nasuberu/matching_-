@@ -122,6 +122,7 @@
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-red-100 border border-red-200"></span>欠勤</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-amber-50 border border-dashed border-amber-300"></span>未定(依頼/希望の時間のみ、右クリックで割当可)</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-sky-400"></span>固定希望店舗で決定</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-teal-400"></span>グループの紐付け店舗で決定</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-purple-400"></span>手動で割当て(右クリック)</span>
         <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm bg-white ring-2 ring-amber-400"></span>時間の穴を埋める追加枠(店舗からの別依頼ではない)</span>
       </div>
@@ -3208,8 +3209,8 @@
     }
 
     // 決まった経緯ごとの色枠(ステータスの背景色はそのままに、追加で枠を付けて見分けられるようにする)
-    const CREATED_VIA_RING = { manual: 'ring-2 ring-purple-400', fixed_store_tier: 'ring-2 ring-sky-400', gap_fill: 'ring-2 ring-amber-400' };
-    const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定', gap_fill: '時間の穴を埋めるための追加枠(店舗からの別依頼ではありません)' };
+    const CREATED_VIA_RING = { manual: 'ring-2 ring-purple-400', fixed_store_tier: 'ring-2 ring-sky-400', group_fixed_tier: 'ring-2 ring-teal-400', gap_fill: 'ring-2 ring-amber-400' };
+    const CREATED_VIA_LABEL = { manual: '手動割当', fixed_store_tier: '固定希望店舗で決定', group_fixed_tier: 'グループの紐付け店舗で決定', gap_fill: '時間の穴を埋めるための追加枠(店舗からの別依頼ではありません)' };
     // allowReplace: 店舗別の表でだけtrueにする(ドライバー別の表は「誰か」ではなく「どの店舗か」の
     // 行なので、右クリックでの差し替え対象にならない)。「候補」のうちだけ差し替え可能(確定・完了は不可)
     function matchCellHtml(m, label, date, allowReplace, gapWarning, gapDismissed, gapInfo) {
