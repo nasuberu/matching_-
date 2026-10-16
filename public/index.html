@@ -3534,7 +3534,15 @@
         const sv = svByStoreName.get(storeName) || '-';
         const isComplete = storeCompleteByName.get(storeName);
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
-          const rowLabel = `${slotIndex === 0 && isComplete ? '✅ ' : ''}${code ? `${code} ` : ''}${storeName}${maxSlots > 1 ? `(${slotIndex + 1}人目)` : ''}`;
+          // この行が「依頼の必要人数そのものの枠」か「必要人数は埋まった上で時間の穴を埋めるために
+          // 追加した枠」かを見分けて、ラベルを変える(元の依頼の枠は「N人目」のまま、追加の枠は
+          // 「N人目・未対応分」として、最初から複数依頼があった場合と混同しないようにする)
+          const isGapRow = dates.some(d => {
+            const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
+            return !!slot && (slot.isGap || (slot.match && slot.match.created_via === 'gap_fill'));
+          });
+          const slotLabel = maxSlots > 1 ? (isGapRow ? `(${slotIndex + 1}人目・未対応分)` : `(${slotIndex + 1}人目)`) : '';
+          const rowLabel = `${slotIndex === 0 && isComplete ? '✅ ' : ''}${code ? `${code} ` : ''}${storeName}${slotLabel}`;
           // この行(同じ「N人目」枠)にまたがる穴の依頼idを集めておき、まとめて対応なしにできるようにする
           const rowGapRequestIds = new Set();
           let rowGapDismissedCount = 0;
