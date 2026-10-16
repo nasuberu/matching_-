@@ -1085,11 +1085,23 @@ function parseUploadedSpreadsheet(buffer, filename) {
   return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false, dateNF: 'yyyy-mm-dd' });
 }
 
+// Excel上で非表示設定になっているシート名の集合を返す(hidden=1, very hidden=2)。
+// 非表示シートは古い下書き・参考データであることが多く、取込み先として自動選択・候補表示の
+// どちらにも出したくない(実際に「これ聞取り固定デポ」という非表示の古いシートが自動選択されて
+// しまい、間違ったデータが取り込まれる事故が起きたため導入した)
+function getHiddenSheetNames(workbook) {
+  const hidden = new Set();
+  for (const s of (workbook.Workbook && workbook.Workbook.Sheets) || []) {
+    if (s.Hidden) hidden.add(s.name);
+  }
+  return hidden;
+}
+
 // 「氏名×日付」のワイド形式(1行目=日付見出し、1列目=氏名、セル=勤務時間 or 休み)のシフト表を
 // 見出し行+各行を配列のまま返す(通常のparseUploadedSpreadsheetは列名をキーにしたオブジェクトを返すため、
 // 「1(火)」のような日付見出しを順序どおり扱いたいこちらの用途には配列のままの形が必要)
 // sheetNameを指定すればそのシートを、未指定(またはファイル内に無い名前)なら先頭シートを読む
-// ブックの中から、見出しにmarkerHeadersのいずれかを含むシート名を探して返す(xlsx以外や、
+// ブックの中から、見出しにmarkerHeadersのいずれかを含む「表示状態の」シート名を探して返す(xlsx以外や、
 // 一致するシートが無い場合はnull)。1つのExcelファイルに複数シートがあり(例: 1枚目が週間必要枠表、
 // 2枚目がエリア固定の依頼、3枚目はその他のデータ)、取込み先ごとに読むべきシートが違う場合に、
 // シート名を手で選ばなくても見出しの中身からそれらしいシートを自動で見つけるために使う
@@ -1097,7 +1109,8 @@ function findMarkerSheetName(buffer, filename, markerHeaders) {
   const ext = (filename || '').toLowerCase();
   if (ext.endsWith('.csv') || ext.endsWith('.txt') || !markerHeaders || !markerHeaders.length) return null;
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-  return workbook.SheetNames.find(name => {
+  const hiddenNames = getHiddenSheetNames(workbook);
+  return workbook.SheetNames.filter(name => !hiddenNames.has(name)).find(name => {
     const candidateRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false }).slice(0, 15);
     return candidateRows.some(row => row.some(cell => markerHeaders.includes(String(cell ?? '').trim())));
   }) || null;
@@ -1764,15 +1777,20 @@ app.post('/api/sheet-names', upload.single('file'), async (req, res) => {
   if (ext.endsWith('.csv') || ext.endsWith('.txt')) return res.json({ success: true, sheets: [], candidates: [] });
   try {
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    // Excel上で非表示にしているシートは、古い下書き・参考データであることが多く選択肢に出しても
+    // 紛らわしいだけなので除外する(実際にこれが原因で、見えているシート数より選択肢が多く
+    // 見えて混乱を招いた上、非表示の古いシートが誤って自動選択される事故も起きたため)
+    const hiddenNames = getHiddenSheetNames(workbook);
+    const visibleSheetNames = workbook.SheetNames.filter(name => !hiddenNames.has(name));
     const marker = (req.body.marker || '').trim();
     let candidates = [];
     if (marker) {
-      candidates = workbook.SheetNames.filter(name => {
+      candidates = visibleSheetNames.filter(name => {
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: false }).slice(0, 15);
         return rows.some(row => row.some(cell => String(cell ?? '').trim() === marker));
       });
     }
-    res.json({ success: true, sheets: workbook.SheetNames, candidates });
+    res.json({ success: true, sheets: visibleSheetNames, candidates });
   } catch (e) {
     res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
   }
