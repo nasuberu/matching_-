@@ -50,11 +50,7 @@
         </div>
         <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 cursor-pointer">
           <input type="checkbox" id="restrict-fixed-store-checkbox" onchange="saveRestrictMatchingToFixedStore(this.checked)">
-          固定希望店舗が設定されているドライバーだけを自動マッチングの対象にする(エリア固定・それ以外のドライバーは手作業で割り当てる)
-        </label>
-        <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2 cursor-pointer">
-          <input type="checkbox" id="area-fixed-feature-checkbox" onchange="saveAreaFixedFeatureEnabled(this.checked)">
-          🗺️ エリア固定機能を使う(OFFにすると、取込み時のエリア固定シートの自動取込み・マッチング時の考慮を止めます。ドライバーマスタに保存済みの設定自体は消えません)
+          固定希望店舗が設定されているドライバーだけを自動マッチングの対象にする(グループ所属・それ以外のドライバーは手作業で割り当てる)
         </label>
       </div>
 
@@ -252,7 +248,6 @@
               <p>※ 指定した年月のうち、その曜日に該当するすべての日付に展開して依頼を作成します。再取込みすると同じ枠は上書き更新されます</p>
               <p>※ 「備考」欄に社員番号(5〜7桁の数字)らしき記載、または(AI解析が有効な場合)「できれば髙橋さん希望」のような自由な文章があれば、固定希望店舗の候補として「要確認」に表示します。どんなに強い希望の記載があってもドライバーマスタを自動で書き換えることはしません。設定したい場合はドライバーマスタの一覧から手動で行ってください(一覧の「固定希望店舗」列はその場で編集できます)</p>
               <p>※ AI解析が有効な場合、「できれば」等の弱い希望やNG(除外)の判定は、固定希望店舗には反映されませんが、自動マッチングを実行するたびにその店舗依頼のスコア(優先順位)に考慮されます</p>
-              <p>※ 同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、それも自動であわせて取込みます(シートを選ぶ必要はありません。無ければ何もしません)</p>
               <p>※ ファイル内に「店舗名」という見出しを持つシートが複数ある場合は、ファイル選択時に選択肢が表示されます。正しいシートを選んでから取込み実行してください(選ばないと先頭に見つかったシートが自動で使われます)</p>
             </div>
           </details>
@@ -290,9 +285,6 @@
         <button id="store-view-table-btn" onclick="switchStoreViewMode('table')" class="text-xs px-3 py-1.5 rounded-lg font-bold bg-blue-600 text-white">📊 表で見る</button>
         <input id="store-search" oninput="renderStoreTab()" placeholder="🔍 店舗名・店番で検索" class="p-1.5 border rounded text-xs min-w-[160px]">
         <span id="store-table-summary" class="text-xs text-slate-500"></span>
-        <span id="store-table-legend" class="text-[11px] text-slate-500">
-          <span class="inline-block w-3 h-3 rounded-sm bg-indigo-50 border border-indigo-300 align-middle mr-1"></span>🔀 = エリア固定(SV)からのプール需要(店舗自身の通常の依頼ではありません)
-        </span>
       </div>
       <div id="store-list" class="hidden space-y-2"></div>
       <div id="store-table-wrap" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-auto max-h-[70vh]">
@@ -348,34 +340,40 @@
 
         <div id="dr-fixed-store-history" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] text-slate-500 space-y-1"></div>
 
-        <details id="dr-area-fixed-details" class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-          <summary class="cursor-pointer select-none text-xs font-bold text-indigo-700">🗺️ エリア固定の設定(任意)</summary>
-          <div class="pt-2 space-y-2">
-            <label class="flex items-center gap-2 text-xs font-bold text-slate-700">
-              <input type="checkbox" id="dr-area-fixed-enabled">
-              エリア固定を有効にする(店舗を1つに固定するのではなく、決まった曜日・時間帯で複数の候補店舗の中から優先的に割り当てる)
-            </label>
-            <div class="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
-              <div><p class="text-[10px] text-slate-500 text-center">月</p><input id="dr-af-mon" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">火</p><input id="dr-af-tue" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">水</p><input id="dr-af-wed" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">木</p><input id="dr-af-thu" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">金</p><input id="dr-af-fri" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">土</p><input id="dr-af-sat" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-              <div><p class="text-[10px] text-slate-500 text-center">日</p><input id="dr-af-sun" placeholder="10:00-22:00" class="p-1.5 border rounded text-xs w-full"></div>
-            </div>
-            <div>
-              <p class="text-xs text-slate-500 mb-1">候補店舗(想定デポ、複数選択可。この中からマッチング時に優先的に割り当てられます)</p>
-              <input id="dr-af-store-search" placeholder="店舗名で絞り込み" oninput="renderAreaFixedStoreList()" class="p-1.5 border rounded text-xs w-full mb-1">
-              <div id="dr-af-store-list" class="max-h-36 overflow-y-auto border border-slate-200 rounded p-2 grid grid-cols-2 sm:grid-cols-3 gap-1 bg-white"></div>
-            </div>
-          </div>
-        </details>
+        <p class="text-[11px] text-slate-400">グループ(複数店舗を複数人で回す場合)への所属は、この下の「🧑‍🤝‍🧑 グループ管理」から設定してください</p>
 
         <div class="flex gap-2">
           <button id="dr-submit-btn" onclick="saveDriver()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 登録する</button>
           <button id="dr-cancel-btn" onclick="cancelDriverEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
         </div>
+        </div>
+      </details>
+
+      <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+        <summary class="font-bold text-slate-800 cursor-pointer select-none">🧑‍🤝‍🧑 グループ管理(複数店舗を複数人で回す)</summary>
+        <div class="pt-3 space-y-3">
+          <p class="text-xs text-slate-500">「2店舗を3人で回す」のように、複数のドライバーと複数の店舗をまとめて紐付けます。マッチング時は、グループの誰か(希望シフトを出している人)がグループの店舗に優先的に割り当てられます(優先順位は下の「⚙️ マッチングの優先順位の設定」で調整できます)。1人のドライバーが複数のグループに所属することもできます。</p>
+          <div id="driver-groups-list" class="space-y-1.5"></div>
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+            <p id="dg-form-title" class="text-xs font-bold text-slate-600">新しいグループを作成</p>
+            <input id="dg-name" placeholder="グループ名(例: 銀座エリア班)" class="p-2 border rounded text-sm w-full">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p class="text-xs text-slate-500 mb-1">紐付ける店舗(複数選択可)</p>
+                <input id="dg-store-search" placeholder="店舗名で絞り込み" oninput="renderGroupStorePicker()" class="p-1.5 border rounded text-xs w-full mb-1">
+                <div id="dg-store-list" class="max-h-36 overflow-y-auto border border-slate-200 rounded p-2 grid grid-cols-2 gap-1 bg-white"></div>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500 mb-1">所属させるドライバー(複数選択可)</p>
+                <input id="dg-driver-search" placeholder="氏名で絞り込み" oninput="renderGroupDriverPicker()" class="p-1.5 border rounded text-xs w-full mb-1">
+                <div id="dg-driver-list" class="max-h-36 overflow-y-auto border border-slate-200 rounded p-2 grid grid-cols-2 gap-1 bg-white"></div>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button id="dg-submit-btn" onclick="saveDriverGroup()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-sm">＋ 作成する</button>
+              <button id="dg-cancel-btn" onclick="cancelGroupEdit()" class="hidden text-slate-500 px-4 py-2 text-sm">キャンセル</button>
+            </div>
+          </div>
         </div>
       </details>
 
@@ -635,7 +633,7 @@
     <div id="tab-help" class="hidden space-y-4">
       <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-2">
         <h2 class="font-bold text-slate-800">❓ 使い方・よくある質問</h2>
-        <p class="text-xs text-slate-500">困ったときはキーワードで検索してください(例:「固定希望店舗」「候補が見つからない」「エリア固定」「取込み」など)</p>
+        <p class="text-xs text-slate-500">困ったときはキーワードで検索してください(例:「固定希望店舗」「候補が見つからない」「グループ」「取込み」など)</p>
         <input id="help-search" oninput="renderHelpTopics()" placeholder="🔍 キーワードで検索" class="p-2 border rounded text-sm w-full">
       </div>
 
@@ -846,7 +844,7 @@
       <details class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">📥 取込み履歴(取り消しもここから)</summary>
         <div class="pt-3 space-y-2">
-          <p class="text-xs text-slate-500">「店舗依頼取込み」「希望シフト」「エリア固定」の一括取込みを、新しい順に最大50件表示します。間違えて取り込んだ・テストで入れた・入れ直したい場合は「取り消す」でまとめて削除できます(確定/完了のマッチングが既にある分は取り消せません)。</p>
+          <p class="text-xs text-slate-500">「店舗依頼取込み」「希望シフト」の一括取込みを、新しい順に最大50件表示します。間違えて取り込んだ・テストで入れた・入れ直したい場合は「取り消す」でまとめて削除できます(確定/完了のマッチングが既にある分は取り消せません)。</p>
           <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-100 rounded">
             <table class="w-full text-xs border-collapse">
               <thead><tr class="text-left text-slate-500 border-b sticky top-0 bg-white"><th class="p-1.5">日時</th><th class="p-1.5">種類</th><th class="p-1.5">ファイル名</th><th class="p-1.5">補足</th><th class="p-1.5 text-right">取込み件数</th><th class="p-1.5 text-right">現在も有効</th><th class="p-1.5">状態</th><th class="p-1.5"></th></tr></thead>
@@ -921,7 +919,7 @@
         document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
         document.getElementById(`btn-nav-${t}`).className = `px-4 py-2.5 font-bold text-sm border-b-2 whitespace-nowrap ${t === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`;
       });
-      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); loadAreaFixedFeatureEnabled(); }
+      if (tab === 'matches') { loadMatches(); loadAvSearchStoreSelect(); loadPriorityTierSettings(); loadRestrictMatchingToFixedStore(); }
       if (tab === 'store') { loadStoreRequests(); }
       if (tab === 'availability') { loadDriversForSelect(); loadAvailability(); }
       if (tab === 'storemaster') loadStoreMaster();
@@ -1111,8 +1109,8 @@
         driverFormStoresCache.map(s => `<option value="${esc(storeOptionLabel(s))}">`).join('');
       renderDuplicateFixedStoreAlert();
       renderFixedStoreNgConflictAlert((await ngConflictsRes.json()).conflicts || []);
-      renderAreaFixedStoreList();
       renderDriverList();
+      loadDriverGroups();
     }
 
     // 固定希望店舗なのに相性でNGにしている(矛盾した)組み合わせを警告する。自動マッチングでは
@@ -1161,46 +1159,116 @@
       loadDrivers();
     }
 
-    // ===== エリア固定(曜日ごとの決まった時間帯で、複数の候補店舗から優先的に割り当てる仕組み) =====
     let driverFormStoresCache = [];
-    let selectedAreaFixedStoreIds = new Set();
-    const AREA_FIXED_WEEKDAYS = [['mon', '月'], ['tue', '火'], ['wed', '水'], ['thu', '木'], ['fri', '金'], ['sat', '土'], ['sun', '日']];
 
-    function renderAreaFixedStoreList() {
-      const el = document.getElementById('dr-af-store-list');
-      const keyword = normalizeForSearch(document.getElementById('dr-af-store-search').value.trim());
+    // ===== ドライバーグループ(旧「エリア固定」の置き換え。「2店舗を3人で回す」のように、複数の
+    // ドライバー×複数の店舗をまとめて紐付ける。1人が複数のグループに所属してもよい) =====
+    let driverGroupsCache = [];
+    let selectedGroupStoreIds = new Set();
+    let selectedGroupDriverIds = new Set();
+    let editingGroupId = null;
+
+    async function loadDriverGroups() {
+      const res = await fetch('/api/driver-groups');
+      const data = await res.json();
+      driverGroupsCache = data.groups || [];
+      renderDriverGroupsList();
+      renderGroupStorePicker();
+      renderGroupDriverPicker();
+    }
+
+    function renderDriverGroupsList() {
+      const el = document.getElementById('driver-groups-list');
+      if (!el) return;
+      if (driverGroupsCache.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs p-2">まだグループが登録されていません</p>'; return; }
+      el.innerHTML = driverGroupsCache.map(g => `
+        <div class="bg-white border border-slate-200 rounded-lg p-2 flex justify-between items-start gap-2">
+          <div>
+            <p class="font-bold text-sm">${esc(g.name)}</p>
+            <p class="text-xs text-slate-500">店舗: ${g.stores.map(s => esc(s.name)).join('・') || '(未設定)'}</p>
+            <p class="text-xs text-slate-500">所属: ${g.members.map(m => esc(m.name)).join('・') || '(未設定)'}</p>
+          </div>
+          <div class="flex gap-1 whitespace-nowrap">
+            <button onclick="editDriverGroup(${g.id})" class="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded font-bold hover:bg-slate-200">編集</button>
+            <button onclick="deleteDriverGroup(${g.id})" class="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded font-bold hover:bg-red-100">削除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderGroupStorePicker() {
+      const el = document.getElementById('dg-store-list');
+      if (!el) return;
+      const keyword = normalizeForSearch(document.getElementById('dg-store-search').value.trim());
       const rows = keyword ? driverFormStoresCache.filter(s => normalizeForSearch(s.name).includes(keyword)) : driverFormStoresCache;
       if (rows.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs col-span-full p-1">該当する店舗がありません</p>'; return; }
       el.innerHTML = rows.map(s => `
         <label class="flex items-center gap-1 text-xs truncate" title="${esc(s.name)}">
-          <input type="checkbox" value="${s.id}" ${selectedAreaFixedStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleAreaFixedStore(${s.id}, this.checked)">
+          <input type="checkbox" value="${s.id}" ${selectedGroupStoreIds.has(s.id) ? 'checked' : ''} onchange="toggleGroupStore(${s.id}, this.checked)">
           ${esc(s.name)}
         </label>
       `).join('');
     }
+    function toggleGroupStore(id, checked) { if (checked) selectedGroupStoreIds.add(id); else selectedGroupStoreIds.delete(id); }
 
-    function toggleAreaFixedStore(id, checked) {
-      if (checked) selectedAreaFixedStoreIds.add(id); else selectedAreaFixedStoreIds.delete(id);
+    function renderGroupDriverPicker() {
+      const el = document.getElementById('dg-driver-list');
+      if (!el) return;
+      const keyword = normalizeForSearch(document.getElementById('dg-driver-search').value.trim());
+      const rows = keyword ? driversCache.filter(d => normalizeForSearch(d.name).includes(keyword)) : driversCache;
+      if (rows.length === 0) { el.innerHTML = '<p class="text-slate-400 text-xs col-span-full p-1">該当するドライバーがいません</p>'; return; }
+      el.innerHTML = rows.map(d => `
+        <label class="flex items-center gap-1 text-xs truncate" title="${esc(d.name)}">
+          <input type="checkbox" value="${d.id}" ${selectedGroupDriverIds.has(d.id) ? 'checked' : ''} onchange="toggleGroupDriver(${d.id}, this.checked)">
+          ${esc(d.name)}
+        </label>
+      `).join('');
+    }
+    function toggleGroupDriver(id, checked) { if (checked) selectedGroupDriverIds.add(id); else selectedGroupDriverIds.delete(id); }
+
+    async function saveDriverGroup() {
+      const name = document.getElementById('dg-name').value.trim();
+      if (!name) { alert('グループ名を入力してください'); return; }
+      const payload = { id: editingGroupId, name, store_ids: [...selectedGroupStoreIds], driver_ids: [...selectedGroupDriverIds] };
+      const res = await fetch('/api/driver-groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { alert(data.message || '保存に失敗しました'); return; }
+      cancelGroupEdit();
+      loadDriverGroups();
     }
 
-    function getAreaFixedFormValues() {
-      return {
-        area_fixed_enabled: document.getElementById('dr-area-fixed-enabled').checked,
-        area_fixed_pattern: Object.fromEntries(AREA_FIXED_WEEKDAYS.map(([key]) => [key, document.getElementById(`dr-af-${key}`).value.trim()])),
-        area_fixed_store_ids: [...selectedAreaFixedStoreIds]
-      };
+    function editDriverGroup(id) {
+      const g = driverGroupsCache.find(x => x.id === id);
+      if (!g) return;
+      editingGroupId = id;
+      document.getElementById('dg-name').value = g.name;
+      selectedGroupStoreIds = new Set(g.stores.map(s => s.id));
+      selectedGroupDriverIds = new Set(g.members.map(m => m.id));
+      document.getElementById('dg-store-search').value = '';
+      document.getElementById('dg-driver-search').value = '';
+      renderGroupStorePicker();
+      renderGroupDriverPicker();
+      document.getElementById('dg-submit-btn').textContent = '更新する';
+      document.getElementById('dg-cancel-btn').classList.remove('hidden');
     }
 
-    function setAreaFixedFormValues(d) {
-      document.getElementById('dr-area-fixed-enabled').checked = !!d.area_fixed_enabled;
-      let pattern = {};
-      try { pattern = d.area_fixed_pattern ? JSON.parse(d.area_fixed_pattern) : {}; } catch (e) { /* ignore */ }
-      AREA_FIXED_WEEKDAYS.forEach(([key]) => { document.getElementById(`dr-af-${key}`).value = pattern[key] || ''; });
-      let storeIds = [];
-      try { storeIds = d.area_fixed_store_ids ? JSON.parse(d.area_fixed_store_ids) : []; } catch (e) { /* ignore */ }
-      selectedAreaFixedStoreIds = new Set(storeIds);
-      document.getElementById('dr-af-store-search').value = '';
-      renderAreaFixedStoreList();
+    function cancelGroupEdit() {
+      editingGroupId = null;
+      document.getElementById('dg-name').value = '';
+      selectedGroupStoreIds = new Set();
+      selectedGroupDriverIds = new Set();
+      document.getElementById('dg-store-search').value = '';
+      document.getElementById('dg-driver-search').value = '';
+      renderGroupStorePicker();
+      renderGroupDriverPicker();
+      document.getElementById('dg-submit-btn').textContent = '＋ 作成する';
+      document.getElementById('dg-cancel-btn').classList.add('hidden');
+    }
+
+    async function deleteDriverGroup(id) {
+      if (!confirm('このグループを削除しますか？(所属ドライバー・店舗の紐付けが消えるだけで、ドライバー本体は削除されません)')) return;
+      await fetch(`/api/driver-groups/${id}`, { method: 'DELETE' });
+      loadDriverGroups();
     }
 
     function getVisibleDrivers() {
@@ -1243,7 +1311,7 @@
             <td class="p-2.5 text-xs">
               <input type="text" list="store-datalist" value="${esc(storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)))}"
                 onchange="handleFixedStoreInputChange(${d.id}, this)" placeholder="検索(店舗名・店番)" class="p-1 border rounded text-xs w-full max-w-[340px]">
-              ${d.area_fixed_enabled ? '<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🗺️エリア固定</span>' : ''}
+              ${(d.groups || []).map(g => `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 block mt-0.5 w-fit">🧑‍🤝‍🧑${esc(g.name)}</span>`).join('')}
               ${d.fixed_store_priority != null ? `<span class="text-[10px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-700 block mt-0.5 w-fit">優先順位${d.fixed_store_priority}</span>` : ''}
               ${pendingSuggestions.map(s => `
                 <div class="mt-1 bg-amber-50 border border-amber-200 rounded p-1.5 text-[10px] text-amber-800 max-w-[200px]">
@@ -1406,7 +1474,6 @@
       document.getElementById('dr-fixed-store').value = d.fixed_store_id ? storeOptionLabel(driverFormStoresCache.find(s => s.id === d.fixed_store_id)) : '';
       document.getElementById('dr-insurance').value = d.insurance_info || '';
       document.getElementById('dr-notes').value = d.notes || '';
-      setAreaFixedFormValues(d);
       loadDriverFixedStoreHistory(id);
       document.getElementById('dr-submit-btn').textContent = '更新する';
       document.getElementById('dr-cancel-btn').classList.remove('hidden');
@@ -1417,7 +1484,6 @@
       editingDriverId = null;
       document.getElementById('dr-fixed-store-history').classList.add('hidden');
       ['dr-name', 'dr-furigana', 'dr-code', 'dr-company', 'dr-phone', 'dr-vehicle', 'dr-home-address', 'dr-first-contract', 'dr-status', 'dr-email', 'dr-fixed-store', 'dr-insurance', 'dr-notes'].forEach(id => document.getElementById(id).value = '');
-      setAreaFixedFormValues({});
       document.getElementById('dr-submit-btn').textContent = '＋ 登録する';
       document.getElementById('dr-cancel-btn').classList.add('hidden');
     }
@@ -1440,8 +1506,7 @@
         email: document.getElementById('dr-email').value.trim(),
         fixed_store_id: fixedStoreMatch ? fixedStoreMatch.id : null,
         insurance_info: document.getElementById('dr-insurance').value.trim(),
-        notes: document.getElementById('dr-notes').value.trim(),
-        ...getAreaFixedFormValues()
+        notes: document.getElementById('dr-notes').value.trim()
       };
       if (editingDriverId) payload.id = editingDriverId;
       const res = await fetch('/api/drivers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -1921,27 +1986,6 @@
         html = `<span class="text-emerald-600 font-bold">✅ ${data.imported}件の店舗依頼を作成しました${data.fixedStoreSuggestions > 0 ? `(固定希望店舗の候補を${data.fixedStoreSuggestions}件検出、下記の要確認を参照)` : ''}</span>`;
         if (data.errors && data.errors.length > 0) {
           html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ 要確認(${data.errors.length}件):</p><ul class="list-disc pl-4">${data.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
-        }
-
-        // 同じファイルの別シートに「エリア固定」の表(想定デポ列)があれば、あわせて取込む。
-        // 無ければ/api/drivers/import-area-fixed側が何もせずskipped:trueを返すだけなので、画面には何も出ない
-        const areaForm = new FormData();
-        areaForm.append('file', fileInput.files[0]);
-        areaForm.append('year', year);
-        areaForm.append('month', month);
-        const areaRes = await fetch('/api/drivers/import-area-fixed', { method: 'POST', body: areaForm });
-        const areaData = await areaRes.json();
-        if (!areaData.success) {
-          html += `<div class="mt-1 text-red-600 font-bold">❌ エリア固定の取込みに失敗しました: ${esc(areaData.message || '')}</div>`;
-        } else if (!areaData.skipped) {
-          const parts = [];
-          if (areaData.imported > 0) parts.push(`${areaData.imported}人分のエリア固定を設定`);
-          if (areaData.poolRequestsCreated > 0) parts.push(`SV担当エリアの店舗依頼を${areaData.poolRequestsCreated}件作成(誰でも応募可、候補店舗のいずれか1つで必要人数が埋まればOK)`);
-          if (parts.length > 0) html += `<div class="mt-1 text-indigo-700 font-bold">✅ エリア固定: ${parts.join(' / ')}</div>`;
-          if (areaData.errors && areaData.errors.length > 0) {
-            html += `<div class="mt-1 text-amber-600"><p class="font-bold">⚠️ エリア固定で要確認(${areaData.errors.length}件):</p><ul class="list-disc pl-4">${areaData.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
-          }
-          loadDrivers(); // エリア固定の設定はドライバーマスタ側の表示にも影響するため、キャッシュを更新しておく
         }
       }
       resultEl.innerHTML = html;
@@ -2853,27 +2897,6 @@
       await fetch('/api/settings/restrict-matching-to-fixed-store', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: checked })
       });
-    }
-
-    async function loadAreaFixedFeatureEnabled() {
-      const res = await fetch('/api/settings/area-fixed-enabled');
-      const data = await res.json();
-      document.getElementById('area-fixed-feature-checkbox').checked = !!data.enabled;
-      updateAreaFixedFormVisibility(!!data.enabled);
-    }
-
-    async function saveAreaFixedFeatureEnabled(checked) {
-      await fetch('/api/settings/area-fixed-enabled', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: checked })
-      });
-      updateAreaFixedFormVisibility(checked);
-    }
-
-    // エリア固定機能がOFFの間は、ドライバー登録フォームの「🗺️ エリア固定の設定」欄を隠す
-    // (概念ごと一旦考えないようにしたい、という目的のため)
-    function updateAreaFixedFormVisibility(enabled) {
-      const el = document.getElementById('dr-area-fixed-details');
-      if (el) el.classList.toggle('hidden', !enabled);
     }
 
     // ===== マッチングの優先順位(階層)の設定 =====
@@ -4543,11 +4566,11 @@
         '「マッチング・結果」タブの「✅ 候補を全て確定にする」で候補を確定にしてから、ダッシュボードの「📨 シフト表の送付」にある「個人事業主向け シフト表」「店舗向け シフト表」のExcelボタンでそれぞれ一括ダウンロードできます(1人/1店舗ごとにシート分け)。\nまた「📋 マッチング結果一覧(SV確認シート形式)」では、日付・社員番号・名前・シフト・出勤場所・勤務時間の一覧表やExcel(1シート)でも出力できます。' },
       { category: 'マッチング・結果', title: 'マッチングの優先順位を変えたい', body:
         '「⚙️ マッチングの優先順位の設定」パネルで、どの条件を優先するか選んでチェックを入れ、↑↓で並び替えられます。チェックを入れた項目の候補を上から順に全店舗分先に確保し、残りは通常のスコアリングで埋めます。保存すると次回の自動マッチングから反映されます。' },
-      { category: 'マッチング・結果', title: '固定希望店舗・エリア固定とは？', body:
-        '・固定希望店舗: そのドライバーがいつも行く決まった店舗(ドライバーマスタで設定)。希望シフトで店舗未入力の日の初期値として使われ、「マッチングの優先順位」で最優先にすることもできる。1ヶ月間ずっと同じ店舗に割り当てられている、または店舗依頼の備考(社員番号やAI解析)から示唆された場合は、ドライバーマスタ一覧に💡候補として表示される(自動では設定されない。採用するかはコーディネーターが一覧から手動で判断する)。\n・エリア固定(個人事業主ごと): 店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗(想定デポ)の中から、その日の空き状況に応じて優先的に割り当てる仕組み。希望シフト未提出の日だけ適用される。\n・エリア固定(SVのエリア需要): エリア固定の取込みデータで、名前がドライバーマスタに登録されていない(=SV等、個人事業主ではない)場合は、「そのSVが担当するエリア(候補店舗群)全体で、指定人数が必要」という店舗側の需要として扱われる。特定の個人には紐付けず、候補店舗のうちどれか1つに合計の必要人数が埋まればよい(店舗依頼一覧に🔀バッジ付きで表示される)。' },
+      { category: 'マッチング・結果', title: '固定希望店舗・グループとは？', body:
+        '・固定希望店舗: そのドライバーがいつも行く決まった店舗(ドライバーマスタで設定)。希望シフトで店舗未入力の日の初期値として使われ、「マッチングの優先順位」で最優先にすることもできる。1ヶ月間ずっと同じ店舗に割り当てられている、または店舗依頼の備考(社員番号やAI解析)から示唆された場合は、ドライバーマスタ一覧に💡候補として表示される(自動では設定されない。採用するかはコーディネーターが一覧から手動で判断する)。\n・グループ: 「2店舗を3人で回す」のように、複数のドライバーと複数の店舗をまとめて紐付けておく仕組み(ドライバーマスタの「🧑‍🤝‍🧑 グループ管理」から設定)。マッチング時は、グループの誰か(その日の希望シフトを提出している人)を、グループに紐付いた店舗に優先的に割り当てる。優先順位は「マッチングの優先順位の設定」で調整でき、初期値は固定希望店舗の次。1人のドライバーが複数のグループに所属してもよい。' },
 
       { category: '店舗依頼', title: '店舗依頼の登録方法', body:
-        '1件ずつ手入力のほか、「📥 店舗依頼取込み」から店舗×曜日ごとの時間帯表(週次パターン)をExcel/CSVで一括取込みできます。指定した年月の実際の日付に展開して登録し、同じ店舗・同じ曜日・同じ時間帯の行が複数あれば必要人数として合算します。\n「店番」の列(任意)があれば、店舗名の表記ゆれに関係なく確実に同じ店舗として照合できます。\n同じファイルの別シートに「氏名」「想定デポ(候補店舗)」の見出しを含む表(エリア固定の依頼)があれば、ボタンを分けなくても自動であわせて取込まれます。' },
+        '1件ずつ手入力のほか、「📥 店舗依頼取込み」から店舗×曜日ごとの時間帯表(週次パターン)をExcel/CSVで一括取込みできます。指定した年月の実際の日付に展開して登録します。同じ店舗・同じ曜日・同じ時間帯の行が複数あっても合算はせず、元のシート通り別々の店舗依頼として取り込みます。\n「店番」の列(任意)があれば、店舗名の表記ゆれに関係なく確実に同じ店舗として照合できます。' },
       { category: '店舗依頼', title: 'セルに「*2」と書くと？', body:
         '店舗依頼取込みで、時間帯の後ろに「10-22*2」のように「*(数字)」を付けると、その曜日だけ人数分(例の場合は2人分)として数えます。' },
       { category: '店舗依頼', title: '「要確認」と出た行はどうすればいい？', body:
@@ -4565,8 +4588,8 @@
 
       { category: 'ドライバーマスタ', title: 'ドライバーマスタの管理', body:
         '氏名・社員コード・会社名・電話番号・車両種別・自宅住所・初回委託日・ステータス・メール・固定希望店舗・保険加入状況・備考を登録できます。検索・並び替え・複数選択一括編集に対応しています。' },
-      { category: 'ドライバーマスタ', title: 'エリア固定の設定方法', body:
-        '1件ずつなら、ドライバーの登録・編集フォームにある「🗺️ エリア固定の設定」から、有効化チェック・曜日ごとの時間帯・候補店舗(複数選択)を設定します。\nまとめて設定したい場合は、店舗依頼タブの「📥 店舗依頼取込み」で取込みます(同じExcelファイルの別シートに、氏名・曜日ごとの時間帯・想定デポ(候補店舗)を書いた表があれば、専用のボタンを押さなくても自動であわせて取込まれます)。\n取込みデータの名前がドライバーマスタに居ない場合(SVの名前など)は、個人への設定ではなく「そのエリア全体で指定人数が必要」という店舗依頼として取込まれます(候補店舗のうちどれか1つで必要人数が埋まればOK、誰でも応募できます)。' },
+      { category: 'ドライバーマスタ', title: 'グループの設定方法', body:
+        'ドライバーマスタの「🧑‍🤝‍🧑 グループ管理」パネルで設定します。グループ名を付けて、紐付ける店舗(複数選択可)・所属させるドライバー(複数選択可)を選び、「＋ 作成する」で登録します。\n1人のドライバーが複数のグループに所属することもできます。編集・削除は一覧の各グループの「編集」「削除」ボタンから行えます(削除してもドライバー本体や店舗は消えず、紐付けだけが消えます)。' },
 
       { category: '店舗相性マスタ', title: '相性の設定方法と見方', body:
         'NG〜1〜2〜3〜4〜5〜OKの7段階で設定します。「NG」は自動マッチングの候補から除外され、数字が大きい/「OK」ほど優先度が上がります。\n「ドライバー別に見る」(1人の全店舗分)、「店舗別に見る」(1店舗の全ドライバー分)、「全件表示」(設定済み全件を一覧)の3つの見方があります。' },
@@ -4637,7 +4660,6 @@
     switchTab(initialTab);
     loadMockToday(); // ヘッダーの日付表示はどのタブからでも常に見えるよう、起動時に1回読み込んでおく
     loadCurrentUser(); // ヘッダーに「ログイン中: 氏名」を出す
-    loadAreaFixedFeatureEnabled(); // ドライバー登録フォームの「エリア固定」欄の表示/非表示を、タブに関わらず最初から合わせておく
   </script>
 </body>
 </html>

@@ -330,6 +330,30 @@ db.serialize(() => {
     )
   `);
 
+  // ドライバーグループ(「2店舗を3人で回す」のように、複数のドライバーと複数の店舗をまとめて紐付ける仕組み)。
+  // 旧「エリア固定」機能の置き換え。1人のドライバーが複数のグループに所属することもできる
+  db.run(`
+    CREATE TABLE IF NOT EXISTS driver_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at TEXT
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS driver_group_stores (
+      group_id INTEGER NOT NULL REFERENCES driver_groups(id),
+      store_id INTEGER NOT NULL REFERENCES stores(id),
+      PRIMARY KEY (group_id, store_id)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS driver_group_members (
+      group_id INTEGER NOT NULL REFERENCES driver_groups(id),
+      driver_id INTEGER NOT NULL REFERENCES drivers(id),
+      PRIMARY KEY (group_id, driver_id)
+    )
+  `);
+
   // 既存テーブルへのカラム追加(運用中のDBを壊さないよう、無ければ追加する形で行う)
   ensureColumn('store_requests', 'store_id', 'INTEGER REFERENCES stores(id)');
   ensureColumn('matches', 'score', 'REAL');
@@ -598,8 +622,8 @@ async function finalizeImportBatch(batchId, rowCount) {
 // 既に同じ店舗が設定済みなら何もしない)。確定・完了操作のたびに呼び出す想定。
 // ※以前はここでドライバーマスタを自動で書き換えていたが、自動で勝手に書き換えないでほしいという
 // 要望を受け、候補の記録のみに変更した(実際に設定するかはコーディネーターがドライバーマスタ画面で判断する)。
-// エリア固定が有効なドライバーは対象外(たまたま数日同じ店舗が続いただけで固定希望店舗の候補にしてしまうと、
-// 本来は複数の候補店舗を柔軟に回る設計のエリア固定の良さを分かりにくくしてしまうため)
+// グループに所属しているドライバーは対象外(たまたま数日同じ店舗が続いただけで固定希望店舗の候補に
+// してしまうと、複数店舗を柔軟に回るグループの良さを分かりにくくしてしまうため)
 async function applyAutoFixedStoreFromMatches() {
   const rows = await dbAll(`
     SELECT m.driver_id, s.store_id, st.name AS store_name, d.fixed_store_id
@@ -607,7 +631,8 @@ async function applyAutoFixedStoreFromMatches() {
     JOIN store_requests s ON s.id = m.store_request_id
     JOIN drivers d ON d.id = m.driver_id
     LEFT JOIN stores st ON st.id = s.store_id
-    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了') AND d.area_fixed_enabled = 0
+    WHERE m.archived_month IS NULL AND m.status IN ('確定', '完了')
+      AND d.id NOT IN (SELECT driver_id FROM driver_group_members)
   `);
   const byDriver = new Map(); // driver_id -> { storeIds: Set, storeName, count, currentFixedStoreId }
   for (const r of rows) {
@@ -817,6 +842,11 @@ const TIER_CATALOG = {
     description: '1ヶ月間ずっと同じ店舗に割り当てられた等でドライバーマスタの「固定希望店舗」に設定されている店舗を最優先する',
     test: (a, store) => a.fixed_store_id === store.store_id
   },
+  group_fixed: {
+    label: 'グループの紐付け店舗',
+    description: '「2店舗を3人で回す」のように、ドライバーグループに紐付けた店舗を優先する(1人のドライバーが複数のグループに所属していてもよい)',
+    test: (a, store, ctx) => (ctx.groupStoreIdsByDriverId.get(a.driver_id) || new Set()).has(store.store_id)
+  },
   desired_store_match: {
     label: '希望シフトで指定した店舗',
     description: 'その日の希望シフトで本人が明示的に指定した店舗(固定希望店舗からの自動補完ではなく、本人が入力したもの)を優先する',
@@ -826,11 +856,6 @@ const TIER_CATALOG = {
     label: '希望エリアが一致',
     description: 'その日の希望シフトで指定した希望エリアと、店舗のエリアが一致する場合を優先する',
     test: (a, store) => !!a.desired_area && !!store.area && a.desired_area === store.area
-  },
-  area_fixed: {
-    label: 'エリア固定の候補店舗',
-    description: 'エリア固定が有効なドライバーについて、その候補店舗(想定デポ)リストに含まれる店舗を優先する',
-    test: (a, store, ctx) => (ctx.areaFixedStoreIdsByDriverId.get(a.driver_id) || []).includes(store.store_id)
   },
   preference_ok: {
     label: '店舗相性が「OK」',
@@ -859,7 +884,7 @@ const TIER_CATALOG = {
       haversineKm(a.home_lat, a.home_lng, store.lat, store.lng) <= 10
   },
 };
-const DEFAULT_ENABLED_TIER_KEYS = ['fixed_store']; // 画面でまだ設定したことが無い場合の初期値(今までの挙動を維持する)
+const DEFAULT_ENABLED_TIER_KEYS = ['fixed_store', 'group_fixed']; // 画面でまだ設定したことが無い場合の初期値
 
 // app_settingsに保存されている、有効化・並び替え済みの優先順位階層のキー配列を返す
 // (カタログに無いキーが混ざっていた場合は無視する。保存が無ければ初期値を返す)
@@ -912,15 +937,6 @@ async function findUnresolvedFixedStoreDuplicates() {
 async function getRestrictMatchingToFixedStore() {
   const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['restrict_matching_to_fixed_store']);
   return row ? row.value === '1' : false;
-}
-
-// エリア固定(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗の中から
-// 優先的に割り当てる仕組み)機能そのもののON/OFF。OFFにすると、取込み時のエリア固定シートの
-// 自動取込み・マッチング時の考慮の両方を止める(ドライバーマスタに保存済みの設定自体は消さない。
-// 画面からOFFにして、概念ごと一旦考えないようにしたい場合に使う想定)。初期値はON(従来通り)
-async function getAreaFixedFeatureEnabled() {
-  const row = await dbGet('SELECT value FROM app_settings WHERE key = ?', ['area_fixed_feature_enabled']);
-  return row ? row.value === '1' : true;
 }
 
 // 「今日の日付」をアプリ内だけ任意の日付として扱えるようにする設定(PC本体の時刻は変更しない)。
@@ -1336,15 +1352,24 @@ app.get('/api/drivers', async (req, res) => {
     LEFT JOIN stores fs ON fs.id = d.fixed_store_id
     ORDER BY d.id DESC
   `);
+  // 所属グループ(複数所属あり得る)を一覧表示用にまとめて付与する
+  const memberships = await dbAll(`
+    SELECT m.driver_id, g.id, g.name FROM driver_group_members m JOIN driver_groups g ON g.id = m.group_id
+  `);
+  const groupsByDriverId = new Map();
+  for (const m of memberships) {
+    if (!groupsByDriverId.has(m.driver_id)) groupsByDriverId.set(m.driver_id, []);
+    groupsByDriverId.get(m.driver_id).push({ id: m.id, name: m.name });
+  }
+  for (const d of rows) d.groups = groupsByDriverId.get(d.id) || [];
   res.json({ success: true, drivers: rows });
 });
 
 app.post('/api/drivers', async (req, res) => {
-  const { id, name, furigana, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes,
-          area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids } = req.body;
+  const { id, name, furigana, phone, vehicle_type, home_address, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes } = req.body;
   if (!name) return res.status(400).json({ success: false, message: '氏名は必須です' });
 
-  const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, fixed_store_id FROM drivers WHERE id = ?', [id]) : null;
+  const existing = id ? await dbGet('SELECT home_address, home_lat, home_lng, fixed_store_id FROM drivers WHERE id = ?', [id]) : null;
 
   // 住所が変わった場合のみ再ジオコーディングする(毎回叩くと無駄なため)
   let lat = null, lng = null;
@@ -1357,12 +1382,6 @@ app.post('/api/drivers', async (req, res) => {
     }
   }
 
-  // エリア固定の設定はリクエストに含まれていれば更新し、含まれていなければ(一括編集など、この項目を
-  // 扱わない呼び出し元から送られてきた場合)既存の値をそのまま維持する(意図せず消してしまわないように)
-  const finalAreaFixedEnabled = area_fixed_enabled !== undefined ? (area_fixed_enabled ? 1 : 0) : (existing ? existing.area_fixed_enabled : 0);
-  const finalAreaFixedPattern = area_fixed_pattern !== undefined ? JSON.stringify(area_fixed_pattern || {}) : (existing ? existing.area_fixed_pattern : '{}');
-  const finalAreaFixedStoreIds = area_fixed_store_ids !== undefined ? JSON.stringify(area_fixed_store_ids || []) : (existing ? existing.area_fixed_store_ids : '[]');
-
   const now = new Date().toISOString();
   if (id) {
     const newFixedStoreId = fixed_store_id || null;
@@ -1370,14 +1389,14 @@ app.post('/api/drivers', async (req, res) => {
       await logFixedStoreChange(id, existing.fixed_store_id, newFixedStoreId, 'manual');
     }
     await dbRun(
-      `UPDATE drivers SET name=?, furigana=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=?, area_fixed_enabled=?, area_fixed_pattern=?, area_fixed_store_ids=? WHERE id=?`,
-      [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', newFixedStoreId, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, id]
+      `UPDATE drivers SET name=?, furigana=?, phone=?, vehicle_type=?, home_address=?, home_lat=?, home_lng=?, driver_code=?, company_name=?, fixed_store_id=?, first_contract_date=?, status=?, email=?, insurance_info=?, notes=? WHERE id=?`,
+      [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', newFixedStoreId, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', id]
     );
     return res.json({ success: true, id });
   }
   const result = await dbRun(
-    `INSERT INTO drivers (name, furigana, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, area_fixed_enabled, area_fixed_pattern, area_fixed_store_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', finalAreaFixedEnabled, finalAreaFixedPattern, finalAreaFixedStoreIds, now]
+    `INSERT INTO drivers (name, furigana, phone, vehicle_type, home_address, home_lat, home_lng, driver_code, company_name, fixed_store_id, first_contract_date, status, email, insurance_info, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, furigana || '', phone || '', vehicle_type || '', home_address || '', lat, lng, driver_code || null, company_name || '', fixed_store_id || null, first_contract_date || '', status || '', email || '', insurance_info || '', notes || '', now]
   );
   if (fixed_store_id) await logFixedStoreChange(result.lastID, null, fixed_store_id, 'manual');
   res.json({ success: true, id: result.lastID });
@@ -1842,176 +1861,57 @@ app.post('/api/incoming-files/sheet-names', (req, res) => {
   }
 });
 
-// エリア固定(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗の中から優先的に
-// 割り当てる人)の表を取込む。列は「氏名」「月」〜「日」「想定デポ(候補店舗)」「備考」の見出しで探す
-// (見出しさえあれば、前に他のメモ行があっても大丈夫)。想定デポは「、」「・」「,」のいずれでも区切れる
-const AREA_FIXED_MARKER_HEADERS = ['想定デポ(候補店舗)', '想定デポ', '候補店舗'];
-
-app.post('/api/drivers/import-area-fixed', upload.single('file'), async (req, res) => {
-  // エリア固定機能がOFFの場合は、ファイルにその表があっても取込まない(何もせず正常終了として返す。
-  // 週間必要枠表の取込みに合わせて毎回呼ばれる呼び出し元の都合に合わせ、エラーにはしない)
-  if (!(await getAreaFixedFeatureEnabled())) {
-    return res.json({ success: true, skipped: true, imported: 0, errors: [] });
+// ===== ドライバーグループ(旧「エリア固定」の置き換え) =====
+// 「2店舗を3人で回す」のように、複数のドライバーと複数の店舗をまとめて紐付けて管理する。
+// マッチング時は、グループの誰か(希望シフトを出している人)を、グループに紐付いた店舗に
+// 優先的に割り当てる(優先順位は画面の「マッチング設定」でどこに置くか決められる。
+// 初期値は固定希望店舗の次)。1人のドライバーが複数のグループに所属することもできる
+app.get('/api/driver-groups', async (req, res) => {
+  const groups = await dbAll('SELECT * FROM driver_groups ORDER BY id DESC');
+  const storeRows = await dbAll(`
+    SELECT gs.group_id, s.id, s.name FROM driver_group_stores gs JOIN stores s ON s.id = gs.store_id
+  `);
+  const memberRows = await dbAll(`
+    SELECT m.group_id, d.id, d.name FROM driver_group_members m JOIN drivers d ON d.id = m.driver_id
+  `);
+  const storesByGroup = new Map();
+  for (const r of storeRows) { if (!storesByGroup.has(r.group_id)) storesByGroup.set(r.group_id, []); storesByGroup.get(r.group_id).push({ id: r.id, name: r.name }); }
+  const membersByGroup = new Map();
+  for (const r of memberRows) { if (!membersByGroup.has(r.group_id)) membersByGroup.set(r.group_id, []); membersByGroup.get(r.group_id).push({ id: r.id, name: r.name }); }
+  for (const g of groups) {
+    g.stores = storesByGroup.get(g.id) || [];
+    g.members = membersByGroup.get(g.id) || [];
   }
-  const source = getImportSource(req);
-  if (!source) return res.status(400).json({ success: false, message: 'ファイルが必要です(アップロードするか、所定フォルダのファイルを指定してください)' });
+  res.json({ success: true, groups });
+});
 
-  // シート名が明示指定されていない「複数シートのExcelファイル」の場合、ファイル内に「想定デポ」の
-  // 表自体が無ければ(=週間必要枠表のみのファイルを、週間必要枠表の取込みに合わせて一緒に投げてきた
-  // 場合など)エラーにはせず、何もせず正常終了として返す(呼び出し元が毎回2つの取込みをまとめて
-  // 叩けるようにするため)。CSVは複数シートを持ち得ないのでこの判定はしない(常に取込みを試みる)
-  const isMultiSheetFile = !/\.(csv|txt)$/i.test(source.filename || '');
-  if (!req.body.sheet && isMultiSheetFile) {
-    let hasAreaFixedSheet;
-    try {
-      hasAreaFixedSheet = !!findMarkerSheetName(source.buffer, source.filename, AREA_FIXED_MARKER_HEADERS);
-    } catch (e) {
-      return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
-    }
-    if (!hasAreaFixedSheet) {
-      return res.json({ success: true, skipped: true, imported: 0, errors: [] });
-    }
+app.post('/api/driver-groups', async (req, res) => {
+  const { id, name, store_ids, driver_ids } = req.body;
+  if (!name) return res.status(400).json({ success: false, message: 'グループ名は必須です' });
+  const storeIds = Array.isArray(store_ids) ? store_ids : [];
+  const driverIds = Array.isArray(driver_ids) ? driver_ids : [];
+  if (storeIds.length === 0) return res.status(400).json({ success: false, message: '店舗を1件以上選んでください' });
+  if (driverIds.length === 0) return res.status(400).json({ success: false, message: 'ドライバーを1人以上選んでください' });
+
+  let groupId = id;
+  if (groupId) {
+    await dbRun('UPDATE driver_groups SET name = ? WHERE id = ?', [name, groupId]);
+    await dbRun('DELETE FROM driver_group_stores WHERE group_id = ?', [groupId]);
+    await dbRun('DELETE FROM driver_group_members WHERE group_id = ?', [groupId]);
+  } else {
+    const result = await dbRun('INSERT INTO driver_groups (name, created_at) VALUES (?, ?)', [name, new Date().toISOString()]);
+    groupId = result.lastID;
   }
+  for (const storeId of storeIds) await dbRun('INSERT INTO driver_group_stores (group_id, store_id) VALUES (?, ?)', [groupId, storeId]);
+  for (const driverId of driverIds) await dbRun('INSERT INTO driver_group_members (group_id, driver_id) VALUES (?, ?)', [groupId, driverId]);
+  res.json({ success: true, id: groupId });
+});
 
-  const importBatchId = await createImportBatch('area_fixed', source.filename, '');
-
-  let rows;
-  try {
-    rows = parseWideSpreadsheet(source.buffer, source.filename, req.body.sheet, AREA_FIXED_MARKER_HEADERS);
-  } catch (e) {
-    return res.status(400).json({ success: false, message: 'ファイルの読み込みに失敗しました: ' + e.message });
-  }
-
-  // 「SV」は実際の元ファイルで氏名列に使われていた旧表記(SV=エリアマネージャーの意味ではなく、
-  // ここでは対象ドライバーの氏名列のラベルとして使われていた)。互換性のため引き続き受け付ける
-  const NAME_COLUMN_LABELS = ['氏名', 'ドライバー名', '名前', 'SV'];
-  let headerRowIndex = -1;
-  for (let i = 0; i < Math.min(rows.length, 10); i++) {
-    if (rows[i].some(cell => NAME_COLUMN_LABELS.includes(String(cell ?? '').trim()))) { headerRowIndex = i; break; }
-  }
-  if (headerRowIndex === -1) {
-    return res.status(400).json({ success: false, message: '見出し行(「氏名」等の列)が見つかりませんでした' });
-  }
-  const header = rows[headerRowIndex].map(h => String(h ?? '').trim());
-  const colOf = (labels) => header.findIndex(h => labels.includes(h));
-  const colName = colOf(NAME_COLUMN_LABELS);
-  const colNotes = colOf(['備考']);
-  const colDepo = colOf(['想定デポ(候補店舗)', '想定デポ', '候補店舗']);
-  const colCount = colOf(['希望人数', '人数']);
-  const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
-  const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-  const WEEKDAY_JSDAY_AF = [1, 2, 3, 4, 5, 6, 0]; // Date.getDay()に合わせる(0=日,1=月,...,6=土)
-  const weekdayCols = WEEKDAY_LABELS.map(l => colOf([l]));
-  if (weekdayCols.some(c => c === -1)) {
-    return res.status(400).json({ success: false, message: '曜日(月〜日)の列が見つかりませんでした' });
-  }
-
-  const year = req.body.year ? parseInt(req.body.year, 10) : null;
-  const month = req.body.month ? parseInt(req.body.month, 10) : null;
-  const datesByJsDay = (year && month) ? datesByWeekdayInMonth(year, month) : null;
-
-  const drivers = await dbAll('SELECT id, name, area_fixed_enabled, fixed_store_id FROM drivers');
-  const driverByName = new Map(drivers.map(d => [d.name.trim(), d]));
-
-  let imported = 0;
-  let poolRequestsCreated = 0;
-  const errors = [];
-  const now = new Date().toISOString();
-  for (let r = headerRowIndex + 1; r < rows.length; r++) {
-    const row = rows[r];
-    const name = String(row[colName] ?? '').trim();
-    if (!name) continue;
-
-    const pattern = {};
-    let hasAnyPattern = false;
-    for (let w = 0; w < WEEKDAY_LABELS.length; w++) {
-      const cell = String(row[weekdayCols[w]] ?? '').trim();
-      if (!cell) continue;
-      const timeRange = parseTimeRangeText(cell);
-      if (!timeRange) continue;
-      pattern[WEEKDAY_KEYS[w]] = timeRange;
-      hasAnyPattern = true;
-    }
-
-    const depoRaw = colDepo !== -1 ? String(row[colDepo] ?? '').trim() : '';
-    const depoNames = depoRaw.split(/[、・,，]/).map(s => s.trim()).filter(Boolean);
-
-    if (!hasAnyPattern && depoNames.length === 0) continue; // 名前だけの空行はスキップ(候補者リストの未記入分)
-
-    const storeIds = [];
-    const unresolvedStoreNames = [];
-    for (const depoName of depoNames) {
-      const store_id = await resolveStoreId({ store_name: depoName });
-      if (store_id) storeIds.push(store_id); else unresolvedStoreNames.push(depoName);
-    }
-    if (unresolvedStoreNames.length > 0) {
-      errors.push(`${r + 1}行目「${name}」: 想定デポの店舗名が認識できませんでした: ${unresolvedStoreNames.join('、')}`);
-    }
-    if (storeIds.length === 0) {
-      errors.push(`${r + 1}行目「${name}」: 候補店舗が1件も認識できなかったため、設定しませんでした`);
-      continue;
-    }
-
-    const driver = driverByName.get(name);
-    if (driver) {
-      // 個人事業主(ドライバー)本人の行: 従来通りドライバーマスタにエリア固定を設定する
-      await dbRun(
-        'UPDATE drivers SET area_fixed_enabled = 1, area_fixed_pattern = ?, area_fixed_store_ids = ?, area_fixed_batch_id = ? WHERE id = ?',
-        [JSON.stringify(Object.fromEntries(Object.entries(pattern).map(([k, v]) => [k, `${v.start}-${v.end}`]))), JSON.stringify(storeIds), importBatchId, driver.id]
-      );
-      imported++;
-      continue;
-    }
-
-    // ドライバーマスタに見つからない名前(=SVの名前など、個人事業主ではない名義)の行は、
-    // 「このSVが担当するエリア(想定デポの店舗群)全体で、指定人数が必要」という店舗側の需要として扱う。
-    // 特定の個人には紐付けず、誰でもよいので候補店舗のうちどれか1つに合計の必要人数が埋まればよい
-    // (pool_group_idを共有する店舗依頼を複数作り、マッチング側でグループ単位の合計で必要人数を判定する)
-    if (!year || !month) {
-      errors.push(`${r + 1}行目「${name}」: ドライバーマスタに見つからない名前のため店舗側の需要として取込もうとしましたが、対象年月が指定されていないため取込めませんでした`);
-      continue;
-    }
-    const requiredCount = colCount !== -1 ? (parseInt(String(row[colCount] ?? '').trim(), 10) || 1) : 1;
-    const rowNotes = colNotes !== -1 ? String(row[colNotes] ?? '').trim() : '';
-    const storeInfoRows = await dbAll(`SELECT id, name, area, address, lat, lng FROM stores WHERE id IN (${storeIds.map(() => '?').join(',')})`, storeIds);
-    const storeInfoById = new Map(storeInfoRows.map(s => [s.id, s]));
-    const storeNamesForNote = storeInfoRows.map(s => s.name).filter(Boolean);
-
-    for (const [weekdayKey, timeRange] of Object.entries(pattern)) {
-      const jsDay = WEEKDAY_JSDAY_AF[WEEKDAY_KEYS.indexOf(weekdayKey)];
-      for (const day of (datesByJsDay[jsDay] || [])) {
-        const request_date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        const poolGroupId = `af_pool_${normalizeNameForMatch(name)}_${request_date}`;
-
-        const siblings = await dbAll('SELECT id FROM store_requests WHERE pool_group_id = ? AND archived_month IS NULL', [poolGroupId]);
-        if (siblings.length > 0) {
-          const hasConfirmed = await dbGet(
-            `SELECT 1 FROM matches WHERE store_request_id IN (${siblings.map(() => '?').join(',')}) AND status IN ('確定', '完了') AND archived_month IS NULL`,
-            siblings.map(s => s.id)
-          );
-          if (hasConfirmed) {
-            errors.push(`${r + 1}行目「${name}」: ${request_date}は既に確定/完了のマッチングがあるため、候補店舗の更新をスキップしました`);
-            continue;
-          }
-          await dbRun(`DELETE FROM store_requests WHERE pool_group_id = ?`, [poolGroupId]);
-        }
-
-        const requests = `【エリア固定プール: ${name}さん担当エリア】候補店舗(いずれか1つで可): ${storeNamesForNote.join('・')}${rowNotes ? ` / ${rowNotes}` : ''}`;
-        for (const storeId of storeIds) {
-          const storeInfo = storeInfoById.get(storeId);
-          await dbRun(
-            `INSERT INTO store_requests (store_name, area, address, lat, lng, request_date, time_start, time_end, required_count, requests, created_at, store_id, import_batch_id, pool_group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [storeInfo?.name || '', storeInfo?.area || '', storeInfo?.address || '', storeInfo?.lat ?? null, storeInfo?.lng ?? null,
-              request_date, timeRange.start, timeRange.end, requiredCount, requests, now, storeId, importBatchId, poolGroupId]
-          );
-          poolRequestsCreated++;
-        }
-      }
-    }
-  }
-  await finalizeImportBatch(importBatchId, imported + poolRequestsCreated);
-
-  res.json({ success: true, imported, poolRequestsCreated, errors, importBatchId });
+app.delete('/api/driver-groups/:id', async (req, res) => {
+  await dbRun('DELETE FROM driver_group_stores WHERE group_id = ?', [req.params.id]);
+  await dbRun('DELETE FROM driver_group_members WHERE group_id = ?', [req.params.id]);
+  await dbRun('DELETE FROM driver_groups WHERE id = ?', [req.params.id]);
+  res.json({ success: true });
 });
 
 // ドライバーの月間シフト表を「氏名×日付」のワイド形式(1行=1人、列=日付見出し「1(火)」等、
@@ -2872,27 +2772,18 @@ app.post('/api/matches/run', async (req, res) => {
     availability = availability.filter(a => a.fixed_store_id != null);
   }
 
-  // 実際に希望シフトを提出した(driver_id, date)の組を把握しておく(エリア固定の自動補完で、
-  // 本人が別の希望を出している日を上書きしないようにするため)
-  const explicitAvailabilitySet = new Set(availability.map(a => `${a.driver_id}|${a.desired_date}`));
-
-  // エリア固定ドライバー(店舗を1つに固定するのではなく、曜日ごとの決まった時間帯+複数の候補店舗群の中から
-  // 優先的に割り当てる人)を読み込んでおく。希望シフト未提出の日だけ、このパターンから仮の候補を作る
-  // (「固定希望店舗のある人だけ」の設定がONの時、またはエリア固定機能自体がOFFの時は対象に含めない)
-  const areaFixedFeatureEnabled = await getAreaFixedFeatureEnabled();
-  const areaFixedRows = (restrictToFixedStore || !areaFixedFeatureEnabled) ? [] : await dbAll(`
-    SELECT id, name, home_lat, home_lng, area_fixed_pattern, area_fixed_store_ids
-    FROM drivers WHERE area_fixed_enabled = 1
+  // ドライバーグループ(「2店舗を3人で回す」のように、複数のドライバー×複数の店舗を紐付けたもの)。
+  // 所属ドライバーに、グループに紐付いた店舗群をstoreIdsとして持たせ、優先順位階層(group_fixed)で使う
+  const groupRows = restrictToFixedStore ? [] : await dbAll(`
+    SELECT m.driver_id, gs.store_id FROM driver_group_members m JOIN driver_group_stores gs ON gs.group_id = m.group_id
   `);
-  const areaFixedDrivers = areaFixedRows.map(d => {
-    let pattern = {}, storeIds = [];
-    try { pattern = d.area_fixed_pattern ? JSON.parse(d.area_fixed_pattern) : {}; } catch (e) { /* ignore */ }
-    try { storeIds = d.area_fixed_store_ids ? JSON.parse(d.area_fixed_store_ids) : []; } catch (e) { /* ignore */ }
-    return { ...d, pattern, storeIds };
-  }).filter(d => d.storeIds.length > 0);
+  const groupStoreIdsByDriverId = new Map();
+  for (const r of groupRows) {
+    if (!groupStoreIdsByDriverId.has(r.driver_id)) groupStoreIdsByDriverId.set(r.driver_id, new Set());
+    groupStoreIdsByDriverId.get(r.driver_id).add(r.store_id);
+  }
 
   const { preferenceByDriverStore, storeVisitCount, areaVisitCount } = await loadScoringContext();
-  const areaFixedStoreIdsByDriverId = new Map(areaFixedDrivers.map(d => [d.id, d.storeIds]));
 
   // 店舗依頼の備考(自由記述)をAIで解析し、特定ドライバーへの希望・必須指定・除外を読み取る
   // (.envにANTHROPIC_API_KEYが未設定の場合、getOrAnalyzeStoreRequestNoteは常にnullを返すため
@@ -2912,7 +2803,7 @@ app.post('/api/matches/run', async (req, res) => {
     }));
   }
 
-  const tierCtx = { preferenceByDriverStore, storeVisitCount, areaVisitCount, areaFixedStoreIdsByDriverId, aiPreferenceByKey };
+  const tierCtx = { preferenceByDriverStore, storeVisitCount, areaVisitCount, groupStoreIdsByDriverId, aiPreferenceByKey };
   const enabledTierKeys = await getEnabledTierKeys();
 
   const now = new Date().toISOString();
@@ -3003,35 +2894,15 @@ app.post('/api/matches/run', async (req, res) => {
     const needed = (store.required_count || 1) - alreadyFilled;
     if (needed <= 0) continue;
 
-    // 同じ日付の希望を持ち、この店舗をNGにしていない(かつAIが備考からNGと判定していない)ドライバーを候補にする
-    const normalCandidates = availability.filter(a =>
+    // 同じ日付の希望を持ち、この店舗をNGにしていない(かつAIが備考からNGと判定していない)ドライバーを候補にする。
+    // グループに所属していても、本人が希望シフトを出していなければ候補にはならない(グループは優先順位階層
+    // (group_fixed)でスコアに反映されるだけで、希望シフト未提出の日の仮の候補までは作らない)
+    const candidates = availability.filter(a =>
       a.desired_date === store.request_date &&
       !assignedToday.has(a.driver_id) &&
       preferenceByDriverStore.get(`${a.driver_id}:${store.store_id}`) !== 'NG' &&
       aiPreferenceByKey.get(`${a.driver_id}:${store.id}`) !== 'excluded'
     );
-
-    // エリア固定ドライバーのうち、この店舗が候補店舗に含まれ、その曜日のパターンがあり、
-    // 本人が別途希望シフトを出していない人を、希望店舗=この店舗として仮の候補に加える
-    // (strong-matchボーナスが働き、候補店舗の中で優先的に割り当てられるようになる)
-    const weekdayKey = weekdayKeyOf(store.request_date);
-    const areaFixedCandidates = [];
-    for (const af of areaFixedDrivers) {
-      if (!af.storeIds.includes(store.store_id)) continue;
-      if (assignedToday.has(af.id)) continue;
-      if (explicitAvailabilitySet.has(`${af.id}|${store.request_date}`)) continue;
-      if (preferenceByDriverStore.get(`${af.id}:${store.store_id}`) === 'NG') continue;
-      if (aiPreferenceByKey.get(`${af.id}:${store.id}`) === 'excluded') continue;
-      const timeRange = parseTimeRangeText(af.pattern[weekdayKey]);
-      if (!timeRange) continue;
-      areaFixedCandidates.push({
-        driver_id: af.id, driver_name: af.name, home_lat: af.home_lat, home_lng: af.home_lng,
-        desired_store: store.store_name, desired_area: store.area,
-        time_start: timeRange.start, time_end: timeRange.end
-      });
-    }
-
-    const candidates = [...normalCandidates, ...areaFixedCandidates];
 
     const scored = candidates
       .map(a => ({ ...a, ...scoreCandidate(a, store, preferenceByDriverStore, storeVisitCount, areaVisitCount, aiPreferenceByKey.get(`${a.driver_id}:${store.id}`)) }))
@@ -3079,17 +2950,6 @@ app.post('/api/settings/restrict-matching-to-fixed-store', async (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/api/settings/area-fixed-enabled', async (req, res) => {
-  res.json({ success: true, enabled: await getAreaFixedFeatureEnabled() });
-});
-app.post('/api/settings/area-fixed-enabled', async (req, res) => {
-  const { enabled } = req.body;
-  const value = enabled ? '1' : '0';
-  const existing = await dbGet('SELECT key FROM app_settings WHERE key = ?', ['area_fixed_feature_enabled']);
-  if (existing) await dbRun('UPDATE app_settings SET value = ? WHERE key = ?', [value, 'area_fixed_feature_enabled']);
-  else await dbRun('INSERT INTO app_settings (key, value) VALUES (?, ?)', ['area_fixed_feature_enabled', value]);
-  res.json({ success: true });
-});
 
 // アプリ内だけの「今日」設定の取得/保存(PC本体の時刻はそのまま)。date が空文字/未指定なら解除(本当の今日に戻す)
 app.get('/api/settings/mock-today', async (req, res) => {
@@ -4172,30 +4032,9 @@ app.get('/api/templates/store-requests-weekly.xlsx', async (req, res) => {
     ['A. 大丈夫です。合算されて必要人数として扱われます(時間帯が違う場合は別々の依頼として扱われます)。'],
   ];
 
-  const areaFixedHeader = ['氏名', '月', '火', '水', '木', '金', '土', '日', '想定デポ(候補店舗)', '備考'];
-  const areaFixedSampleRows = [
-    ['（記入例）坂本健', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '', '銀座SS、西新橋SS、新川店、築地店', '日曜日はお休みの例'],
-    ['（記入例）梅村聡史', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '10:00-22:00', '下目黒店、学芸大学前店、西小山店、東五反田店', '毎日稼働の例'],
-  ];
-  const areaFixedRulesText = [
-    ['【エリア固定】の書き方(むずかしく考えなくて大丈夫です)'],
-    [],
-    ['「エリア固定」とは、1つのお店に決めるのではなく、何店舗か候補を決めておいて、その中からその日空いているお店に入ってもらう、という人のことです。'],
-    ['使うときは、2〜3行目の(記入例)はぜんぶ消してから、対象の人の分を書いてください。'],
-    [],
-    ['① 「氏名」の列に、個人事業主さんの名前を書く(ドライバーマスタに登録済みの名前と、一字一句同じにしてください)'],
-    ['② 月〜日の列に、その曜日に動ける時間を「開始時刻-終了時刻」で書く(店舗依頼シートと同じ書き方です)'],
-    ['③ その曜日は休みなら、何も書かずに空っぽのままにする'],
-    ['④ 「想定デポ(候補店舗)」の列に、候補になるお店の名前を「、」(読点)で区切って書く'],
-    ['　　　書き方の例 → 銀座SS、西新橋SS、新川店、築地店'],
-    ['　　　「・」や「,」で区切っても大丈夫です。どちらでも読み取れます。'],
-    ['⑤ 備考は自由に書いてOK。何も書かなくても構いません'],
-  ];
-
   const wb = new ExcelJS.Workbook();
   addTemplateDataSheet(wb, '店舗依頼ひな形', header, sampleRows, [10, 22, 15, 15, 15, 15, 15, 15, 15, 42]);
-  addTemplateDataSheet(wb, 'エリア固定ひな形', areaFixedHeader, areaFixedSampleRows, [16, 15, 15, 15, 15, 15, 15, 15, 42, 22]);
-  addRulesTextSheet(wb, '記入ルール', [...rulesSheetText, [], [], ...areaFixedRulesText]);
+  addRulesTextSheet(wb, '記入ルール', rulesSheetText);
 
   const buffer = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
