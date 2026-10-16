@@ -301,6 +301,7 @@
     <div id="tab-driver" class="hidden space-y-4">
       <div id="dr-duplicate-fixed-store-alert" class="hidden"></div>
       <div id="dr-fixed-store-ng-alert" class="hidden"></div>
+      <div id="dr-fixed-store-suggestions-panel" class="hidden"></div>
       <details id="dr-register-details" class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <summary class="font-bold text-slate-800 cursor-pointer select-none">🚚 ドライバーを登録</summary>
         <div class="space-y-3 pt-3">
@@ -1086,6 +1087,53 @@
         </details>`;
     }
 
+    // 固定希望店舗の候補(💡)は、ドライバー一覧の各行にも出るが、件数が多いと見つけにくいため、
+    // 別枠でまとめて一覧表示し、見出しクリックで並び替えられるようにする
+    let fsSuggestionSortState = { field: 'driver_name', dir: 'asc' };
+    function renderFixedStoreSuggestionsPanel() {
+      const el = document.getElementById('dr-fixed-store-suggestions-panel');
+      const pending = fixedStoreSuggestionsCache.filter(s => s.status === 'pending' || !s.status);
+      if (pending.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+      el.classList.remove('hidden');
+      const { field, dir } = fsSuggestionSortState;
+      const sorted = [...pending].sort((a, b) => {
+        const av = String(a[field] || ''), bv = String(b[field] || '');
+        return dir === 'asc' ? av.localeCompare(bv, 'ja') : bv.localeCompare(av, 'ja');
+      });
+      const arrow = (f) => fsSuggestionSortState.field === f ? (fsSuggestionSortState.dir === 'asc' ? '▲' : '▼') : '⇅';
+      const arrowClass = (f) => fsSuggestionSortState.field === f ? 'text-blue-600' : 'text-slate-300';
+      el.innerHTML = `
+        <details class="bg-white border border-amber-200 rounded-xl p-4" open>
+          <summary class="font-bold text-sm cursor-pointer select-none text-amber-800">💡 固定希望店舗の候補が ${pending.length} 件あります(クリックで開閉)</summary>
+          <p class="text-xs mt-2 mb-2 text-slate-500">見出しをクリックすると並び替えられます。採用すると、その場でドライバーマスタの固定希望店舗に反映されます(却下しても、理由にした実績が消えるわけではありません)。</p>
+          <div class="max-h-96 overflow-y-auto">
+            <table class="w-full text-xs border-collapse">
+              <thead>
+                <tr class="border-b border-slate-200">
+                  <th class="p-1.5 text-left cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(fsSuggestionSortState, 'driver_name', renderFixedStoreSuggestionsPanel)">氏名 <span class="${arrowClass('driver_name')}">${arrow('driver_name')}</span></th>
+                  <th class="p-1.5 text-left cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(fsSuggestionSortState, 'suggested_store_name', renderFixedStoreSuggestionsPanel)">提案店舗 <span class="${arrowClass('suggested_store_name')}">${arrow('suggested_store_name')}</span></th>
+                  <th class="p-1.5 text-left cursor-pointer select-none hover:bg-slate-50" onclick="toggleSort(fsSuggestionSortState, 'reason', renderFixedStoreSuggestionsPanel)">理由 <span class="${arrowClass('reason')}">${arrow('reason')}</span></th>
+                  <th class="p-1.5 text-left">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sorted.map(s => `
+                  <tr class="border-b border-slate-100">
+                    <td class="p-1.5 font-bold whitespace-nowrap">${esc(s.driver_name)}</td>
+                    <td class="p-1.5 whitespace-nowrap">${esc(s.suggested_store_name)}</td>
+                    <td class="p-1.5 text-slate-500">${esc(s.reason || '')}</td>
+                    <td class="p-1.5 whitespace-nowrap">
+                      <button onclick="applyFixedStoreSuggestion(${s.id})" class="bg-amber-500 hover:bg-amber-600 text-white px-2 py-0.5 rounded font-bold">採用</button>
+                      <button onclick="dismissFixedStoreSuggestion(${s.id})" class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-bold">却下</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </details>`;
+    }
+
     async function saveDuplicateFixedStorePriority(storeId) {
       const inputs = [...document.querySelectorAll(`.dup-priority-input[data-store-id="${storeId}"]`)];
       const updates = inputs.map(inp => ({ driver_id: parseInt(inp.dataset.driverId, 10), priority: inp.value.trim() ? parseInt(inp.value, 10) : null }));
@@ -1111,6 +1159,7 @@
         driverFormStoresCache.map(s => `<option value="${esc(storeOptionLabel(s))}">`).join('');
       renderDuplicateFixedStoreAlert();
       renderFixedStoreNgConflictAlert((await ngConflictsRes.json()).conflicts || []);
+      renderFixedStoreSuggestionsPanel();
       renderDriverList();
       loadDriverGroups();
     }
