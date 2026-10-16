@@ -3465,14 +3465,18 @@
       // (候補ゼロ・時間の穴が残っている枠が1つでもあれば未完了。対応なし登録済みは完了扱いにする)
       const slotsByStoreDate = new Map();
       const maxSlotsByStore = new Map();
+      const maxPrimarySlotsByStore = new Map(); // 「本来の依頼の枠」だけの最大数(穴埋め用の行の番号がズレないように使う)
       const storeCompleteByName = new Map();
       for (const storeName of storeNames) {
-        let maxSlots = 1;
+        let maxSlots = 1, maxPrimarySlots = 1;
         storeCompleteByName.set(storeName, true);
         for (const d of dates) {
           const key = `${storeName}|${d}`;
           const reqs = (requestsByStoreDate.get(key) || []).slice().sort((a, b) => (a.time_start || '').localeCompare(b.time_start || ''));
-          let slots = [];
+          // 本来の依頼の枠(primarySlots)と、必要人数は埋まった上で時間の穴を埋めるための追加枠
+          // (gapSlots)を別々に積んでから最後に連結する。1つの依頼ループの中で両方を積んでしまうと、
+          // ある依頼の穴埋め行が次の依頼の枠の「間」に入り込み、本来の依頼の番号(N人目)がズレてしまうため
+          let primarySlots = [], gapSlots = [];
           for (const r of reqs) {
             const ms = matchesByRequestId.get(r.id) || [];
             // 時間の「穴」判定はプール需要(候補店舗ごとに時間が違い得る)には馴染まないため対象外にする。
@@ -3496,22 +3500,27 @@
               const m = ms[i] || null;
               // gapDismissedは依頼単位のフラグ(filled/placeholderどちらにも渡す)。実際に半透明になる
               // のはplaceholderCellHtml側だけ(matchCellHtmlは稼働中の人のセルなので常に通常表示)
-              slots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap && !gapDismissed), gapDismissed: !!(hasGap && gapDismissed), gapInfo: hasGap ? { dismissed: gapDismissed } : null });
+              primarySlots.push({ time_start: r.time_start, time_end: r.time_end, match: m, requestId: r.id, gapWarning: !!(m && hasGap && !gapDismissed), gapDismissed: !!(hasGap && gapDismissed), gapInfo: hasGap ? { dismissed: gapDismissed } : null });
             }
             // 必要人数自体は埋まっていても、希望時間に誰もカバーしていない穴が残っている場合は、
             // その穴を埋めるための枠をさらに追加する(右クリックで別の人を割り当てられる)
             if (hasGap && ms.length >= (r.required_count || 1)) {
-              for (const g of gaps) slots.push({ time_start: g.start, time_end: g.end, match: null, requestId: r.id, isGap: !gapDismissed, gapDismissed, gapInfo: { dismissed: gapDismissed } });
+              for (const g of gaps) gapSlots.push({ time_start: g.start, time_end: g.end, match: null, requestId: r.id, isGap: !gapDismissed, gapDismissed, gapInfo: { dismissed: gapDismissed } });
             }
           }
+          let slots;
           if (reqs.length === 0) {
             // 店舗依頼データが絞り込みで見えない・未登録などの場合でも、マッチ自体は出す
             slots = matches.filter(m => m.store_name === storeName && m.match_date === d).map(m => ({ time_start: m.time_start, time_end: m.time_end, match: m }));
+          } else {
+            slots = primarySlots.concat(gapSlots);
           }
           slotsByStoreDate.set(key, slots);
           maxSlots = Math.max(maxSlots, slots.length);
+          maxPrimarySlots = Math.max(maxPrimarySlots, primarySlots.length);
         }
         maxSlotsByStore.set(storeName, maxSlots);
+        maxPrimarySlotsByStore.set(storeName, maxPrimarySlots);
       }
 
       header.innerHTML = `<th class="p-2 text-left text-xs text-slate-500 sticky top-0 left-0 z-20 bg-white border border-slate-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.2)] whitespace-nowrap">店舗</th>` +
@@ -3530,18 +3539,16 @@
       const rowsHtml = [];
       for (const storeName of renderStoreNames) {
         const maxSlots = maxSlotsByStore.get(storeName);
+        const maxPrimarySlots = maxPrimarySlotsByStore.get(storeName);
         const code = codeByStoreName.get(storeName);
         const sv = svByStoreName.get(storeName) || '-';
         const isComplete = storeCompleteByName.get(storeName);
         for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
-          // この行が「依頼の必要人数そのものの枠」か「必要人数は埋まった上で時間の穴を埋めるために
-          // 追加した枠」かを見分けて、ラベルを変える(元の依頼の枠は「N人目」のまま、追加の枠は
-          // 「N人目・未対応分」として、最初から複数依頼があった場合と混同しないようにする)
-          const isGapRow = dates.some(d => {
-            const slot = (slotsByStoreDate.get(`${storeName}|${d}`) || [])[slotIndex];
-            return !!slot && (slot.isGap || (slot.match && slot.match.created_via === 'gap_fill'));
-          });
-          const slotLabel = maxSlots > 1 ? (isGapRow ? `(${slotIndex + 1}人目・未対応分)` : `(${slotIndex + 1}人目)`) : '';
+          // 本来の依頼の枠(0〜maxPrimarySlots-1番目)は常に「N人目」のまま、必要人数は埋まった上で
+          // 時間の穴を埋めるために追加した枠(primarySlotsの後ろに連結されている分)はその後ろの
+          // 行になるので、番号を付けず「未対応分」とだけ表示する(依頼本来の番号とズレないように)
+          const isGapRow = slotIndex >= maxPrimarySlots;
+          const slotLabel = isGapRow ? '(未対応分)' : (maxSlots > 1 ? `(${slotIndex + 1}人目)` : '');
           const rowLabel = `${slotIndex === 0 && isComplete ? '✅ ' : ''}${code ? `${code} ` : ''}${storeName}${slotLabel}`;
           // この行(同じ「N人目」枠)にまたがる穴の依頼idを集めておき、まとめて対応なしにできるようにする
           const rowGapRequestIds = new Set();
